@@ -73,6 +73,10 @@ class UpdateSeatsRequest(BaseModel):
     seats: int = Field(..., ge=1, le=100)
 
 
+class UpdateBillingEmailRequest(BaseModel):
+    billing_email: str
+
+
 def calculate_price_per_seat(seats: int, interval: str) -> float:
     selected_tier = RATE_CARDS[0]
     for tier in RATE_CARDS:
@@ -112,9 +116,12 @@ async def get_outreach_plans(
             trial_active = True
             trial_days_remaining = max(1, (trial_end - now).days)
 
+    billing_email = (subscription or {}).get("billing_email") or current_user.get("email") or ""
+
     return {
         "rate_cards": RATE_CARDS,
         "features_included": FEATURES_INCLUDED,
+        "billing_email": billing_email,
         "subscription": subscription or {
             "status": "none",
             "seats": 1,
@@ -124,6 +131,28 @@ async def get_outreach_plans(
         "trial_active": trial_active,
         "trial_days_remaining": trial_days_remaining,
     }
+
+
+@router.post("/billing-email")
+async def update_billing_email(
+    req: UpdateBillingEmailRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Updates the email address that receives Stripe receipts and invoices.
+    """
+    user_id = current_user.get("user_id")
+    email = req.billing_email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="A valid billing email is required")
+
+    await db.outreach_subscriptions.update_one(
+        {"workspace_id": user_id},
+        {"$set": {"billing_email": email, "updated_at": datetime.now(timezone.utc)}},
+        upsert=True,
+    )
+    return {"status": "success", "billing_email": email}
 
 
 @router.post("/start-trial")
@@ -197,31 +226,52 @@ async def cancel_subscription(
     """
     Cancels subscription and executes JIT Zero-Cost Proxy Teardown across all connected senders.
     """
-    user_id = current_user.get("user_id")
+    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    now = datetime.now(timezone.utc)
+
+    # Stop execution before removing network access from connected senders.
+    await db.outreach_campaigns.update_many(
+        {"workspace_id": workspace_id, "status": {"$in": ["active", "warming_up"]}},
+        {"$set": {"status": "paused", "auto_launch_enabled": False, "updated_at": now}},
+    )
+    await db.outreach_accounts.update_many(
+        {"workspace_id": workspace_id, "status": {"$in": ["active", "warming"]}},
+        {"$set": {"status": "paused", "updated_at": now}},
+    )
+    await db.outreach_tasks.update_many(
+        {"workspace_id": workspace_id, "status": {"$in": ["queued", "pending", "scheduled"]}},
+        {"$set": {"status": "cancelled", "cancellation_reason": "Outreach subscription canceled", "updated_at": now}},
+    )
 
     # Update subscription
     await db.outreach_subscriptions.update_one(
-        {"workspace_id": user_id},
-        {"$set": {"status": "canceled", "canceled_at": datetime.now(timezone.utc)}},
+        {"workspace_id": workspace_id},
+        {"$set": {"status": "canceled", "canceled_at": now}},
     )
 
     # Teardown residential proxies immediately (Zero Cost When Idle)
-    accounts = await db.outreach_accounts.find({"workspace_id": user_id}).to_list(100)
+    accounts = await db.outreach_accounts.find({"workspace_id": workspace_id}).to_list(1000)
     released_proxies = 0
+    failed_proxy_releases = 0
 
     proxy_manager = JITProxyManager()
     for acc in accounts:
-        proxy_config = acc.get("proxy_config")
-        if proxy_config and proxy_config.get("proxy_id"):
-            await proxy_manager.release_proxy(proxy_config["proxy_id"])
-            await db.outreach_accounts.update_one(
-                {"id": acc["id"]},
-                {"$unset": {"proxy_config": ""}},
-            )
-            released_proxies += 1
+        proxy_data = acc.get("proxy") or acc.get("proxy_config")
+        proxy_id = (proxy_data or {}).get("proxy_id") if isinstance(proxy_data, dict) else getattr(proxy_data, "proxy_id", None)
+        if proxy_id:
+            if await proxy_manager.release_proxy(proxy_id):
+                await db.outreach_accounts.update_one(
+                    {"id": acc["id"], "workspace_id": workspace_id},
+                    {"$unset": {"proxy": "", "proxy_config": ""}},
+                )
+                released_proxies += 1
+            else:
+                failed_proxy_releases += 1
 
     return {
-        "status": "canceled",
+        "status": "canceled_with_cleanup_errors" if failed_proxy_releases else "canceled",
         "released_proxies_count": released_proxies,
-        "message": "Subscription canceled. Proxies released to prevent idle infrastructure costs.",
+        "failed_proxy_releases": failed_proxy_releases,
+        "message": ("Subscription canceled, but some proxies could not be released. Contact support to finish cleanup."
+                    if failed_proxy_releases else "Subscription canceled. Proxies released to prevent idle infrastructure costs."),
     }

@@ -4,10 +4,11 @@ Curates viral LinkedIn inspiration and transforms structures into original posts
 """
 import logging
 import re
+from urllib.parse import urlparse
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from api.deps import get_current_user
@@ -21,16 +22,33 @@ router = APIRouter(prefix="/swipe", tags=["LinkedIn Swipe Files"])
 
 
 class CreateSwipeItemRequest(BaseModel):
-    content_text: str
-    author_name: str = "Unknown Creator"
+    content_text: str = Field(..., min_length=1, max_length=20000)
+    author_name: str = Field(default="Unknown Creator", max_length=150)
     author_avatar: str = ""
     post_url: str = ""
     tags: List[str] = Field(default_factory=lambda: ["LinkedIn"])
 
+    @field_validator("content_text")
+    @classmethod
+    def content_is_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Content cannot be blank")
+        return value.strip()
+
+    @field_validator("post_url")
+    @classmethod
+    def original_url_is_http(cls, value: str) -> str:
+        value = value.strip()
+        if value:
+            parsed = urlparse(value)
+            if parsed.scheme not in {"https", "http"} or not parsed.hostname:
+                raise ValueError("Original link must be an HTTP or HTTPS URL")
+        return value
+
 
 class RepurposeSwipeRequest(BaseModel):
-    target_format: str = "post"  # 'post' | 'outbound_hook' | 'connection_note'
-    custom_instructions: str = ""
+    target_format: Literal["post", "outbound_hook", "connection_note"] = "post"
+    custom_instructions: str = Field(default="", max_length=1000)
     writing_style_id: Optional[str] = None
 
 
@@ -47,10 +65,10 @@ async def create_swipe_item(
     doc = SwipeFileItem(
         workspace_id=workspace_id,
         user_id=user_id,
-        author_name=req.author_name.strip(),
+        author_name=req.author_name.strip() or "Unknown Creator",
         author_avatar=req.author_avatar,
         content_text=req.content_text.strip(),
-        tags=req.tags,
+        tags=[tag.strip()[:60] for tag in req.tags[:10] if tag.strip()],
         post_url=req.post_url.strip(),
     ).model_dump()
 
@@ -63,24 +81,31 @@ async def create_swipe_item(
 async def list_swipe_items(
     tag: Optional[str] = None,
     search: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 30,
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """List all saved swipe file cards with tag and keyword filtering."""
     workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
-    query: dict = {"workspace_id": workspace_id, "is_archived": False}
+    if skip < 0 or not 1 <= limit <= 100:
+        raise HTTPException(status_code=422, detail="Invalid swipe pagination")
+    query: dict = {"workspace_id": workspace_id, "is_archived": {"$ne": True}}
 
     if tag and tag != "all":
         query["tags"] = tag
 
-    if search:
+    if search and search.strip():
+        pattern = re.escape(search.strip()[:100])
         query["$or"] = [
-            {"content_text": {"$regex": search, "$options": "i"}},
-            {"author_name": {"$regex": search, "$options": "i"}},
+            {"content_text": {"$regex": pattern, "$options": "i"}},
+            {"author_name": {"$regex": pattern, "$options": "i"}},
         ]
 
     cursor = db.outreach_swipe_files.find(query, {"_id": 0}).sort("created_at", -1)
-    return await cursor.to_list(100)
+    if skip:
+        cursor = cursor.skip(skip)
+    return await cursor.to_list(limit)
 
 
 @router.delete("/{item_id}")
@@ -114,15 +139,17 @@ async def repurpose_swipe_item(
 
     style_prompt = "Write in a direct, punchy, conversational LinkedIn style."
     if req.writing_style_id:
-        style = await db.outreach_writing_styles.find_one({"id": req.writing_style_id})
-        if style and style.get("extracted_style_prompt"):
+        style = await db.outreach_writing_styles.find_one({"id": req.writing_style_id, "workspace_id": workspace_id})
+        if not style:
+            raise HTTPException(status_code=404, detail="Writing style not found")
+        if style.get("extracted_style_prompt"):
             style_prompt = style["extracted_style_prompt"]
 
     instructions = {
         "post": "Transform this swiped post into a brand-new, original LinkedIn post adopting the exact structural hook and pacing, but with fresh industry examples.",
         "outbound_hook": "Extract the strongest hook angle from this post and convert it into a 2-sentence cold outreach opening line that stops the prospect in their tracks.",
         "connection_note": "Transform the core thesis of this post into an authentic, sub-300-character LinkedIn connection request note referencing this specific topic.",
-    }.get(req.target_format, "Repurpose this content into an original post.")
+    }[req.target_format]
 
     custom_extra = f"\nAdditional focus: {req.custom_instructions}" if req.custom_instructions else ""
 
@@ -137,15 +164,13 @@ async def repurpose_swipe_item(
 
     try:
         repurposed, _, _ = await free_llm.generate_text(system_prompt, user_prompt)
+        if not repurposed or not repurposed.strip():
+            raise ValueError("AI returned an empty response")
         return {
             "target_format": req.target_format,
             "repurposed_text": repurposed.strip(),
             "original_author": item.get("author_name"),
         }
     except Exception as exc:
-        logger.warning("Repurposing failed, using fallback: %s", exc)
-        return {
-            "target_format": req.target_format,
-            "repurposed_text": f"Here is the counter-intuitive truth about {item['content_text'][:50]}...\n\nMost teams optimize for the wrong metrics. Focus on velocity and clarity instead.",
-            "original_author": item.get("author_name"),
-        }
+        logger.warning("Swipe repurposing failed: %s", exc)
+        raise HTTPException(status_code=503, detail="AI repurposing is unavailable. Please try again.") from exc

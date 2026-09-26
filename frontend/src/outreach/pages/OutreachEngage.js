@@ -22,6 +22,7 @@ import {
   Clock3,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import './OutreachEngageReport.css';
 
 const authHeaders = (json = false) => ({
   ...(json ? { 'Content-Type': 'application/json' } : {}),
@@ -50,7 +51,7 @@ export default function OutreachEngage() {
   const [lists, setLists] = useState([]);
   const [loadingLists, setLoadingLists] = useState(true);
   const [activeList, setActiveList] = useState(null);
-  const [activeTab, setActiveTab] = useState('posts'); // 'posts' | 'contacts'
+  const [activeTab, setActiveTab] = useState('posts'); // 'posts' | 'contacts' | 'drafts'
   const [posts, setPosts] = useState([]);
   const [loadingPosts, setLoadingPosts] = useState(false);
   const [statusFilter, setStatusFilter] = useState('pending'); // 'pending' | 'commented' | 'all'
@@ -83,6 +84,12 @@ export default function OutreachEngage() {
   // Pagination
   const [totalPosts, setTotalPosts] = useState(0);
   const [stats, setStats] = useState(null);
+  const [drafts, setDrafts] = useState([]);
+  const [draftPendingCount, setDraftPendingCount] = useState(0);
+  const [draftEdits, setDraftEdits] = useState({});
+  const [draftBusy, setDraftBusy] = useState(false);
+  const [report, setReport] = useState(null);
+  const [reportLoading, setReportLoading] = useState(false);
   const [accounts, setAccounts] = useState([]);
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [styles, setStyles] = useState([]);
@@ -183,6 +190,8 @@ export default function OutreachEngage() {
     setActiveTab('posts');
     setSelectedPosts(new Set());
     setStats(null);
+    setDrafts([]);
+    setDraftPendingCount(0);
     try { await fetchListDetail(list.id); }
     catch (error) { toast.error(error.message); }
   };
@@ -221,6 +230,23 @@ export default function OutreachEngage() {
       fetchStats(activeListId);
     }
   }, [activeListId, statusFilter, fetchPosts, fetchStats]);
+
+  const fetchDrafts = useCallback(async (listId) => {
+    try {
+      const res = await fetch(`/api/v1/outreach/engage/lists/${listId}/drafts`, {
+        credentials: 'include', headers: authHeaders(),
+      });
+      if (!res.ok) throw new Error(await readError(res, 'Could not load comment drafts'));
+      const data = await res.json();
+      setDrafts(data.drafts || []);
+      setDraftPendingCount(data.pending_count || 0);
+      setDraftEdits(Object.fromEntries((data.drafts || []).map((draft) => [draft.id, draft.comment_text])));
+    } catch (error) { toast.error(error.message); }
+  }, []);
+
+  useEffect(() => {
+    if (activeListId) fetchDrafts(activeListId);
+  }, [activeListId, fetchDrafts]);
 
   useEffect(() => {
     if (!activeListId || !['queued', 'running'].includes(fetchStatus) &&
@@ -688,6 +714,48 @@ export default function OutreachEngage() {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
+  const saveReviewDraft = async (postId, commentText) => {
+    if (!commentText?.trim() || !activeList) return;
+    setDraftBusy(true);
+    try {
+      const res = await fetch(`/api/v1/outreach/engage/lists/${activeList.id}/drafts`, {
+        method: 'POST', credentials: 'include', headers: authHeaders(true),
+        body: JSON.stringify({ post_id: postId, comment_text: commentText.trim() }),
+      });
+      if (!res.ok) throw new Error(await readError(res, 'Could not save review draft'));
+      await fetchDrafts(activeList.id);
+      toast.success('Saved to Draft & Review. Nothing was published.');
+      setAiModalPost(null);
+    } catch (error) { toast.error(error.message); }
+    finally { setDraftBusy(false); }
+  };
+
+  const updateReviewDraft = async (draftId, changes) => {
+    setDraftBusy(true);
+    try {
+      const res = await fetch(`/api/v1/outreach/engage/lists/${activeList.id}/drafts/${draftId}`, {
+        method: 'PATCH', credentials: 'include', headers: authHeaders(true),
+        body: JSON.stringify(changes),
+      });
+      if (!res.ok) throw new Error(await readError(res, 'Could not update review draft'));
+      await fetchDrafts(activeList.id);
+      toast.success(changes.status === 'completed' ? 'Marked done manually (not verified engagement)' : 'Draft updated');
+    } catch (error) { toast.error(error.message); }
+    finally { setDraftBusy(false); }
+  };
+
+  const openPrintReport = async () => {
+    setReportLoading(true);
+    try {
+      const res = await fetch(`/api/v1/outreach/engage/lists/${activeList.id}/report`, {
+        credentials: 'include', headers: authHeaders(),
+      });
+      if (!res.ok) throw new Error(await readError(res, 'Could not load engagement report'));
+      setReport(await res.json());
+    } catch (error) { toast.error(error.message); }
+    finally { setReportLoading(false); }
+  };
+
   const saveListSettings = async (campaignId, hours = activeList.warmup_hours || 24) => {
     const res = await fetch(`/api/v1/outreach/engage/lists/${activeList.id}/settings`, {
       method: 'PATCH', credentials: 'include', headers: authHeaders(true),
@@ -883,6 +951,14 @@ export default function OutreachEngage() {
                 >
                   Contacts ({activeList.contacts_count || activeList.contacts?.length || 0})
                 </button>
+                <button
+                  onClick={() => setActiveTab('drafts')}
+                  className={`px-3 py-1.5 rounded-lg transition-all ${
+                    activeTab === 'drafts' ? 'bg-white text-gray-900 shadow-xs' : 'hover:text-gray-900'
+                  }`}
+                >
+                  Draft & Review ({draftPendingCount})
+                </button>
               </div>
 
               <button
@@ -930,6 +1006,9 @@ export default function OutreachEngage() {
             )}
             <button onClick={handleExport} className="ml-auto inline-flex items-center gap-1 text-indigo-600 font-semibold hover:text-indigo-800">
               <Download className="w-3.5 h-3.5" /> Export CSV
+            </button>
+            <button onClick={openPrintReport} disabled={reportLoading} className="inline-flex items-center gap-1 text-indigo-600 font-semibold hover:text-indigo-800 disabled:opacity-50">
+              <FileText className="w-3.5 h-3.5" /> Print / Save as PDF
             </button>
             {activeList.fetch_status === 'failed' && <span className="w-full text-red-600">{activeList.fetch_error || 'Post fetch failed'}</span>}
             {activeList.campaign_id && <span className="w-full text-gray-500">Launching the linked campaign requires confirmed engagement for every lead within the past seven days; its first outreach action waits for the selected warm-up period.</span>}
@@ -1219,18 +1298,23 @@ export default function OutreachEngage() {
                               <span>Auto-like post on comment</span>
                             </label>
 
-                            <button
-                              onClick={() => handleSendComment(post.id)}
-                              disabled={draft.posting || Boolean(post.action_queued_at) || !draft.text?.trim() || !selectedAccountId || !['pending', 'liked'].includes(post.status)}
-                              className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 shadow-sm transition-all disabled:opacity-50 active:scale-95"
-                            >
-                              {draft.posting ? (
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              ) : (
-                                <Send className="w-3.5 h-3.5" />
-                              )}
-                              Post Comment
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => saveReviewDraft(post.id, draft.text)}
+                                disabled={draftBusy || !draft.text?.trim() || !['pending', 'liked'].includes(post.status)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-indigo-200 text-indigo-700 text-xs font-semibold disabled:opacity-50"
+                              >
+                                Save for Review
+                              </button>
+                              <button
+                                onClick={() => handleSendComment(post.id)}
+                                disabled={draft.posting || Boolean(post.action_queued_at) || !draft.text?.trim() || !selectedAccountId || !['pending', 'liked'].includes(post.status)}
+                                className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 shadow-sm transition-all disabled:opacity-50 active:scale-95"
+                              >
+                                {draft.posting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                                Post Comment
+                              </button>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -1250,6 +1334,46 @@ export default function OutreachEngage() {
                   </button>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Manual draft queue: no LinkedIn write occurs here. */}
+          {activeTab === 'drafts' && (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-xs text-indigo-900">
+                Review and edit suggestions here, then copy and publish them yourself on LinkedIn. Marking a draft done is self-reported and never counts as confirmed engagement or unlocks campaign warm-up.
+              </div>
+              {drafts.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-gray-300 bg-white p-10 text-center text-sm text-gray-500">
+                  No pending drafts. Save a comment from a post or an AI suggestion to review it here.
+                </div>
+              ) : drafts.map((draft) => (
+                <div key={draft.id} className="rounded-2xl border border-gray-200 bg-white p-5 space-y-3">
+                  <div className="text-xs text-gray-600">
+                    <strong className="text-gray-900">{draft.author_name || 'LinkedIn Member'}</strong>
+                    <p className="mt-1 line-clamp-3">{draft.post_excerpt || 'Post content unavailable'}</p>
+                  </div>
+                  <label className="block text-xs font-semibold text-gray-700" htmlFor={`draft-${draft.id}`}>Your draft</label>
+                  <textarea id={`draft-${draft.id}`} rows={3} value={draftEdits[draft.id] ?? draft.comment_text}
+                    onChange={(event) => setDraftEdits((previous) => ({ ...previous, [draft.id]: event.target.value }))}
+                    className="w-full rounded-xl border border-gray-200 p-3 text-xs text-gray-800" />
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <button disabled={draftBusy || !draftEdits[draft.id]?.trim()} onClick={() => updateReviewDraft(draft.id, { comment_text: draftEdits[draft.id] })}
+                      className="rounded-lg border border-indigo-200 px-3 py-1.5 font-semibold text-indigo-700 disabled:opacity-50">Save edit</button>
+                    <button disabled={draftBusy || !draftEdits[draft.id]?.trim()} onClick={async () => {
+                      try { await navigator.clipboard.writeText(draftEdits[draft.id]); toast.success('Copied. Publish it yourself on LinkedIn.'); }
+                      catch (_) { toast.error('Could not copy draft. Select and copy the text manually.'); }
+                    }} className="rounded-lg border border-gray-200 px-3 py-1.5 font-semibold text-gray-700 disabled:opacity-50">Copy text</button>
+                    {draft.post_url?.startsWith('https://www.linkedin.com/') && (
+                      <a href={draft.post_url} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-gray-200 px-3 py-1.5 font-semibold text-gray-700">Open on LinkedIn ↗</a>
+                    )}
+                    <button disabled={draftBusy} onClick={() => updateReviewDraft(draft.id, { comment_text: draftEdits[draft.id], status: 'completed' })}
+                      className="rounded-lg bg-indigo-600 px-3 py-1.5 font-semibold text-white disabled:opacity-50">Mark done manually</button>
+                    <button disabled={draftBusy} onClick={() => updateReviewDraft(draft.id, { status: 'dismissed' })}
+                      className="rounded-lg px-3 py-1.5 font-semibold text-gray-500 disabled:opacity-50">Dismiss</button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
 
@@ -1558,14 +1682,49 @@ export default function OutreachEngage() {
                     className="p-3 rounded-xl border border-gray-200 hover:border-indigo-500 hover:bg-indigo-50/30 text-xs text-gray-800 leading-relaxed cursor-pointer transition-all flex items-start justify-between gap-3 group"
                   >
                     <p>{com}</p>
-                    <button className="opacity-0 group-hover:opacity-100 text-[10px] font-bold text-indigo-600 shrink-0 bg-white px-2 py-0.5 rounded border border-indigo-200 shadow-xs">
-                      Use
-                    </button>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <button onClick={(event) => { event.stopPropagation(); saveReviewDraft(aiModalPost.id, com); }} disabled={draftBusy}
+                        className="text-[10px] font-bold text-indigo-600 bg-white px-2 py-0.5 rounded border border-indigo-200 disabled:opacity-50">
+                        Save to Drafts
+                      </button>
+                      <button className="text-[10px] font-bold text-indigo-600 bg-white px-2 py-0.5 rounded border border-indigo-200">Use</button>
+                    </div>
                   </div>
                 ))}
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {report && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 p-4 md:p-10" role="dialog" aria-modal="true" aria-label="Engagement report">
+          <section id="engage-print-report" className="mx-auto max-w-2xl rounded-2xl bg-white p-8 shadow-xl">
+            <div className="engage-no-print mb-6 flex items-center justify-end gap-3">
+              <button onClick={() => window.print()} className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white">Print / Save as PDF</button>
+              <button onClick={() => setReport(null)} className="rounded-lg border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-700">Close</button>
+            </div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-indigo-600">Engage & Grow</p>
+            <h2 className="mt-1 text-2xl font-bold text-gray-900">{report.list_name}</h2>
+            <p className="mt-1 text-xs text-gray-500">Recorded engagement summary · Generated {new Date(report.generated_at || Date.now()).toLocaleString()}</p>
+            <div className="mt-8 grid grid-cols-2 gap-4 border-y border-gray-200 py-6">
+              {[
+                ['Contacts in list', report.contacts],
+                ['Cached posts', report.posts_fetched],
+                ['Confirmed likes sent', report.likes_sent],
+                ['Confirmed comments published', report.comments_published],
+                ['Contacts engaged', report.contacts_engaged],
+                ['Posts dismissed', report.posts_discarded],
+              ].map(([label, value]) => <div key={label} className="rounded-xl bg-gray-50 p-4">
+                <div className="text-2xl font-bold text-gray-900">{value ?? 0}</div>
+                <div className="mt-1 text-xs text-gray-600">{label}</div>
+              </div>)}
+            </div>
+            <p className="mt-5 text-xs leading-relaxed text-gray-500">
+              Only timestamped LinkedIn-confirmed likes and comments are included. Drafts marked done manually are excluded. Likes and comments can overlap on the same post.
+              {report.limited_to_recent_10000_posts && ' This summary covers the first 10,000 cached posts.'}
+            </p>
+          </section>
         </div>
       )}
 

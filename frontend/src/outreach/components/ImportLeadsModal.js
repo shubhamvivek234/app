@@ -20,7 +20,6 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
   const [csvContent, setCsvContent] = useState('');
   const [searchUrl, setSearchUrl] = useState('');
   const [skipContacted, setSkipContacted] = useState(true);
-  const [skipDNC, setSkipDNC] = useState(true);
 
   // Lead Finder State
   const [finderFilters, setFinderFilters] = useState({
@@ -56,11 +55,17 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      setError('CSV files must be smaller than 5 MB.');
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (event) => {
       setCsvContent(event.target.result);
+      setError(null);
       setStep(3);
     };
+    reader.onerror = () => setError('Could not read the CSV file. Please try again.');
     reader.readAsText(file);
   };
 
@@ -141,6 +146,10 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
   };
 
   const handleExecuteImport = async () => {
+    if (!campaignId) {
+      setError('Select a campaign before importing contacts.');
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -159,7 +168,6 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
             campaign_id: campaignId,
             csv_text: csvContent,
             skip_already_contacted: skipContacted,
-            skip_do_not_contact: skipDNC,
           }),
         });
       } else if (sourceType === 'post') {
@@ -836,22 +844,17 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                   />
                   <div>
                     <span className="text-sm font-medium text-gray-800">Skip people already contacted</span>
-                    <p className="text-xs text-gray-500">Excludes leads who received a message across any of your campaigns.</p>
+                    <p className="text-xs text-gray-500">Excludes leads with a recorded outreach action in another campaign.</p>
                   </div>
                 </label>
 
-                <label className="flex items-start gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={skipDNC}
-                    onChange={(e) => setSkipDNC(e.target.checked)}
-                    className="mt-1 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                  />
+                <div className="flex items-start gap-3">
+                  <Shield className="mt-0.5 h-4 w-4 shrink-0 text-indigo-600" />
                   <div>
-                    <span className="text-sm font-medium text-gray-800">Enforce Do-Not-Contact list</span>
-                    <p className="text-xs text-gray-500">Automatically suppresses leads listed on your exclusion CRM.</p>
+                    <span className="text-sm font-medium text-gray-800">Do-Not-Contact protection is always on</span>
+                    <p className="text-xs text-gray-500">Contacts on your exclusion list are never imported.</p>
                   </div>
-                </label>
+                </div>
               </div>
 
               <div className="flex justify-between items-center pt-2">
@@ -882,9 +885,11 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                 <CheckCircle2 className="h-8 w-8" />
               </div>
               <div>
-                <h3 className="text-lg font-bold text-gray-900">Leads Successfully Enrolled!</h3>
+                <h3 className="text-lg font-bold text-gray-900">Import complete</h3>
                 <p className="text-xs text-gray-500 mt-1">
-                  Your prospects are loaded into the campaign queue and ready for outbound sequence dispatch.
+                  {importResult.imported_count || importResult.enrolled
+                    ? 'Imported contacts are attached to the selected campaign.'
+                    : 'No new contacts were imported. Review the duplicate and safety counts below.'}
                 </p>
               </div>
 

@@ -141,6 +141,23 @@ async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
     await _safe_create_index(db.posting_sets, [("workspace_id", 1), ("created_at", 1)])
     await _safe_create_index(db.posting_sets, [("user_id", 1), ("created_at", 1)])
 
+    # LinkedIn outreach analytics, swipe files, and unified inbox
+    await _safe_create_index(db.outreach_tasks, [("workspace_id", 1), ("id", 1)], unique=True)
+    await _safe_create_index(db.outreach_tasks, [("workspace_id", 1), ("campaign_id", 1), ("task_type", 1), ("status", 1), ("updated_at", -1)])
+    await _safe_create_index(db.outreach_leads, [("workspace_id", 1), ("campaign_id", 1), ("pipeline_stage", 1)])
+    await _safe_create_index(db.outreach_leads, [("workspace_id", 1), ("campaign_id", 1), ("accepted_at", -1)])
+    await _safe_create_index(db.outreach_leads, [("workspace_id", 1), ("campaign_id", 1), ("replied_at", -1)])
+    await _safe_create_index(db.outreach_inbox_threads, [("workspace_id", 1), ("id", 1)], unique=True)
+    await _safe_create_index(db.outreach_inbox_threads, [("workspace_id", 1), ("account_id", 1), ("lead_urn", 1)])
+    await _safe_create_index(db.outreach_inbox_threads, [("workspace_id", 1), ("last_message_at", -1)])
+    await _safe_create_index(db.outreach_inbox_jobs, [("workspace_id", 1), ("id", 1)], unique=True)
+    await _safe_create_index(db.outreach_inbox_jobs, [("workspace_id", 1), ("thread_id", 1), ("kind", 1), ("status", 1)])
+    await _safe_create_index(db.outreach_inbox_reminders, [("workspace_id", 1), ("thread_id", 1), ("remind_at", 1)])
+    await _safe_create_index(db.outreach_swipe_files, [("workspace_id", 1), ("created_at", -1)])
+    await _safe_create_index(db.outreach_engage_posts, [("workspace_id", 1), ("list_id", 1), ("liked_at", -1)])
+    await _safe_create_index(db.outreach_engage_posts, [("workspace_id", 1), ("list_id", 1), ("commented_at", -1)])
+    await _safe_create_index(db.outreach_engage_drafts, [("workspace_id", 1), ("list_id", 1), ("status", 1), ("created_at", -1)])
+
     logger.info("All MongoDB indexes created successfully")
 
 

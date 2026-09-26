@@ -15,21 +15,21 @@ const VALID_TABS = ['home', 'campaigns', 'analytics', 'engage', 'leads', 'inbox'
 
 function parseQueryParams(fallbackTab = 'home') {
   if (typeof window === 'undefined') {
-    return { tab: fallbackTab, isWizard: false, campaignId: 'new', step: 2, detailId: null };
+    return { tab: fallbackTab, isWizard: false, campaignId: 'new', step: 1, detailId: null };
   }
   const params = new URLSearchParams(window.location.search);
   const rawTab = params.get('tab');
   const tab = VALID_TABS.includes(rawTab) ? rawTab : fallbackTab;
   const isWizard = params.get('wizard') === 'true';
   const campaignId = params.get('campaignId') || 'new';
-  const step = parseInt(params.get('step') || '2', 10);
+  const step = parseInt(params.get('step') || '1', 10);
   const detailId = params.get('detail') === 'true' && params.get('campaignId') ? params.get('campaignId') : null;
 
   return {
     tab,
     isWizard,
     campaignId: campaignId || 'new',
-    step: isNaN(step) ? 2 : step,
+    step: isNaN(step) ? 1 : step,
     detailId,
   };
 }
@@ -102,9 +102,9 @@ export default function OutreachApp({ initialTab = 'home' }) {
     syncUrl(tab, false, 'new', 2, null);
   };
 
-  const handleOpenWizard = (campaignId = 'new', step = 2, name = '') => {
+  const handleOpenWizard = (campaignId = 'new', step = 1, name = '') => {
     const validId = typeof campaignId === 'string' && campaignId ? campaignId : 'new';
-    const validStep = typeof step === 'number' ? step : 2;
+    const validStep = typeof step === 'number' ? step : 1;
     setWizardCampaignId(validId);
     setWizardStep(validStep);
     setWizardCampaignName(name || '');
@@ -132,7 +132,7 @@ export default function OutreachApp({ initialTab = 'home' }) {
     <OutreachLayout
       activeTab={isWizardOpen ? 'campaigns' : activeTab}
       onNavigate={handleNavigate}
-      onOpenWizard={() => handleOpenWizard('new', 2)}
+      onOpenWizard={() => handleOpenWizard('new', 1)}
       hideTopHeader={isWizardOpen}
       isFullBleed={isWizardOpen}
     >
@@ -157,7 +157,11 @@ export default function OutreachApp({ initialTab = 'home' }) {
           {activeTab === 'home' && (
             <OutreachHome
               onNavigate={handleNavigate}
-              onOpenWizard={(id, step, name) => handleOpenWizard(id || 'new', step || 2, name || '')}
+              onOpenWizard={(id, step, name) => handleOpenWizard(id || 'new', step || 1, name || '')}
+              onOpenCampaign={(id) => {
+                setActiveTab('campaigns');
+                handleSelectCampaign(id);
+              }}
             />
           )}
           {activeTab === 'campaigns' && (
@@ -167,12 +171,14 @@ export default function OutreachApp({ initialTab = 'home' }) {
               lastSavedDraft={lastSavedDraft}
               selectedCampaignId={selectedCampaignId}
               onSelectCampaign={handleSelectCampaign}
-              onOpenWizard={(id, step, name) => handleOpenWizard(id || 'new', step || 2, name || '')}
+              onOpenWizard={(id, step, name) => handleOpenWizard(id || 'new', step || 1, name || '')}
             />
           )}
           {activeTab === 'analytics' && <OutreachAnalytics />}
           {activeTab === 'engage' && <OutreachEngage />}
-          {activeTab === 'leads' && <OutreachLeads />}
+          {activeTab === 'leads' && (
+            <OutreachLeads onOpenWizard={() => handleOpenWizard('new', 1)} />
+          )}
           {activeTab === 'inbox' && <OutreachInbox />}
           {activeTab === 'voice' && <OutreachVoice />}
           {activeTab === 'swipe' && <OutreachSwipeFiles />}
@@ -182,5 +188,3 @@ export default function OutreachApp({ initialTab = 'home' }) {
     </OutreachLayout>
   );
 }
-
-

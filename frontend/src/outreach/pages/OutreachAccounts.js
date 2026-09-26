@@ -1,27 +1,30 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Shield, Globe, Trash2, CheckCircle2, AlertTriangle, Sliders, RefreshCw } from 'lucide-react';
 import ConnectLinkedInModal from '../components/ConnectLinkedInModal';
+import { toast } from 'sonner';
 
 export default function OutreachAccounts() {
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingLimitsId, setEditingLimitsId] = useState(null);
   const [limitsForm, setLimitsForm] = useState({ connection_invites: 20, messages: 20 });
 
   const fetchAccounts = async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/accounts', {
+        credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
-      if (res.ok) {
-        const data = await res.json();
-        setAccounts(data);
-      }
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Could not load LinkedIn accounts');
+      const data = await res.json();
+      setAccounts(Array.isArray(data) ? data : []);
     } catch (err) {
-      console.error('Failed to fetch accounts:', err);
+      setLoadError(err.message || 'Could not load LinkedIn accounts');
     } finally {
       setLoading(false);
     }
@@ -40,13 +43,14 @@ export default function OutreachAccounts() {
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/accounts/${accountId}`, {
         method: 'DELETE',
+        credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
-      if (res.ok) {
-        setAccounts(accounts.filter((a) => a.id !== accountId));
-      }
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Could not disconnect account');
+      setAccounts((current) => current.filter((account) => account.id !== accountId));
+      toast.success('LinkedIn sender disconnected');
     } catch (err) {
-      console.error('Disconnect failed:', err);
+      toast.error(err.message || 'Could not disconnect account');
     }
   };
 
@@ -55,19 +59,20 @@ export default function OutreachAccounts() {
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/accounts/${accountId}/limits`, {
         method: 'PATCH',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
         },
         body: JSON.stringify(limitsForm),
       });
-      if (res.ok) {
-        const updated = await res.json();
-        setAccounts(accounts.map((a) => (a.id === accountId ? updated : a)));
-        setEditingLimitsId(null);
-      }
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Could not save daily limits');
+      const updated = await res.json();
+      setAccounts((current) => current.map((account) => (account.id === accountId ? updated : account)));
+      setEditingLimitsId(null);
+      toast.success('Daily limits saved');
     } catch (err) {
-      console.error('Save limits failed:', err);
+      toast.error(err.message || 'Could not save daily limits');
     }
   };
 
@@ -88,6 +93,10 @@ export default function OutreachAccounts() {
       {loading ? (
         <div className="flex items-center justify-center py-16 text-gray-400">
           <RefreshCw className="h-6 w-6 animate-spin" />
+        </div>
+      ) : loadError ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-sm text-red-700">
+          {loadError} <button type="button" onClick={fetchAccounts} className="font-semibold underline">Retry</button>
         </div>
       ) : accounts.length === 0 ? (
         <div className="rounded-xl border border-gray-200/80 bg-gray-50/50 p-6 text-xs sm:text-sm text-gray-500">
@@ -116,9 +125,9 @@ export default function OutreachAccounts() {
                     <h3 className="font-bold text-gray-900 leading-tight">{acc.account_name}</h3>
                     <p className="text-xs text-gray-400 font-mono mt-0.5">@{acc.vanity_name || 'linkedin'}</p>
                     <div className="flex items-center gap-1.5 mt-1">
-                      <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+                      <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full ${acc.status === 'active' ? 'text-emerald-600 bg-emerald-50' : 'text-amber-700 bg-amber-50'}`}>
                         <CheckCircle2 className="h-3 w-3" />
-                        Active
+                        {acc.status === 'active' ? 'Active' : (acc.status || 'Unknown').replace(/_/g, ' ').replace(/^./, (letter) => letter.toUpperCase())}
                       </span>
                       <span className="text-[11px] text-gray-400">Warmup: Level {acc.warmup_level || 1}</span>
                     </div>
@@ -137,9 +146,9 @@ export default function OutreachAccounts() {
               <div className="mt-5 pt-4 border-t border-gray-100 flex items-center justify-between text-xs text-gray-500">
                 <div className="flex items-center gap-2">
                   <Globe className="h-3.5 w-3.5 text-indigo-500" />
-                  <span>Residential Proxy: <strong className="text-gray-700">{acc.country_code} ({acc.proxy?.host || '127.0.0.1'})</strong></span>
+                  <span>Residential Proxy: <strong className="text-gray-700">{acc.proxy?.host ? `${acc.country_code || ''} (${acc.proxy.host})` : 'Not configured'}</strong></span>
                 </div>
-                <span className="text-[11px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-md font-medium">1:1 Dedicated</span>
+                {acc.proxy?.host && acc.proxy.host !== '127.0.0.1' && <span className="text-[11px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-md font-medium">1:1 Dedicated</span>}
               </div>
 
               {/* Limits & Counters Section */}
@@ -150,8 +159,8 @@ export default function OutreachAccounts() {
                     onClick={() => {
                       setEditingLimitsId(editingLimitsId === acc.id ? null : acc.id);
                       setLimitsForm({
-                        connection_invites: acc.limits?.connection_invites || 20,
-                        messages: acc.limits?.messages || 20,
+                        connection_invites: acc.limits?.connection_invites ?? 20,
+                        messages: acc.limits?.messages ?? 20,
                       });
                     }}
                     className="text-xs font-medium text-indigo-600 hover:text-indigo-800 inline-flex items-center gap-1"
@@ -168,7 +177,7 @@ export default function OutreachAccounts() {
                       <input
                         type="number"
                         max={35}
-                        min={1}
+                        min={0}
                         value={limitsForm.connection_invites}
                         onChange={(e) => setLimitsForm({ ...limitsForm, connection_invites: parseInt(e.target.value) || 0 })}
                         className="w-20 text-center rounded-lg border border-gray-300 py-1 text-xs"
@@ -179,7 +188,7 @@ export default function OutreachAccounts() {
                       <input
                         type="number"
                         max={35}
-                        min={1}
+                        min={0}
                         value={limitsForm.messages}
                         onChange={(e) => setLimitsForm({ ...limitsForm, messages: parseInt(e.target.value) || 0 })}
                         className="w-20 text-center rounded-lg border border-gray-300 py-1 text-xs"
@@ -195,10 +204,10 @@ export default function OutreachAccounts() {
                 ) : (
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div>
-                      <span className="text-gray-400">Invites:</span> <strong className="text-gray-800">{acc.limits?.connection_invites || 20}/day</strong>
+                      <span className="text-gray-400">Invites:</span> <strong className="text-gray-800">{acc.limits?.connection_invites ?? 20}/day</strong>
                     </div>
                     <div>
-                      <span className="text-gray-400">Messages:</span> <strong className="text-gray-800">{acc.limits?.messages || 20}/day</strong>
+                      <span className="text-gray-400">Messages:</span> <strong className="text-gray-800">{acc.limits?.messages ?? 20}/day</strong>
                     </div>
                   </div>
                 )}
@@ -212,9 +221,7 @@ export default function OutreachAccounts() {
       <ConnectLinkedInModal
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
-        onAccountConnected={(newAcc) => {
-          setAccounts([...accounts, newAcc]);
-        }}
+        onAccountConnected={() => { setModalOpen(false); fetchAccounts(); }}
       />
     </div>
   );

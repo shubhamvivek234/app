@@ -69,12 +69,31 @@ class EngageListSettingsRequest(BaseModel):
     warmup_hours: int = Field(default=24, ge=0, le=168)
 
 
+class CreateEngageDraftRequest(BaseModel):
+    post_id: str
+    comment_text: str = Field(min_length=1, max_length=2000)
+
+
+class UpdateEngageDraftRequest(BaseModel):
+    comment_text: str | None = Field(default=None, min_length=1, max_length=2000)
+    status: str | None = None
+
+
 # ── Helper Functions ───────────────────────────────────────────────────────
 
 def _extract_vanity(url: str) -> str:
     cleaned = normalize_linkedin_url(url)
     parts = cleaned.rstrip("/").split("/")
     return parts[-1] if parts else "prospect"
+
+
+async def _reject_armed_list_changes(list_id: str, workspace_id: str, db: AsyncIOMotorDatabase) -> None:
+    campaign = await db.outreach_campaigns.find_one({
+        "workspace_id": workspace_id, "status": "warming_up",
+        "auto_launch_list_id": list_id, "is_deleted": {"$ne": True},
+    })
+    if campaign:
+        raise HTTPException(status_code=409, detail="Cancel the campaign's conditional launch before changing or deleting its Engage list")
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────
@@ -227,6 +246,7 @@ async def update_engage_list_settings(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    await _reject_armed_list_changes(list_id, workspace_id, db)
     if req.campaign_id:
         campaign = await db.outreach_campaigns.find_one({
             "id": req.campaign_id, "workspace_id": workspace_id, "is_deleted": {"$ne": True},
@@ -264,20 +284,142 @@ async def get_engage_list_stats(
     return counts
 
 
+@router.get("/lists/{list_id}/report")
+async def get_engage_report(
+    list_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Printable summary of recorded actions, excluding drafts and legacy status-only rows."""
+    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    engage_list = await db.outreach_engage_lists.find_one({"id": list_id, "workspace_id": workspace_id})
+    if not engage_list:
+        raise HTTPException(status_code=404, detail="Engagement list not found")
+    base = {"list_id": list_id, "workspace_id": workspace_id}
+    posts = await db.outreach_engage_posts.find(base, {
+        "_id": 0, "contact_id": 1, "liked_at": 1, "commented_at": 1, "discarded_at": 1,
+    }).to_list(10000)
+    liked = [post for post in posts if isinstance(post.get("liked_at"), datetime)]
+    commented = [post for post in posts if isinstance(post.get("commented_at"), datetime)]
+    discarded = [post for post in posts if isinstance(post.get("discarded_at"), datetime)]
+    engaged_contacts = {post.get("contact_id") for post in liked + commented if post.get("contact_id")}
+    return {
+        "list_name": engage_list.get("name", "Engage list"),
+        "generated_at": datetime.now(timezone.utc),
+        "contacts": await db.outreach_engage_contacts.count_documents(base),
+        "posts_fetched": len(posts),
+        "likes_sent": len(liked),
+        "comments_published": len(commented),
+        "posts_discarded": len(discarded),
+        "contacts_engaged": len(engaged_contacts),
+        "limited_to_recent_10000_posts": len(posts) == 10000,
+    }
+
+
+@router.get("/lists/{list_id}/drafts")
+async def list_engage_drafts(
+    list_id: str,
+    status_filter: str = "pending",
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """List human-reviewed comment drafts. Self-reported completion is not engagement."""
+    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    if status_filter not in {"pending", "completed", "dismissed", "all"}:
+        raise HTTPException(status_code=400, detail="Invalid draft status")
+    if not await db.outreach_engage_lists.find_one({"id": list_id, "workspace_id": workspace_id}):
+        raise HTTPException(status_code=404, detail="Engagement list not found")
+    base = {"list_id": list_id, "workspace_id": workspace_id}
+    query = base if status_filter == "all" else {**base, "status": status_filter}
+    drafts = await db.outreach_engage_drafts.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+    pending_count = await db.outreach_engage_drafts.count_documents({**base, "status": "pending"})
+    return {"drafts": drafts, "pending_count": pending_count}
+
+
+@router.post("/lists/{list_id}/drafts", status_code=status.HTTP_201_CREATED)
+async def create_engage_draft(
+    list_id: str,
+    req: CreateEngageDraftRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    if not await db.outreach_engage_lists.find_one({"id": list_id, "workspace_id": workspace_id}):
+        raise HTTPException(status_code=404, detail="Engagement list not found")
+    post = await db.outreach_engage_posts.find_one({
+        "id": req.post_id, "list_id": list_id, "workspace_id": workspace_id,
+    })
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found in this list")
+    if post.get("status") in {"commented", "discarded"}:
+        raise HTTPException(status_code=409, detail="This post can no longer be drafted")
+    content = req.comment_text.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Draft text cannot be empty")
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": uuid.uuid4().hex, "list_id": list_id, "workspace_id": workspace_id,
+        "post_id": req.post_id, "contact_id": post.get("contact_id"),
+        "post_url": post.get("post_url", ""),
+        "author_name": post.get("author_name", "LinkedIn Member"),
+        "post_excerpt": (post.get("content_text") or "")[:500],
+        "comment_text": content, "status": "pending", "source": "manual_review",
+        "created_by": current_user.get("user_id"), "created_at": now, "updated_at": now,
+    }
+    await db.outreach_engage_drafts.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@router.patch("/lists/{list_id}/drafts/{draft_id}")
+async def update_engage_draft(
+    list_id: str,
+    draft_id: str,
+    req: UpdateEngageDraftRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    if req.status is not None and req.status not in {"pending", "completed", "dismissed"}:
+        raise HTTPException(status_code=400, detail="Invalid draft status")
+    query = {"id": draft_id, "list_id": list_id, "workspace_id": workspace_id}
+    draft = await db.outreach_engage_drafts.find_one(query, {"_id": 0})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    if draft.get("status") != "pending":
+        raise HTTPException(status_code=409, detail="Only pending drafts can be changed")
+    updates: dict[str, Any] = {"updated_at": datetime.now(timezone.utc)}
+    if req.comment_text is not None:
+        updates["comment_text"] = req.comment_text.strip()
+        if not updates["comment_text"]:
+            raise HTTPException(status_code=400, detail="Draft text cannot be empty")
+    if req.status is not None:
+        updates["status"] = req.status
+        if req.status == "completed":
+            updates["completion_source"] = "self_reported"
+            updates["completed_at"] = updates["updated_at"]
+    result = await db.outreach_engage_drafts.update_one({**query, "status": "pending"}, {"$set": updates})
+    if not result.modified_count:
+        raise HTTPException(status_code=409, detail="Draft changed while you were reviewing it")
+    return {**draft, **updates}
+
+
 @router.delete("/lists/{list_id}", status_code=status.HTTP_200_OK)
 async def delete_engage_list(
     list_id: str,
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """Delete an engagement list, including all its contacts and cached posts."""
+    """Delete an engagement list, including its contacts, posts, and review drafts."""
     workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    await _reject_armed_list_changes(list_id, workspace_id, db)
     result = await db.outreach_engage_lists.delete_one({"id": list_id, "workspace_id": workspace_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Engagement list not found")
 
     await db.outreach_engage_contacts.delete_many({"list_id": list_id, "workspace_id": workspace_id})
     await db.outreach_engage_posts.delete_many({"list_id": list_id, "workspace_id": workspace_id})
+    await db.outreach_engage_drafts.delete_many({"list_id": list_id, "workspace_id": workspace_id})
     return {"status": "deleted", "list_id": list_id}
 
 
@@ -391,6 +533,9 @@ async def delete_engage_contact(
     if not result.deleted_count:
         raise HTTPException(status_code=404, detail="Contact not found")
     await db.outreach_engage_posts.delete_many({
+        "contact_id": contact_id, "list_id": list_id, "workspace_id": workspace_id,
+    })
+    await db.outreach_engage_drafts.delete_many({
         "contact_id": contact_id, "list_id": list_id, "workspace_id": workspace_id,
     })
     total = await db.outreach_engage_contacts.count_documents({"list_id": list_id, "workspace_id": workspace_id})

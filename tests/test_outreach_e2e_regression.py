@@ -36,6 +36,7 @@ from outreach.api.campaigns import (
     LaunchCampaignRequest,
 )
 from outreach.engine.inbox_sync import InboxSynchronizer
+from outreach.core.crypto import encrypt_secret
 
 
 def test_winning_templates_dag_compilation():
@@ -103,7 +104,10 @@ async def test_custom_templates_lifecycle():
             {"id": "n2", "type": SequenceNodeType.CONNECTION_REQUEST, "title": "Invite", "delay_hours": 0},
         ],
         edges=[{"id": "e1", "source": "n1", "target": "n2"}],
-        tree=[{"id": "n1", "type": "visit_profile", "delay_days": 0}],
+        tree=[
+            {"id": "n1", "type": "visit_profile", "delay_days": 0},
+            {"id": "n2", "type": "connection_request", "delay_days": 0},
+        ],
     )
     save_res = await save_custom_template(req=save_req, current_user=user, db=mock_db)
     assert save_res["status"] == "success"
@@ -145,6 +149,12 @@ async def test_campaign_autodraft_and_sequence_flow():
     async def mock_find_camp(q):
         return campaigns_store.get(q.get("id"))
     mock_db.outreach_campaigns.find_one = mock_find_camp
+
+    async def mock_insert_camp(doc):
+        campaigns_store[doc["id"]] = dict(doc)
+        return AsyncMock(inserted_id=doc["id"])
+
+    mock_db.outreach_campaigns.insert_one = mock_insert_camp
 
     async def mock_seq_update(query, update, upsert=False):
         c_id = query["campaign_id"]
@@ -204,6 +214,13 @@ async def test_campaign_launch_and_lead_queueing():
     }
     mock_db.outreach_campaigns.find_one = AsyncMock(return_value=camp_doc)
     mock_db.outreach_campaigns.update_one = AsyncMock()
+    sender_cursor = AsyncMock()
+    sender_cursor.to_list = AsyncMock(return_value=[{
+        "id": "acc_sender_1", "workspace_id": "ws_launch", "status": "active",
+        "session_cookie_enc": encrypt_secret("AQverified-session"),
+        "jsession_id": "ajax:123", "proxy": {"host": "198.51.100.10"},
+    }])
+    mock_db.outreach_accounts.find = lambda q: sender_cursor
 
     # Prebuilt sequence exists
     prebuilts = DAGCompiler.get_prebuilt_templates()
@@ -215,6 +232,10 @@ async def test_campaign_launch_and_lead_queueing():
     }
     mock_db.outreach_sequences.find_one = AsyncMock(return_value=seq_doc)
     mock_db.outreach_sequences.update_one = AsyncMock()
+    mock_db.outreach_leads.count_documents = AsyncMock(return_value=5)
+    empty_cursor = AsyncMock()
+    empty_cursor.to_list = AsyncMock(return_value=[])
+    mock_db.outreach_engage_lists.find = lambda q: empty_cursor
 
     # Unassigned leads to be pooled and queued
     leads_list = [{"id": f"lead_{i}", "current_node_id": None} for i in range(5)]
@@ -256,11 +277,14 @@ async def test_inbox_synchronization_and_campaign_kpi_impact():
         "id": "acc_sync_1",
         "workspace_id": "ws_sync",
         "user_id": "u_sync",
+        "status": "active",
         "session_cookie_enc": Fernet(os.environ["ENCRYPTION_KEY"].encode()).encrypt(b"mock_cookie").decode(),
         "jsession_id": "ajax:12345",
         "proxy_config": {"host": "1.2.3.4", "port": 8080},
     }
     mock_db.outreach_accounts.find_one = AsyncMock(return_value=account)
+    mock_db.outreach_inbox_threads.find_one = AsyncMock(return_value=None)
+    mock_db.outreach_inbox_threads.count_documents = AsyncMock(return_value=1)
 
     # Lead document in CRM
     lead_doc = {
@@ -275,12 +299,12 @@ async def test_inbox_synchronization_and_campaign_kpi_impact():
     mock_db.outreach_leads.find_one = AsyncMock(return_value=lead_doc)
 
     lead_updates = []
-    async def mock_lead_update_many(q, u):
+    async def mock_lead_update_one(q, u):
         lead_updates.append((q, u))
         res = AsyncMock()
         res.modified_count = 1
         return res
-    mock_db.outreach_leads.update_many = mock_lead_update_many
+    mock_db.outreach_leads.update_one = mock_lead_update_one
 
     mock_db.outreach_threads.update_one = AsyncMock()
 
@@ -294,6 +318,8 @@ async def test_inbox_synchronization_and_campaign_kpi_impact():
     mock_conversations = [
         {
             "thread_urn": "urn:li:fs_conversation:998877",
+            "lead_urn": "urn:li:fsd_profile:alexrivers",
+            "lead_profile_url": "https://linkedin.com/in/alexrivers",
             "lead_name": "Alex Rivers",
             "lead_headline": "VP of Growth @ Acme",
             "messages": [
@@ -328,4 +354,4 @@ async def test_inbox_synchronization_and_campaign_kpi_impact():
         q, inc_u = campaign_kpi_increments[0]
         assert q["id"] == "camp_e2e_target"
         assert inc_u["$inc"]["replies_count"] == 1
-        assert inc_u["$inc"]["interested_count"] == 1
+        assert campaign_kpi_increments[1][1]["$set"]["interested_count"] == 1

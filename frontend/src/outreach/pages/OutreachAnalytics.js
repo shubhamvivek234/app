@@ -1,36 +1,40 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { toast } from 'sonner';
 import {
   BarChart3,
   UserCheck,
   MessageSquare,
   Sparkles,
-  Mail,
   Calendar,
   Filter,
   RefreshCw,
   PhoneCall,
-  CheckCircle2,
   TrendingUp,
 } from 'lucide-react';
 
 export default function OutreachAnalytics() {
   const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [timeframe, setTimeframe] = useState('30d');
   const [campaignId, setCampaignId] = useState('all');
   const [campaigns, setCampaigns] = useState([]);
   const [selectedMetric, setSelectedMetric] = useState('requests'); // 'requests' | 'messages'
   const [hoveredBar, setHoveredBar] = useState(null);
+  const requestId = useRef(0);
 
   const fetchCampaigns = async () => {
     try {
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/campaigns', {
+        credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
         const data = await res.json();
         setCampaigns(data || []);
+      } else {
+        toast.error('Could not load campaigns for analytics');
       }
     } catch (err) {
       console.error('Failed to fetch campaigns for analytics:', err);
@@ -38,7 +42,9 @@ export default function OutreachAnalytics() {
   };
 
   const fetchAnalytics = async () => {
+    const currentRequest = ++requestId.current;
     setLoading(true);
+    setLoadError('');
     try {
       const token = localStorage.getItem('token');
       const params = new URLSearchParams();
@@ -46,16 +52,20 @@ export default function OutreachAnalytics() {
       if (campaignId && campaignId !== 'all') params.append('campaign_id', campaignId);
 
       const res = await fetch(`/api/v1/outreach/analytics?${params.toString()}`, {
+        credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
-      if (res.ok) {
-        const data = await res.json();
-        setAnalytics(data);
-      }
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Could not load analytics');
+      const data = await res.json();
+      if (currentRequest === requestId.current) setAnalytics(data);
     } catch (err) {
-      console.error('Failed to load outreach analytics:', err);
+      if (currentRequest === requestId.current) {
+        setAnalytics(null);
+        setLoadError(err.message || 'Could not load analytics');
+        toast.error(err.message || 'Could not load analytics');
+      }
     } finally {
-      setLoading(false);
+      if (currentRequest === requestId.current) setLoading(false);
     }
   };
 
@@ -65,6 +75,7 @@ export default function OutreachAnalytics() {
 
   useEffect(() => {
     fetchAnalytics();
+    return () => { requestId.current += 1; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeframe, campaignId]);
 
@@ -72,7 +83,6 @@ export default function OutreachAnalytics() {
     requests: { sent: 0, accepted: 0, acceptance_rate: 0 },
     messages: { sent: 0, replied: 0, reply_rate: 0 },
     engagement: { total_actions: 0, profile_visits: 0, post_engagements: 0 },
-    email: { delivered: 0, deliverability_rate: 0 },
     pipeline: { total_leads: 0, in_campaign: 0, replied: 0, call_booked: 0 },
   };
 
@@ -80,12 +90,22 @@ export default function OutreachAnalytics() {
 
   const dailyChart = analytics?.daily_chart || [];
   const maxBarValue = Math.max(
-    ...dailyChart.map((d) => Math.max(d.sent || 0, d.accepted || 0, d.replied || 0)),
+    ...dailyChart.map((d) => Math.max(d.sent || 0, d.messages_sent || 0, d.accepted || 0, d.replied || 0)),
     10
   );
   // Round up to nearest multiple of 5 for clean Y-axis ticks
   const yMax = Math.ceil(maxBarValue / 5) * 5;
   const yTicks = [yMax, Math.round(yMax * 0.75), Math.round(yMax * 0.5), Math.round(yMax * 0.25), 0];
+
+  if (loadError && !loading) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 bg-[#fafafa] p-8 text-center">
+        <p className="text-sm font-semibold text-gray-900">Analytics could not be loaded</p>
+        <p className="text-xs text-gray-600">{loadError}</p>
+        <button type="button" onClick={fetchAnalytics} className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white">Retry</button>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full max-h-full min-h-0 bg-[#fafafa] overflow-y-auto px-8 py-7 font-sans">
@@ -160,7 +180,7 @@ export default function OutreachAnalytics() {
       </div>
 
       {/* KPI Cards Grid matching prosp_campaign_analytics.jpg */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
         {/* Card 1: LinkedIn Requests */}
         <div
           onClick={() => setSelectedMetric('requests')}
@@ -181,11 +201,11 @@ export default function OutreachAnalytics() {
               {kpis.requests?.sent ?? 0}
             </span>
             <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full">
-              {kpis.requests?.acceptance_rate ?? 0}% accepted
+              {kpis.requests?.accepted ?? 0} accepted
             </span>
           </div>
           <p className="text-[11px] text-gray-600 mt-2">
-            {kpis.requests?.accepted ?? 0} connection requests accepted
+            Confirmed invitations sent in this period
           </p>
         </div>
 
@@ -209,11 +229,11 @@ export default function OutreachAnalytics() {
               {kpis.messages?.sent ?? 0}
             </span>
             <span className="text-[11px] font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full">
-              {kpis.messages?.reply_rate ?? 0}% replied
+              {kpis.messages?.replied ?? 0} replies
             </span>
           </div>
           <p className="text-[11px] text-gray-600 mt-2">
-            {kpis.messages?.replied ?? 0} responses received in inbox
+            Confirmed direct messages sent in this period
           </p>
         </div>
 
@@ -234,27 +254,8 @@ export default function OutreachAnalytics() {
             </span>
           </div>
           <p className="text-[11px] text-gray-600 mt-2">
-            {kpis.engagement?.profile_visits ?? 0} profile views · {kpis.engagement?.post_engagements ?? 0} post likes
+            {kpis.engagement?.profile_visits ?? 0} profile views · {kpis.engagement?.post_engagements ?? 0} post actions
           </p>
-        </div>
-
-        {/* Card 4: Email Delivered */}
-        <div className="rounded-2xl p-5 border bg-white border-gray-200/90 shadow-2xs">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center">
-              <Mail className="w-4 h-4" />
-            </div>
-            <span className="text-xs font-semibold text-gray-700">Email Delivered</span>
-          </div>
-          <div className="flex items-baseline justify-between">
-            <span className="text-3xl font-extrabold text-gray-900 tracking-tight">
-              {kpis.email?.delivered ?? 0}
-            </span>
-            <span className="text-[11px] font-semibold text-sky-700 bg-sky-50 px-2 py-0.5 rounded-full">
-              {kpis.email?.deliverability_rate ?? 99.4}% health
-            </span>
-          </div>
-          <p className="text-[11px] text-gray-600 mt-2">High deliverability inbox rotation</p>
         </div>
       </div>
 
@@ -303,28 +304,19 @@ export default function OutreachAnalytics() {
             <div className="flex items-center gap-2">
               <span className="w-3.5 h-3.5 rounded bg-indigo-600 inline-block shadow-2xs" />
               <span className="text-xs font-semibold text-gray-700">
-                Sent: <strong className="text-gray-900">{kpis.requests?.sent ?? 0}</strong>
+                Sent: <strong className="text-gray-900">{selectedMetric === 'requests' ? kpis.requests?.sent ?? 0 : kpis.messages?.sent ?? 0}</strong>
               </span>
             </div>
             <div className="flex items-center gap-2">
               <span className="w-3.5 h-3.5 rounded bg-sky-400 inline-block shadow-2xs" />
               <span className="text-xs font-semibold text-gray-700">
-                Accepted: <strong className="text-gray-900">{kpis.requests?.accepted ?? 0}</strong>
+                {selectedMetric === 'requests' ? 'Accepted' : 'Replied'}: <strong className="text-gray-900">{selectedMetric === 'requests' ? kpis.requests?.accepted ?? 0 : kpis.messages?.replied ?? 0}</strong>
               </span>
             </div>
-            {selectedMetric === 'messages' && (
-              <div className="flex items-center gap-2">
-                <span className="w-3.5 h-3.5 rounded bg-purple-500 inline-block shadow-2xs" />
-                <span className="text-xs font-semibold text-gray-700">
-                  Replied: <strong className="text-gray-900">{kpis.messages?.replied ?? 0}</strong>
-                </span>
-              </div>
-            )}
           </div>
 
           <div className="flex items-center gap-1.5 text-xs text-gray-600 font-medium">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-            <span>Live daily performance sync</span>
+            <span>Recorded activity in the selected period</span>
           </div>
         </div>
 
@@ -346,9 +338,10 @@ export default function OutreachAnalytics() {
             {/* Bars Container */}
             <div className="absolute inset-y-0 left-9 right-2 flex items-end justify-between gap-1 sm:gap-2 pb-1">
               {dailyChart.map((d, index) => {
-                const sentH = Math.min(Math.round(((d.sent || 0) / yMax) * 100), 100);
-                const acceptedH = Math.min(Math.round(((d.accepted || 0) / yMax) * 100), 100);
-                const repliedH = Math.min(Math.round(((d.replied || 0) / yMax) * 100), 100);
+                const sentCount = selectedMetric === 'requests' ? d.sent || 0 : d.messages_sent || 0;
+                const outcomeCount = selectedMetric === 'requests' ? d.accepted || 0 : d.replied || 0;
+                const sentH = Math.min(Math.round((sentCount / yMax) * 100), 100);
+                const outcomeH = Math.min(Math.round((outcomeCount / yMax) * 100), 100);
 
                 return (
                   <div
@@ -362,9 +355,8 @@ export default function OutreachAnalytics() {
                       <div className="absolute -top-12 z-20 bg-gray-900 text-white rounded-lg px-2.5 py-1.5 text-[10px] shadow-lg pointer-events-none whitespace-nowrap">
                         <p className="font-bold">{d.date}</p>
                         <p className="text-gray-300">
-                          Sent: <strong className="text-white">{d.sent}</strong> · Accepted:{' '}
-                          <strong className="text-white">{d.accepted}</strong> · Replied:{' '}
-                          <strong className="text-white">{d.replied}</strong>
+                          Sent: <strong className="text-white">{sentCount}</strong> · {selectedMetric === 'requests' ? 'Accepted' : 'Replied'}:{' '}
+                          <strong className="text-white">{outcomeCount}</strong>
                         </p>
                       </div>
                     )}
@@ -373,20 +365,14 @@ export default function OutreachAnalytics() {
                     <div className="w-full flex items-end justify-center gap-1 h-full pb-1">
                       {/* Sent bar */}
                       <div
-                        style={{ height: `${Math.max(sentH, 4)}%` }}
+                        style={{ height: `${sentH}%` }}
                         className="w-1/2 max-w-[16px] rounded-t-sm sm:rounded-t-md bg-indigo-600 transition-all duration-300 group-hover:bg-indigo-700"
                       />
                       {/* Accepted bar */}
                       <div
-                        style={{ height: `${Math.max(acceptedH, 4)}%` }}
+                        style={{ height: `${outcomeH}%` }}
                         className="w-1/2 max-w-[16px] rounded-t-sm sm:rounded-t-md bg-sky-400 transition-all duration-300 group-hover:bg-sky-500"
                       />
-                      {selectedMetric === 'messages' && (
-                        <div
-                          style={{ height: `${Math.max(repliedH, 4)}%` }}
-                          className="w-1/2 max-w-[16px] rounded-t-sm sm:rounded-t-md bg-purple-500 transition-all duration-300 group-hover:bg-purple-600"
-                        />
-                      )}
                     </div>
 
                     {/* Date label */}

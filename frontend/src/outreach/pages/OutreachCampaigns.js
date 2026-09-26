@@ -23,10 +23,7 @@ export const PREBUILT_TEMPLATES = [
   {
     id: 'tpl_connect_and_follow_up',
     name: 'Connect and follow up',
-    description: 'Standard high-conversion outreach: Clean connection invite with no note, and follow-up message 1 day after acceptance.',
-    uses: '1,240',
-    acceptance: '32%',
-    reply: '24%',
+    description: 'Clean connection invite with no note, and follow-up message 1 day after acceptance.',
     nodes: [
       {
         id: 'step_connect_root',
@@ -95,9 +92,6 @@ export const PREBUILT_TEMPLATES = [
     id: 'tpl_profile_warmup',
     name: 'Profile warm-up',
     description: 'Multi-touch warm-up sequence: View profile and like recent post before sending a connection invite and welcome message.',
-    uses: '890',
-    acceptance: '38%',
-    reply: '29%',
     nodes: [
       {
         id: 'step_warmup_visit',
@@ -201,10 +195,7 @@ export const PREBUILT_TEMPLATES = [
   {
     id: 'tpl_voice_note_outreach',
     name: 'Voice note outreach',
-    description: 'High-reply multi-touch strategy: Profile visit, clean invite, and hyper-personalized AI voice note upon acceptance.',
-    uses: '2,150',
-    acceptance: '38%',
-    reply: '41%',
+    description: 'Profile visit, clean invite, and personalized voice note upon acceptance.',
     nodes: [
       {
         id: 'step_vn_visit',
@@ -324,9 +315,6 @@ export const PREBUILT_TEMPLATES = [
     id: 'tpl_multitouch_inmail',
     name: 'Multi-touch InMail & engage',
     description: 'Engage via follow and post like before dispatching targeted InMail directly to decision makers.',
-    uses: '1,420',
-    acceptance: '45%',
-    reply: '34%',
     nodes: [
       {
         id: 'step_inmail_follow',
@@ -399,6 +387,12 @@ export const PREBUILT_TEMPLATES = [
   },
 ];
 
+const LIVE_SEQUENCE_TYPES = new Set(['visit_profile', 'connection_request', 'send_message', 'like_last_post', 'voice_note', 'if_connected']);
+export const isLaunchableTemplate = (template) => Boolean(
+  template && Array.isArray(template.nodes) && template.nodes.length > 0
+  && template.nodes.every((node) => LIVE_SEQUENCE_TYPES.has(node.type))
+);
+
 export default function OutreachCampaigns({
   onOpenWizard,
   selectedCampaignId: propSelectedCampaignId,
@@ -408,6 +402,7 @@ export default function OutreachCampaigns({
 }) {
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [campaignError, setCampaignError] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isWizardOpen, setIsWizardOpen] = useState(false);
@@ -442,6 +437,7 @@ export default function OutreachCampaigns({
 
   const fetchCampaigns = async () => {
     setLoading(true);
+    setCampaignError('');
     try {
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/campaigns', {
@@ -462,10 +458,11 @@ export default function OutreachCampaigns({
         });
       } else {
         const error = await res.json().catch(() => ({}));
-        toast.error(error.detail || 'Could not load campaigns. Please try again.');
+        setCampaignError(error.detail || 'Could not load campaigns. Please try again.');
       }
     } catch (err) {
       console.error('Failed to fetch campaigns:', err);
+      setCampaignError(err.message || 'Could not load campaigns. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -530,6 +527,15 @@ export default function OutreachCampaigns({
         (p) => p.id === tpl.id || (tpl.id === 'tpl_inmail_engage' && p.id === 'tpl_multitouch_inmail') || p.name === tpl.name
       ) || tpl;
 
+    if (!Array.isArray(fullTpl.nodes) || !Array.isArray(fullTpl.edges) || !fullTpl.nodes.length) {
+      toast.error('This template is missing its sequence data.');
+      return false;
+    }
+    if (!isLaunchableTemplate(fullTpl)) {
+      toast.error('This template contains steps that are not available for live campaigns yet.');
+      return false;
+    }
+
     try {
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/campaigns/auto-draft', {
@@ -552,9 +558,7 @@ export default function OutreachCampaigns({
         throw new Error(error.detail || 'Could not create a campaign from this template.');
       }
       const draft = await res.json();
-      if (!draft?.id || !Array.isArray(fullTpl.nodes) || !Array.isArray(fullTpl.edges)) {
-        throw new Error('This template is missing its sequence data.');
-      }
+      if (!draft?.id) throw new Error('The campaign draft was not saved.');
       const sequenceRes = await fetch('/api/v1/outreach/sequences', {
         method: 'POST',
         credentials: 'include',
@@ -593,7 +597,7 @@ export default function OutreachCampaigns({
   const handleCreateNewCampaign = async (nameOverride) => {
     const safeName = typeof nameOverride === 'string' && nameOverride.trim()
       ? nameOverride.trim()
-      : `test${campaigns.length + 1}`;
+      : `Campaign ${campaigns.length + 1}`;
 
     setIsCreatingCampaign(true);
     try {
@@ -607,16 +611,17 @@ export default function OutreachCampaigns({
         },
         body: JSON.stringify({
           name: safeName,
-          draft_step: 2,
-          draft_progress: 40,
-          next_step_label: 'Next: add your leads',
+          draft_step: 1,
+          draft_progress: 20,
+          next_step_label: 'Next: configure sequence',
         }),
       });
       if (res.ok) {
         const draft = await res.json();
+        if (!draft?.id) throw new Error('The campaign draft was not saved.');
         toast.success(`Campaign created: “${safeName}”`);
         if (onOpenWizard) {
-          onOpenWizard(draft.id, 2, draft.name || safeName);
+          onOpenWizard(draft.id, 1, draft.name || safeName);
         } else {
           setActiveCampaignId(draft.id);
           setIsWizardOpen(true);
@@ -815,9 +820,8 @@ export default function OutreachCampaigns({
             <thead className="border-b border-gray-100 bg-gray-50/50 text-gray-400 uppercase font-semibold text-[10px] tracking-wider">
               <tr>
                 <th className="py-3 px-5">TEMPLATE</th>
-                <th className="py-3 px-5">USES</th>
-                <th className="py-3 px-5">ACCEPTANCE</th>
-                <th className="py-3 px-5">REPLY</th>
+                <th className="py-3 px-5">STEPS</th>
+                <th className="py-3 px-5">READINESS</th>
                 <th className="py-3 px-5 text-right">ACTION</th>
               </tr>
             </thead>
@@ -837,9 +841,8 @@ export default function OutreachCampaigns({
                       <p className="text-[11px] text-gray-400 mt-0.5 truncate max-w-md">{tpl.description}</p>
                     )}
                   </td>
-                  <td className="py-4 px-5 text-gray-400">{tpl.uses || '—'}</td>
-                  <td className="py-4 px-5 text-gray-400">{tpl.acceptance || '—'}</td>
-                  <td className="py-4 px-5 text-gray-400">{tpl.reply || '—'}</td>
+                  <td className="py-4 px-5 text-gray-500">{Array.isArray(tpl.nodes) ? tpl.nodes.length : '—'}</td>
+                  <td className="py-4 px-5 text-gray-500">{isLaunchableTemplate(tpl) ? 'Ready to configure' : 'Preview only'}</td>
                   <td className="py-4 px-5 text-right">
                     <div className="flex items-center justify-end gap-2">
                       {tpl.is_custom && (
@@ -853,9 +856,11 @@ export default function OutreachCampaigns({
                       )}
                       <button
                         onClick={() => handleUseTemplate(tpl)}
-                        className="rounded-lg bg-indigo-50 text-[#5145cd] hover:bg-indigo-100 px-3.5 py-1.5 text-xs font-semibold transition-colors"
+                        disabled={!isLaunchableTemplate(tpl)}
+                        title={!isLaunchableTemplate(tpl) ? 'Contains sequence steps not supported by the live runner' : undefined}
+                        className="rounded-lg bg-indigo-50 text-[#5145cd] hover:bg-indigo-100 px-3.5 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        Use
+                        {isLaunchableTemplate(tpl) ? 'Use' : 'Unavailable'}
                       </button>
                     </div>
                   </td>
@@ -875,6 +880,7 @@ export default function OutreachCampaigns({
     const matchesStatus =
       statusFilter === 'all' ||
       (statusFilter === 'sending' && c.status === 'active') ||
+      (statusFilter === 'warming' && c.status === 'warming_up') ||
       (statusFilter === 'paused' && c.status === 'paused') ||
       (statusFilter === 'draft' && c.status === 'draft');
     const matchesSearch =
@@ -935,7 +941,7 @@ export default function OutreachCampaigns({
                   />
                 </div>
                 <span className="text-[11px] text-gray-400">
-                  {draftCampaign.next_step_label || 'Next: add your leads'}
+                  {draftCampaign.next_step_label || 'Next: configure sequence'}
                 </span>
               </div>
             </div>
@@ -963,6 +969,7 @@ export default function OutreachCampaigns({
           {[
             { id: 'all', label: 'All', count: campaigns.length },
             { id: 'sending', label: 'Sending', count: campaigns.filter((c) => c.status === 'active').length },
+            { id: 'warming', label: 'Warming up', count: campaigns.filter((c) => c.status === 'warming_up').length },
             { id: 'paused', label: 'Paused', count: campaigns.filter((c) => c.status === 'paused').length },
             { id: 'draft', label: 'Draft', count: campaigns.filter((c) => c.status === 'draft').length },
           ].map((tab) => (
@@ -1028,6 +1035,10 @@ export default function OutreachCampaigns({
           <div className="flex items-center justify-center py-20 text-gray-400">
             <RefreshCw className="h-6 w-6 animate-spin" />
           </div>
+        ) : campaignError ? (
+          <div role="alert" className="p-16 text-center text-sm text-red-600">
+            {campaignError} <button type="button" onClick={fetchCampaigns} className="ml-2 font-semibold underline">Retry</button>
+          </div>
         ) : filteredCampaigns.length === 0 ? (
           <div className="p-16 text-center text-gray-500">
             <p className="text-xs font-medium text-gray-500">No campaigns found in this view.</p>
@@ -1080,6 +1091,8 @@ export default function OutreachCampaigns({
                         className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${
                           camp.status === 'active'
                             ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : camp.status === 'warming_up'
+                            ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
                             : camp.status === 'paused'
                             ? 'bg-amber-50 text-amber-700 border-amber-200'
                             : 'bg-white text-gray-600 border-gray-200'
@@ -1155,6 +1168,12 @@ export default function OutreachCampaigns({
                               Pause campaign
                             </button>
                           )}
+                          {camp.status === 'warming_up' && (
+                            <button onClick={() => handlePauseCampaign(camp.id, camp.name)}
+                              className="w-full text-left px-3 py-1.5 rounded-lg text-amber-700 hover:bg-amber-50 font-medium flex items-center gap-2">
+                              <Pause className="h-3.5 w-3.5" /> Cancel auto-launch
+                            </button>
+                          )}
                           {camp.status === 'paused' && (
                             <button
                               onClick={() => handleResumeCampaign(camp.id, camp.name)}
@@ -1196,7 +1215,9 @@ export default function OutreachCampaigns({
                           <button
                             onClick={() => {
                               setMenuOpenId(null);
-                              if (onOpenWizard) onOpenWizard(camp.id, 2);
+                              if (['active', 'warming_up'].includes(camp.status)) {
+                                toast.error('Pause the campaign before editing its sequence.');
+                              } else if (onOpenWizard) onOpenWizard(camp.id, 2);
                             }}
                             className="w-full text-left px-3 py-1.5 rounded-lg text-gray-700 hover:bg-gray-50 font-medium flex items-center gap-2"
                           >
@@ -1233,7 +1254,7 @@ export default function OutreachCampaigns({
                   Start a new campaign
                 </h2>
                 <p className="text-xs text-gray-500 mt-1">
-                  Build the outreach first. You add leads in the next step.
+                  Add leads first, then build the outreach sequence.
                 </p>
               </div>
               <button
@@ -1299,7 +1320,7 @@ export default function OutreachCampaigns({
                 </div>
               </div>
 
-              {/* Card 2: Use a proven template [Recommended] */}
+              {/* Card 2: starter template */}
               <div className="flex flex-col rounded-2xl border-2 border-indigo-200/90 bg-indigo-50/10 p-4 hover:border-indigo-400 hover:shadow-md transition-all group relative">
                 {/* Recommended Badge */}
                 <div className="absolute -top-2.5 right-4 px-2 py-0.5 rounded-full bg-[#5145cd] text-white text-[10px] font-bold shadow-xs">
@@ -1313,12 +1334,7 @@ export default function OutreachCampaigns({
                       %
                     </span>
                     <div className="flex items-center gap-1">
-                      <span className="px-2 py-0.5 rounded-md bg-white/90 text-[10px] font-bold text-indigo-700 shadow-2xs">
-                        32% Acc
-                      </span>
-                      <span className="px-2 py-0.5 rounded-md bg-white/90 text-[10px] font-bold text-emerald-700 shadow-2xs">
-                        24% Rep
-                      </span>
+                    <span className="px-2 py-0.5 rounded-md bg-white/90 text-[10px] font-bold text-indigo-700 shadow-2xs">Starter sequence</span>
                     </div>
                   </div>
                   <div className="space-y-1.5">
@@ -1331,13 +1347,13 @@ export default function OutreachCampaigns({
                 <div className="mt-4 flex-1 flex flex-col justify-between space-y-3">
                   <div>
                     <h3 className="text-base font-extrabold text-gray-900">
-                      Use a proven template
+                      Use a starter template
                     </h3>
                     <p className="text-xs text-indigo-600 font-semibold mt-0.5">
-                      Most teams start here.
+                      Configure a sequence quickly.
                     </p>
                     <p className="text-xs text-gray-500 mt-1 leading-relaxed">
-                      Browse and review available prebuilt sequences with proven conversion data and instant setup.
+                      Browse prebuilt sequences and choose a supported flow to customize.
                     </p>
                   </div>
 

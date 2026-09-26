@@ -8,6 +8,13 @@ if not os.environ.get("ENCRYPTION_KEY"):
     os.environ["ENCRYPTION_KEY"] = Fernet.generate_key().decode()
 
 import pytest
+from types import SimpleNamespace
+from outreach.core.crypto import encrypt_secret
+
+
+@pytest.fixture(autouse=True)
+def sandbox_linkedin_sessions(monkeypatch):
+    monkeypatch.setenv("OUTREACH_MOCK_AUTH", "true")
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
@@ -51,7 +58,9 @@ def test_working_hours_gatekeeper():
 async def test_daily_limit_governor():
     """Verify rate limiter blocks actions once configured cap is reached."""
     mock_db = AsyncMock()
-    mock_db.outreach_accounts.update_one = AsyncMock()
+    mock_db.outreach_accounts.update_one = AsyncMock(side_effect=[
+        SimpleNamespace(matched_count=1), SimpleNamespace(matched_count=0),
+    ])
 
     account = {
         "id": "acc_1",
@@ -109,8 +118,21 @@ async def test_campaign_api_lifecycle():
     mock_db.outreach_campaigns.find_one = AsyncMock(return_value={
         "id": camp["id"],
         "user_id": "u1",
+        "workspace_id": "ws1",
+        "status": "draft",
+        "schedule": camp["schedule"],
         "sender_account_ids": ["acc_1", "acc_2"],
     })
+    senders_cursor = AsyncMock()
+    senders_cursor.to_list = AsyncMock(return_value=[
+        {"id": account_id, "workspace_id": "ws1", "status": "active", "session_cookie_enc": encrypt_secret(f"mock_{account_id}")}
+        for account_id in ("acc_1", "acc_2")
+    ])
+    mock_db.outreach_accounts.find = lambda query: senders_cursor
+    mock_db.outreach_leads.count_documents = AsyncMock(return_value=3)
+    empty_cursor = AsyncMock()
+    empty_cursor.to_list = AsyncMock(return_value=[])
+    mock_db.outreach_engage_lists.find = lambda query: empty_cursor
 
     # 3 unassigned leads
     fake_leads = [{"id": "lead_1"}, {"id": "lead_2"}, {"id": "lead_3"}]

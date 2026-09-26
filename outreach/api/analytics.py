@@ -8,7 +8,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Any
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/analytics", tags=["LinkedIn Outreach Analytics"])
 @router.get("")
 async def get_outreach_analytics(
     campaign_id: str | None = None,
-    timeframe: str = Query("30d", description="'7d' | '14d' | '30d' | 'all'"),
+    timeframe: str = Query("30d", description="'7d' | '14d' | '30d'"),
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
@@ -31,11 +31,21 @@ async def get_outreach_analytics(
     Returns aggregated outreach KPIs (Requests, Messages, Engagement, Email)
     and daily Sent vs Accepted timeline for bar chart visualization.
     """
-    workspace_id = current_user.get("default_workspace_id") or "default_ws"
-    user_id = current_user.get("user_id")
+    if timeframe not in {"7d", "14d", "30d"}:
+        raise HTTPException(status_code=422, detail="Invalid analytics timeframe")
+    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    scope = {"workspace_id": workspace_id}
+    if campaign_id and campaign_id != "all":
+        campaign = await db.outreach_campaigns.find_one({"id": campaign_id, **scope})
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+
+    num_days = {"7d": 7, "14d": 14, "30d": 30}[timeframe]
+    now = datetime.now(timezone.utc)
+    period_start = (now - timedelta(days=num_days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
 
     lead_clauses: list[dict[str, Any]] = [
-        {"$or": [{"workspace_id": workspace_id}, {"workspace_id": user_id}, {"user_id": user_id}]}
+        scope
     ]
     if campaign_id and campaign_id != "all":
         lead_clauses.append({"campaign_id": campaign_id})
@@ -44,13 +54,13 @@ async def get_outreach_analytics(
 
     # Aggregate counts from leads
     total_leads = await db.outreach_leads.count_documents(lead_query)
-    contacted_leads = await db.outreach_leads.count_documents({**lead_query, "pipeline_stage": {"$in": ["contacted", "replied", "call_booked"]}})
-    replied_leads = await db.outreach_leads.count_documents({**lead_query, "pipeline_stage": {"$in": ["replied", "call_booked"]}})
-    booked_leads = await db.outreach_leads.count_documents({**lead_query, "pipeline_stage": "call_booked"})
+    replied_leads = await db.outreach_leads.count_documents({"$and": [lead_query, {"pipeline_stage": "replied"}]})
+    booked_leads = await db.outreach_leads.count_documents({"$and": [lead_query, {"pipeline_stage": "call_booked"}]})
+    in_campaign = await db.outreach_leads.count_documents({"$and": [lead_query, {"pipeline_stage": {"$in": ["in_campaign", "contacted"]}}]})
 
     # Aggregate actual executed queue items if any
     queue_clauses: list[dict[str, Any]] = [
-        {"$or": [{"workspace_id": workspace_id}, {"workspace_id": user_id}, {"user_id": user_id}]}
+        scope
     ]
     if campaign_id and campaign_id != "all":
         queue_clauses.append({"campaign_id": campaign_id})
@@ -60,70 +70,66 @@ async def get_outreach_analytics(
     acc_count = 0
     if hasattr(db, "outreach_accounts"):
         acc_count = await db.outreach_accounts.count_documents({
-            "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": workspace_id}],
-            "status": {"$ne": "disconnected"},
+            **scope,
+            "status": "active",
         })
-    social_acc_count = 0
-    if hasattr(db, "social_accounts"):
-        social_acc_count = await db.social_accounts.count_documents({
-            "user_id": user_id,
-            "platform": {"$in": ["linkedin", "linkedin_page"]},
-            "is_active": True,
-        })
-    has_connected_account = (acc_count + social_acc_count) > 0
+    has_connected_account = acc_count > 0
 
-    total_tasks = await db.outreach_tasks.count_documents(queue_query)
-    completed_tasks = await db.outreach_tasks.count_documents({**queue_query, "status": "completed"})
+    def task_filter(task_type: str | dict, date_filter: dict | None = None) -> dict:
+        return {"$and": [queue_query, {"task_type": task_type, "status": "completed", **(date_filter or {"updated_at": {"$gte": period_start}})}]}
 
-    # Requests metrics (real values, zero if no activity)
-    task_reqs = await db.outreach_tasks.count_documents({**queue_query, "task_type": "connection_request", "status": "completed"})
-    requests_sent = task_reqs if task_reqs > 0 else contacted_leads
+    def lead_filter(fields: dict) -> dict:
+        return {"$and": [lead_query, fields]}
 
-    lead_accepted = await db.outreach_leads.count_documents({**lead_query, "is_connected": True})
-    requests_accepted = lead_accepted if lead_accepted > 0 else (replied_leads if contacted_leads > 0 else 0)
-    acceptance_rate = round((requests_accepted / requests_sent) * 100, 1) if requests_sent > 0 else 0.0
+    # Only recorded actions count; CRM stage changes must not fabricate sends.
+    requests_sent = await db.outreach_tasks.count_documents(task_filter("connection_request"))
+    requests_accepted = await db.outreach_leads.count_documents(lead_filter({"is_connected": True, "accepted_at": {"$gte": period_start}}))
 
     # Messages metrics
-    task_msgs = await db.outreach_tasks.count_documents({**queue_query, "task_type": "send_message", "status": "completed"})
-    messages_sent = task_msgs if task_msgs > 0 else (requests_accepted if requests_accepted > 0 else 0)
-    messages_replied = replied_leads
-    reply_rate = round((messages_replied / messages_sent) * 100, 1) if messages_sent > 0 else 0.0
+    messages_sent = await db.outreach_tasks.count_documents(task_filter("send_message"))
+    messages_replied = await db.outreach_leads.count_documents(lead_filter({"has_replied": True, "replied_at": {"$gte": period_start}}))
 
     # Engagement metrics (pre-warming visits, likes, comments)
-    profile_visits = await db.outreach_tasks.count_documents({**queue_query, "task_type": "visit_profile", "status": "completed"})
-    post_engagements = await db.outreach_tasks.count_documents({**queue_query, "task_type": {"$in": ["like_last_post", "comment_last_post"]}, "status": "completed"})
+    profile_visits = await db.outreach_tasks.count_documents(task_filter("visit_profile"))
+    post_engagements = await db.outreach_tasks.count_documents(task_filter({"$in": ["like_last_post", "comment_last_post"]}))
+    if hasattr(db, "outreach_engage_posts"):
+        engage_filter: dict[str, Any] = {"workspace_id": workspace_id}
+        if campaign_id and campaign_id != "all":
+            linked_list_ids = await db.outreach_engage_lists.distinct("id", {"workspace_id": workspace_id, "campaign_id": campaign_id})
+            engage_filter["list_id"] = {"$in": linked_list_ids}
+        post_engagements += await db.outreach_engage_posts.count_documents({**engage_filter, "liked_at": {"$gte": period_start}})
+        post_engagements += await db.outreach_engage_posts.count_documents({**engage_filter, "commented_at": {"$gte": period_start}})
     total_engagement = profile_visits + post_engagements
 
     # Days breakdown
-    num_days = 14 if timeframe == "14d" else (7 if timeframe == "7d" else 30)
-    now = datetime.now(timezone.utc)
-    daily_chart = []
+    count_slots = asyncio.Semaphore(8)
 
-    # Daily distribution (only populate if actual activity exists)
-    has_activity = (requests_sent > 0 or messages_sent > 0 or total_engagement > 0)
-    for d in range(num_days - 1, -1, -1):
+    async def count_for_day(collection, query: dict) -> int:
+        async with count_slots:
+            return await collection.count_documents(query)
+
+    async def day_summary(d: int) -> dict:
         day_date = now - timedelta(days=d)
         label = day_date.strftime("%d %b")
-        sent = 0
-        accepted = 0
-        replied = 0
-
-        if has_activity:
-            # Query actual tasks for that day
-            day_start = day_date.replace(hour=0, minute=0, second=0, microsecond=0)
-            day_end = day_date.replace(hour=23, minute=59, second=59, microsecond=999999)
-            date_filter = {"updated_at": {"$gte": day_start, "$lte": day_end}}
-            sent = await db.outreach_tasks.count_documents({**queue_query, **date_filter, "status": "completed"})
-            accepted = await db.outreach_leads.count_documents({**lead_query, "is_connected": True, "created_at": {"$gte": day_start, "$lte": day_end}})
-            replied = await db.outreach_leads.count_documents({**lead_query, "pipeline_stage": {"$in": ["replied", "call_booked"]}, "created_at": {"$gte": day_start, "$lte": day_end}})
-
-        daily_chart.append({
+        day_start = day_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
+        day_range = {"$gte": day_start, "$lt": day_end}
+        sent, messages_day, accepted, replied = await asyncio.gather(
+            count_for_day(db.outreach_tasks, task_filter("connection_request", {"updated_at": day_range})),
+            count_for_day(db.outreach_tasks, task_filter("send_message", {"updated_at": day_range})),
+            count_for_day(db.outreach_leads, lead_filter({"is_connected": True, "accepted_at": day_range})),
+            count_for_day(db.outreach_leads, lead_filter({"has_replied": True, "replied_at": day_range})),
+        )
+        return {
             "date": label,
             "timestamp": day_date.isoformat(),
             "sent": sent,
+            "messages_sent": messages_day,
             "accepted": accepted,
             "replied": replied,
-        })
+        }
+
+    daily_chart = await asyncio.gather(*(day_summary(d) for d in range(num_days - 1, -1, -1)))
 
     return {
         "has_connected_account": has_connected_account,
@@ -131,12 +137,12 @@ async def get_outreach_analytics(
             "requests": {
                 "sent": requests_sent,
                 "accepted": requests_accepted,
-                "acceptance_rate": acceptance_rate,
+                "acceptance_rate": None,  # A cohort rate cannot be derived from independent period counts.
             },
             "messages": {
                 "sent": messages_sent,
                 "replied": messages_replied,
-                "reply_rate": reply_rate,
+                "reply_rate": None,
             },
             "engagement": {
                 "total_actions": total_engagement,
@@ -149,7 +155,7 @@ async def get_outreach_analytics(
             },
             "pipeline": {
                 "total_leads": total_leads,
-                "in_campaign": max(total_leads - booked_leads - replied_leads, 0),
+                "in_campaign": in_campaign,
                 "replied": replied_leads,
                 "call_booked": booked_leads,
             }
@@ -169,8 +175,7 @@ async def live_activity_feed(
     Real-time Server-Sent Events (SSE) stream for live outreach touchpoints and activity.
     Broadcasts completed tasks, invitations, replies, and heartbeats at $0 infra cost.
     """
-    user_id = current_user.get("user_id")
-    workspace_id = current_user.get("default_workspace_id") or "default_ws"
+    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
 
     async def event_generator():
         # Initial greeting event
@@ -187,9 +192,9 @@ async def live_activity_feed(
                 now = datetime.now(timezone.utc)
                 # Check for tasks completed since last check
                 recent_tasks = await db.outreach_tasks.find({
-                    "$or": [{"workspace_id": workspace_id}, {"workspace_id": user_id}, {"user_id": user_id}],
+                    "workspace_id": workspace_id,
                     "status": "completed",
-                    "updated_at": {"$gte": last_check},
+                    "updated_at": {"$gt": last_check, "$lte": now},
                 }).sort("updated_at", -1).to_list(length=10)
 
                 for t in recent_tasks:
@@ -226,4 +231,3 @@ async def live_activity_feed(
             "X-Accel-Buffering": "no",
         },
     )
-

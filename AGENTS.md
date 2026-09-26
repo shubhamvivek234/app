@@ -4,26 +4,25 @@
 ## Current Phase
 Stage: v9.1 Prosp AI Architectural Advantages & Live Streaming Shipped
 Branch: main
-Focus: Engage & Grow verification, outreach safety, and campaign warm-up
+Focus: Engage Draft & Review and guarded campaign warm-up completion
 
 ## Last Session Completed
-Date: 2026-09-25
+Date: 2026-09-26
 Completed:
-- LinkedIn Cold Outreach Campaign audit: create/edit/template, leads, sequence, schedule, limits, launch/pause/resume, duplicate/delete/restore, and analytics.
-- Fixed phantom campaign/template success, sequence save/lifecycle issues, workspace ownership checks, stale campaign metrics, invalid schedule/cap handling, and failed actions being counted as success.
-- Added a scheduled campaign runner with due-step claiming, explicit wait/branch handling, verified LinkedIn profile URNs, and fail-safe mock defaults.
-- Removed fabricated prospect enrollment; disabled disconnected lead sources and unsupported sequence actions/limits. Prompt tokens now preview as placeholders and cannot be launched as literal copy.
-- Improved CSV URL normalization, template variables, timezone/schedule display, and sender/launch validation.
-- Earlier Engage fixes B1-B6/B9-B10/B12-B16 and I1/I3/I5 were committed (`61c9195`, `58674e8`) and deployed, but B7/B8/B11 remained incomplete in practice.
-- This session fixed B7 (verified-only enrichment; legacy guessed identities hidden/reverified), B8 (Celery fetch with 3 concurrent requests, status/polling), and B11 (client lock + atomic backend claim). Like/comment now queue on the outreach worker; failed Voyager calls no longer count as successful engagement.
-- Added sender picker, true list stats, contact deletion/history, CSV report, writing styles in AI comments, post-age warnings, keyboard shortcuts, and media URL extraction/cards. Bulk likes now have human spacing.
-- Linked Engage lists to draft campaigns; campaign launch checks every lead has confirmed engagement and delays first action 24/48h. No unreviewed scheduled auto-comments (I14); the unsupported 12%→50% conversion claim was removed.
-- Local verification: 10 Engage tests passed, Python compile clean, frontend CI build succeeded with third-party source-map warnings. Broader campaign detail/short-link tests have pre-existing fixture/DNS failures. Live UI check blocked by locked Mac.
-- Release commit `d8ad55d` was pushed to `origin/main` on 2026-09-25. Frontend should auto-deploy via Vercel. Backend EC2 deploy is blocked on this Mac by missing SSH identity (`Permission denied (publickey)`).
+- Added manual Engage Draft & Review: save from post/AI suggestion, edit, copy, open on LinkedIn, self-report completion, dismiss. Drafts never send to LinkedIn or count as verified engagement; list/contact deletion cascades to drafts.
+- Added recorded-only Engage report and print stylesheet/button labeled “Print / Save as PDF”; no invented response-rate attribution.
+- Added explicit optional campaign auto-launch arm with `warming_up` status, 100% timestamped-engagement gate for the selected Engage list, 24/48h cooldown, lead/sequence snapshot, and worker revalidation of sender session, proxy, schedule, and launch rules. `OUTREACH_CONDITIONAL_AUTO_LAUNCH_ENABLED=false` by default pending product/legal decision.
+- Added visible cancel controls and fail-closed guards: no armed-list unlink/delete, no edits/imports during warm-up, no reauthorization on campaign delete/restore, working-hours trigger check, and sanitized worker/session errors.
+- Subscription cancellation now pauses campaigns/senders, cancels queued tasks, and reports failed proxy releases without discarding their records. Settings Help copy no longer implies jitter/proxies make unauthorized automation safe.
+- Verification: 148 outreach backend tests and 44 outreach frontend tests pass; Python compile, diff check, and frontend production build pass with existing dependency/Tailwind/source-map warnings. No live LinkedIn/proxy end-to-end check.
 
 ## Active Work
-Currently implementing: None
+Currently implementing: None. This Engage/campaign work and earlier Leads, Analytics/Swipe/Inbox, Home/Campaign/Accounts, session connection, and Settings patches remain local and uncommitted.
 Next:
+- Review/commit/deploy local outreach patches when requested; smoke test first-run, a connected sender, Draft & Review, and real Voyager inbox payload after deployment.
+- Product/legal go-or-no-go before public rollout of session-based outreach; validate the Webshare provisioning endpoint and region availability with the provider before claiming live readiness.
+- Scheduled Engage scraping/AI drafting and unattended like/comment dispatch remain unimplemented; any automatic LinkedIn interaction requires separate product/legal approval.
+- Decide whether to migrate historical plaintext JSESSIONID records; newly connected/refreshed senders use encrypted storage.
 - Load/provide the EC2 deploy SSH key, then run backend deploy from `/opt/socialentagler`.
 - Live logged-in Engage smoke test after Mac unlock; review whether scheduled auto-engagement should instead be a human-approved queue.
 - Sequence pre-warming automation (`LIKE_LAST_POST`, `COMMENT_LAST_POST` in executor).

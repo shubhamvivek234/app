@@ -1,0 +1,25 @@
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+
+  #engage-print-report,
+  #engage-print-report * {
+    visibility: visible !important;
+  }
+
+  #engage-print-report {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    padding: 20mm !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    background: white !important;
+  }
+
+  #engage-print-report .engage-no-print {
+    display: none !important;
+  }
+}

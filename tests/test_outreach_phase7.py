@@ -8,8 +8,13 @@ if not os.environ.get("ENCRYPTION_KEY"):
     os.environ["ENCRYPTION_KEY"] = Fernet.generate_key().decode()
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def sandbox_linkedin_sessions(monkeypatch):
+    monkeypatch.setenv("OUTREACH_MOCK_AUTH", "true")
 from datetime import datetime, timezone, timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from outreach.core.crypto import encrypt_secret
 from outreach.engine.inbox_sync import InboxSynchronizer
@@ -52,10 +57,11 @@ async def test_inbox_synchronizer_thread_indexing_and_lead_reply_detection():
     mock_db = AsyncMock()
 
     # Mock account
-    enc_cookie = encrypt_secret("li_at=test_cookie")
+    enc_cookie = encrypt_secret("li_at=mock_cookie")
     mock_account = {
         "id": "acc_sender_1",
         "workspace_id": "ws_123",
+        "status": "active",
         "name": "Sarah Miller",
         "encrypted_session_cookie": enc_cookie,
     }
@@ -65,11 +71,10 @@ async def test_inbox_synchronizer_thread_indexing_and_lead_reply_detection():
     # Mock existing threads in DB (none initially)
     mock_db.outreach_inbox_threads.find_one = AsyncMock(return_value=None)
     mock_db.outreach_inbox_threads.insert_one = AsyncMock()
+    mock_db.outreach_inbox_threads.count_documents = AsyncMock(return_value=1)
 
-    # Mock lead update
-    lead_update_res = AsyncMock()
-    lead_update_res.modified_count = 1
-    mock_db.outreach_leads.update_many = AsyncMock(return_value=lead_update_res)
+    mock_db.outreach_leads.find_one = AsyncMock(return_value={"id": "lead_jordan", "campaign_id": "campaign_jordan"})
+    mock_db.outreach_leads.update_one = AsyncMock(return_value=MagicMock(modified_count=1))
 
     syncer = InboxSynchronizer(db=mock_db, workspace_id="ws_123")
     res = await syncer.sync_account_inbox("acc_sender_1")
@@ -78,7 +83,7 @@ async def test_inbox_synchronizer_thread_indexing_and_lead_reply_detection():
     assert res["synced_threads"] >= 1
     assert res["new_replies_detected"] == 1
     mock_db.outreach_inbox_threads.insert_one.assert_called_once()
-    mock_db.outreach_leads.update_many.assert_called_once()
+    mock_db.outreach_leads.update_one.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -125,7 +130,7 @@ async def test_inbox_api_list_and_thread_detail():
     assert detail["id"] == "thr_999"
     assert detail["unread_count"] == 0
     mock_db.outreach_inbox_threads.update_one.assert_called_with(
-        {"id": "thr_999"},
+        {"id": "thr_999", "workspace_id": "ws_123"},
         {"$set": {"unread_count": 0}},
     )
 
@@ -142,6 +147,7 @@ async def test_inbox_api_send_reply_and_update_intent():
         "account_id": "acc_sender_1",
         "lead_name": "Jordan Davis",
         "lead_urn": "urn:li:fsd_profile:ACoAA12345",
+        "conversation_urn": "urn:li:fs_conversation:thread_999",
         "messages": [],
     }
     sample_account = {
@@ -149,24 +155,26 @@ async def test_inbox_api_send_reply_and_update_intent():
         "workspace_id": "ws_123",
         "name": "Sarah Miller",
         "encrypted_session_cookie": enc_cookie,
+        "status": "active",
     }
 
     mock_db.outreach_inbox_threads.find_one = AsyncMock(return_value=sample_thread)
     mock_db.outreach_accounts.find_one = AsyncMock(return_value=sample_account)
     mock_db.outreach_inbox_threads.update_one = AsyncMock(return_value=AsyncMock(matched_count=1))
+    mock_db.outreach_inbox_jobs.count_documents = AsyncMock(return_value=0)
 
     user = {"user_id": "ws_123"}
 
     # Send reply
-    reply_res = await send_thread_reply(
-        thread_id="thr_999",
-        req=ReplyRequest(body="Perfect, sending over an invite now!"),
-        current_user=user,
-        db=mock_db,
-    )
-    assert reply_res["status"] == "sent"
-    assert reply_res["message"]["body"] == "Perfect, sending over an invite now!"
-    assert reply_res["message"]["sender_name"] == "Sarah Miller"
+    with patch("celery_workers.tasks.outreach.send_inbox_reply.apply_async") as enqueue:
+        reply_res = await send_thread_reply(
+            thread_id="thr_999",
+            req=ReplyRequest(body="Perfect, sending over an invite now!"),
+            current_user=user,
+            db=mock_db,
+        )
+    assert reply_res["status"] == "queued"
+    enqueue.assert_called_once()
 
     # Update intent
     intent_res = await update_thread_intent(

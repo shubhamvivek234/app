@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Bookmark,
   Plus,
@@ -15,9 +15,31 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 
+const PAGE_SIZE = 30;
+
+async function swipeFetch(url, options = {}) {
+  const token = localStorage.getItem('token');
+  const response = await fetch(url, {
+    ...options,
+    credentials: 'include',
+    headers: { Authorization: token ? `Bearer ${token}` : '', ...options.headers },
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(typeof error.detail === 'string' ? error.detail : 'Request failed');
+  }
+  return response.json();
+}
+
 export default function OutreachSwipeFiles() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+  const requestId = useRef(0);
   const [search, setSearch] = useState('');
   const [selectedTag, setSelectedTag] = useState('all');
 
@@ -31,50 +53,74 @@ export default function OutreachSwipeFiles() {
   // Repurpose modal
   const [repurposeItem, setRepurposeItem] = useState(null);
   const [targetFormat, setTargetFormat] = useState('outbound_hook'); // 'outbound_hook' | 'connection_note' | 'post'
+  const [writingStyles, setWritingStyles] = useState([]);
+  const [writingStyleId, setWritingStyleId] = useState('');
   const [customInstructions, setCustomInstructions] = useState('');
   const [repurposeLoading, setRepurposeLoading] = useState(false);
   const [repurposedText, setRepurposedText] = useState('');
   const [copied, setCopied] = useState(false);
 
-  const fetchSwipeItems = useCallback(async () => {
-    setLoading(true);
+  const fetchSwipeItems = useCallback(async (offset = 0) => {
+    const currentRequest = ++requestId.current;
+    if (offset) setLoadingMore(true);
+    else { setLoading(true); setLoadError(''); }
     try {
-      const token = localStorage.getItem('token');
       const params = new URLSearchParams();
       if (selectedTag !== 'all') params.append('tag', selectedTag);
       if (search.trim()) params.append('search', search.trim());
-
-      const res = await fetch(`/api/v1/outreach/swipe?${params.toString()}`, {
-        headers: { Authorization: token ? `Bearer ${token}` : '' },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setItems(data || []);
+      params.set('skip', String(offset));
+      params.set('limit', String(PAGE_SIZE));
+      const data = await swipeFetch(`/api/v1/outreach/swipe?${params.toString()}`);
+      if (currentRequest !== requestId.current) return;
+      setItems((previous) => offset ? [...previous, ...data] : data);
+      setHasMore(data.length === PAGE_SIZE);
+    } catch (error) {
+      if (currentRequest === requestId.current) {
+        if (!offset) {
+          setItems([]);
+          setHasMore(false);
+          setLoadError(error.message || 'Failed to load swipe files');
+        }
+        toast.error(error.message || 'Failed to load swipe files');
       }
-    } catch (_) {
-      toast.error('Failed to load swipe files');
     } finally {
-      setLoading(false);
+      if (currentRequest === requestId.current) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
   }, [selectedTag, search]);
 
   useEffect(() => {
-    fetchSwipeItems();
+    const timer = setTimeout(() => fetchSwipeItems(), 250);
+    return () => { clearTimeout(timer); requestId.current += 1; };
   }, [fetchSwipeItems]);
+
+  useEffect(() => {
+    if (!repurposeItem) return;
+    let mounted = true;
+    swipeFetch('/api/v1/outreach/styles')
+      .then((data) => {
+        if (mounted) {
+          setWritingStyles(data || []);
+          setWritingStyleId((data || []).find((style) => style.is_default)?.id || '');
+        }
+      })
+      .catch(() => { if (mounted) toast.error('Could not load writing styles'); });
+    return () => { mounted = false; };
+  }, [repurposeItem]);
 
 
   const handleCreateSwipeItem = async (e) => {
     e.preventDefault();
     if (!newContent.trim()) return;
 
+    if (saving) return;
+    setSaving(true);
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch('/api/v1/outreach/swipe', {
+      await swipeFetch('/api/v1/outreach/swipe', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: token ? `Bearer ${token}` : '',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           author_name: newAuthor.trim() || 'Unknown Creator',
           content_text: newContent.trim(),
@@ -82,33 +128,33 @@ export default function OutreachSwipeFiles() {
           post_url: newUrl.trim(),
         }),
       });
-      if (res.ok) {
-        toast.success('Saved to swipe files!');
-        setShowAddModal(false);
-        setNewAuthor('');
-        setNewContent('');
-        setNewUrl('');
-        fetchSwipeItems();
-      }
-    } catch (_) {
-      toast.error('Failed to save swipe item');
+      toast.success('Saved to swipe files!');
+      setShowAddModal(false);
+      setNewAuthor('');
+      setNewContent('');
+      setNewUrl('');
+      fetchSwipeItems();
+    } catch (error) {
+      toast.error(error.message || 'Failed to save swipe item');
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleDeleteItem = async (id) => {
+    if (deletingId) return;
     if (!window.confirm('Delete this swipe item?')) return;
+    setDeletingId(id);
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`/api/v1/outreach/swipe/${id}`, {
+      await swipeFetch(`/api/v1/outreach/swipe/${id}`, {
         method: 'DELETE',
-        headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
-      if (res.ok) {
-        toast.success('Swipe file removed');
-        setItems((prev) => prev.filter((i) => i.id !== id));
-      }
-    } catch (_) {
-      toast.error('Failed to delete item');
+      toast.success('Swipe file removed');
+      fetchSwipeItems();
+    } catch (error) {
+      toast.error(error.message || 'Failed to delete item');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -118,35 +164,33 @@ export default function OutreachSwipeFiles() {
     setRepurposedText('');
 
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`/api/v1/outreach/swipe/${repurposeItem.id}/repurpose`, {
+      const data = await swipeFetch(`/api/v1/outreach/swipe/${repurposeItem.id}/repurpose`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: token ? `Bearer ${token}` : '',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           target_format: targetFormat,
           custom_instructions: customInstructions.trim(),
+          writing_style_id: writingStyleId || null,
         }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setRepurposedText(data.repurposed_text || '');
-        toast.success('Repurposed with AI!');
-      }
-    } catch (_) {
-      toast.error('Repurposing failed');
+      setRepurposedText(data.repurposed_text);
+      toast.success('Repurposed with AI!');
+    } catch (error) {
+      toast.error(error.message || 'Repurposing failed');
     } finally {
       setRepurposeLoading(false);
     }
   };
 
-  const copyToClipboard = (text) => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    toast.success('Copied to clipboard!');
-    setTimeout(() => setCopied(false), 2000);
+  const copyToClipboard = async (text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      toast.success('Copied to clipboard!');
+      setTimeout(() => setCopied(false), 2000);
+    } catch (_) {
+      toast.error('Could not copy. Please select and copy the text manually.');
+    }
   };
 
   return (
@@ -212,6 +256,11 @@ export default function OutreachSwipeFiles() {
             <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
             <p className="text-xs">Loading swipe cards…</p>
           </div>
+        ) : loadError ? (
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-8 text-center text-xs text-red-800">
+            <p>{loadError}</p>
+            <button type="button" onClick={() => fetchSwipeItems()} className="mt-3 rounded-lg bg-white px-3 py-1.5 font-semibold">Retry</button>
+          </div>
         ) : items.length === 0 ? (
           <div className="bg-white border border-dashed border-gray-300 rounded-3xl p-12 text-center max-w-lg mx-auto space-y-4">
             <div className="w-14 h-14 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto text-2xl">
@@ -263,6 +312,7 @@ export default function OutreachSwipeFiles() {
                       )}
                       <button
                         onClick={() => handleDeleteItem(item.id)}
+                        disabled={deletingId === item.id}
                         className="text-gray-300 hover:text-red-500 p-1"
                         title="Delete"
                       >
@@ -303,6 +353,17 @@ export default function OutreachSwipeFiles() {
               </div>
             ))}
           </div>
+        )}
+        {hasMore && !loading && (
+          <button
+            type="button"
+            onClick={() => fetchSwipeItems(items.length)}
+            disabled={loadingMore}
+            className="mx-auto flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-xs font-semibold text-gray-700 disabled:opacity-50"
+          >
+            {loadingMore && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            Load more swipe files
+          </button>
         )}
       </div>
 
@@ -377,9 +438,10 @@ export default function OutreachSwipeFiles() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 shadow-sm"
+                  disabled={saving}
+                  className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 shadow-sm disabled:opacity-50"
                 >
-                  Save Swipe File
+                  {saving ? 'Saving…' : 'Save Swipe File'}
                 </button>
               </div>
             </form>
@@ -434,6 +496,18 @@ export default function OutreachSwipeFiles() {
             </div>
 
             {/* Custom Focus */}
+            <div>
+              <label className="text-xs font-semibold text-gray-700">Writing Style</label>
+              <select
+                value={writingStyleId}
+                onChange={(event) => setWritingStyleId(event.target.value)}
+                className="mt-1 w-full text-xs p-2.5 border border-gray-200 rounded-xl focus:border-indigo-500 focus:outline-none"
+              >
+                <option value="">Default conversational style</option>
+                {writingStyles.map((style) => <option key={style.id} value={style.id}>{style.name}</option>)}
+              </select>
+            </div>
+
             <div>
               <label className="text-xs font-semibold text-gray-700">Custom Focus / Context (Optional)</label>
               <input

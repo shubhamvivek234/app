@@ -2,6 +2,7 @@
 Unit tests for Outreach Campaigns Auto-Drafting, Forensic Detail, and Reversible Deletion.
 """
 import pytest
+from fastapi import HTTPException
 from unittest.mock import AsyncMock
 from outreach.models import (
     CampaignStatus,
@@ -38,25 +39,7 @@ class MockCollection:
         self.items = list(items or [])
 
     def find(self, query=None, *args, **kwargs):
-        matched = []
-        for item in self.items:
-            match = True
-            for k, v in (query or {}).items():
-                if isinstance(v, dict):
-                    if "$ne" in v:
-                        if item.get(k) == v["$ne"]:
-                            match = False
-                            break
-                    if "$in" in v:
-                        if item.get(k) not in v["$in"]:
-                            match = False
-                            break
-                elif item.get(k) != v:
-                    match = False
-                    break
-            if match:
-                matched.append(dict(item))
-        return MockCursor(matched)
+        return MockCursor(dict(item) for item in self.items if self._matches(item, query))
 
     async def find_one(self, query=None, *args, **kwargs):
         cursor = self.find(query)
@@ -73,13 +56,43 @@ class MockCollection:
         return len(items)
 
     async def update_one(self, query, update):
+        matched_ids = {id(item) for item in self.items if self._matches(item, query)}
         for item in self.items:
-            match = all(item.get(k) == v for k, v in query.items())
-            if match:
+            if id(item) in matched_ids:
                 if "$set" in update:
                     item.update(update["$set"])
                 return True
         return False
+
+    @staticmethod
+    def _matches(item, query):
+        for key, value in (query or {}).items():
+            if key == "$or":
+                if not any(MockCollection._matches(item, branch) for branch in value):
+                    return False
+                continue
+            if isinstance(value, dict):
+                if "$ne" in value and item.get(key) == value["$ne"]:
+                    return False
+                if "$in" in value and item.get(key) not in value["$in"]:
+                    return False
+            elif item.get(key) != value:
+                return False
+        return True
+
+    def aggregate(self, pipeline):
+        match = pipeline[0]["$match"]
+        grouped = {}
+        for item in self.items:
+            if not self._matches(item, match):
+                continue
+            campaign_id = item.get("campaign_id")
+            counts = grouped.setdefault(campaign_id, {"_id": campaign_id, "leads_count": 0, "leads_contacted": 0, "acceptances_count": 0, "replies_count": 0})
+            counts["leads_count"] += 1
+            counts["leads_contacted"] += int(item.get("execution_state") in {"invited", "connected", "messaged", "completed", "accepted", "replied"} or bool(item.get("last_action_at")))
+            counts["acceptances_count"] += int(item.get("execution_state") in {"connected", "accepted"} or bool(item.get("is_connected")))
+            counts["replies_count"] += int(item.get("execution_state") == "replied" or bool(item.get("has_replied")))
+        return MockCursor(grouped.values())
 
     async def update_many(self, query, update):
         count = 0
@@ -160,6 +173,14 @@ async def test_auto_draft_campaign_creation_and_update():
 
 
 @pytest.mark.asyncio
+async def test_unnamed_first_draft_gets_a_user_facing_name():
+    db = MockDB()
+    user = {"user_id": "usr_test_1", "default_workspace_id": "ws_1"}
+    draft = await auto_draft_campaign(req=AutoDraftRequest(name=None), current_user=user, db=db)
+    assert draft["name"] == "Campaign 1"
+
+
+@pytest.mark.asyncio
 async def test_get_campaign_detail_with_metrics_and_senders():
     """Verify get_campaign calculates leads and retrieves senders and sequence."""
     db = MockDB()
@@ -168,6 +189,7 @@ async def test_get_campaign_detail_with_metrics_and_senders():
     # Seed an account
     acc_doc = {
         "id": "acc_sender_1",
+        "workspace_id": "ws_2",
         "account_name": "Jack Growth",
         "vanity_name": "jackgrowth",
         "avatar_url": "https://example.com/avatar.jpg",
@@ -189,11 +211,13 @@ async def test_get_campaign_detail_with_metrics_and_senders():
     # Seed leads
     await db.outreach_leads.insert_one({
         "id": "lead_1",
+        "workspace_id": "ws_2",
         "campaign_id": "camp_det_1",
         "execution_state": "invited",
     })
     await db.outreach_leads.insert_one({
         "id": "lead_2",
+        "workspace_id": "ws_2",
         "campaign_id": "camp_det_1",
         "execution_state": "queued",
     })
@@ -224,6 +248,7 @@ async def test_soft_delete_and_restore_campaign():
 
     task_doc = {
         "id": "task_1",
+        "workspace_id": "ws_3",
         "campaign_id": "camp_del_1",
         "status": "queued",
     }
@@ -231,6 +256,7 @@ async def test_soft_delete_and_restore_campaign():
 
     lead_doc = {
         "id": "lead_1",
+        "workspace_id": "ws_3",
         "campaign_id": "camp_del_1",
         "user_id": "usr_test_3",
         "pipeline_stage": "enrolled",
@@ -278,6 +304,22 @@ async def test_soft_delete_and_restore_campaign():
 
 
 @pytest.mark.asyncio
+async def test_restoring_deleted_warmup_never_reauthorizes_auto_launch():
+    db = MockDB()
+    user = {"user_id": "owner", "default_workspace_id": "workspace_1"}
+    await db.outreach_campaigns.insert_one({
+        "id": "armed_1", "user_id": "owner", "workspace_id": "workspace_1",
+        "name": "Armed campaign", "status": "warming_up", "auto_launch_enabled": True,
+        "is_deleted": False,
+    })
+    await delete_campaign("armed_1", current_user=user, db=db)
+    await restore_campaign("armed_1", current_user=user, db=db)
+    restored = await db.outreach_campaigns.find_one({"id": "armed_1"})
+    assert restored["status"] == "paused"
+    assert restored["auto_launch_enabled"] is False
+
+
+@pytest.mark.asyncio
 async def test_duplicate_campaign():
     user = {"user_id": "usr_dup_test", "default_workspace_id": "ws_1"}
     original_campaign = {
@@ -298,6 +340,7 @@ async def test_duplicate_campaign():
     }
     original_sequence = {
         "campaign_id": "camp_source_1",
+        "workspace_id": "ws_1",
         "nodes": [{"id": "n1", "type": "connection_request"}],
         "edges": [],
         "tree": [{"id": "n1"}],
@@ -312,6 +355,7 @@ async def test_duplicate_campaign():
     assert duplicated["id"] != "camp_source_1"
     assert duplicated["name"] == "Q4 Enterprise Founders (Copy)"
     assert duplicated["status"] == "draft"
+    assert duplicated["draft_step"] == 1
     assert duplicated["sender_account_ids"] == ["acc_1", "acc_2"]
     assert duplicated["limits"]["connection_invites"] == 25
     assert duplicated["leads_count"] == 0
@@ -326,7 +370,26 @@ async def test_duplicate_campaign():
 
 
 @pytest.mark.asyncio
-async def test_auto_draft_preserves_custom_id():
+async def test_campaign_cascades_are_workspace_scoped():
+    from unittest.mock import MagicMock
+
+    db = MagicMock()
+    db.outreach_campaigns.find_one = AsyncMock(return_value={
+        "id": "camp_a", "name": "Campaign A", "workspace_id": "ws_a", "status": "draft",
+    })
+    db.outreach_campaigns.update_one = AsyncMock()
+    db.outreach_tasks.update_many = AsyncMock()
+    db.outreach_leads.update_many = AsyncMock()
+    db.outreach_sequences.update_one = AsyncMock()
+    user = {"user_id": "user_a", "default_workspace_id": "ws_a"}
+    await delete_campaign("camp_a", current_user=user, db=db)
+    assert db.outreach_tasks.update_many.call_args.args[0]["workspace_id"] == "ws_a"
+    assert db.outreach_leads.update_many.call_args.args[0]["workspace_id"] == "ws_a"
+    assert db.outreach_sequences.update_one.call_args.args[0]["workspace_id"] == "ws_a"
+
+
+@pytest.mark.asyncio
+async def test_auto_draft_rejects_unknown_custom_id():
     user = {"user_id": "usr_draft_test", "default_workspace_id": "ws_1"}
     db = MockDB()
     custom_id = "camp_custom_fallback_123"
@@ -336,8 +399,6 @@ async def test_auto_draft_preserves_custom_id():
         name="Fallback Draft",
         draft_step=1,
     )
-    res = await auto_draft_campaign(req=req, current_user=user, db=db)
-    assert res["id"] == custom_id
-    assert res["name"] == "Fallback Draft"
-
-
+    with pytest.raises(HTTPException) as exc:
+        await auto_draft_campaign(req=req, current_user=user, db=db)
+    assert exc.value.status_code == 404

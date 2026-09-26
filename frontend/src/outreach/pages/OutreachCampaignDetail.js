@@ -48,12 +48,15 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
   const [campaign, setCampaign] = useState(null);
   const [activeTab, setActiveTab] = useState('analytics'); // 'analytics' | 'leads' | 'sequence' | 'settings'
   const [loading, setLoading] = useState(true);
+  const [campaignError, setCampaignError] = useState('');
   const [leads, setLeads] = useState([]);
   const [leadsLoading, setLeadsLoading] = useState(false);
+  const [leadsError, setLeadsError] = useState('');
   const [leadsSearch, setLeadsSearch] = useState('');
   const [leadsModalOpen, setLeadsModalOpen] = useState(false);
   const [sequence, setSequence] = useState(null);
   const [sequenceLoading, setSequenceLoading] = useState(false);
+  const [sequenceError, setSequenceError] = useState('');
   const [statusUpdating, setStatusUpdating] = useState(false);
   const scheduleSummary = getScheduleSummary(campaign?.schedule);
   const totalLeads = campaign?.leads_count || 0;
@@ -61,21 +64,33 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
   const acceptedLeads = campaign?.acceptances_count || 0;
   const repliedLeads = campaign?.replies_count || 0;
   const interestedLeads = campaign?.interested_count || 0;
+  const openEditor = (step) => {
+    if (['active', 'warming_up'].includes(campaign?.status)) {
+      toast.error('Pause the campaign before editing its sequence or settings.');
+      return;
+    }
+    if (onEdit && campaign) onEdit(campaign.id, step, campaign.name);
+  };
 
   const fetchCampaign = async () => {
     setLoading(true);
+    setCampaignError('');
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/campaigns/${campaignId}`, {
         credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
-      if (res.ok) {
-        const data = await res.json();
-        setCampaign(data);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 404) setCampaign(null);
+        else throw new Error(data.detail || 'Campaign could not be loaded.');
+        return;
       }
+      setCampaign(data);
     } catch (err) {
       console.error('Failed to load campaign:', err);
+      setCampaignError(err.message || 'Campaign could not be loaded.');
     } finally {
       setLoading(false);
     }
@@ -83,6 +98,7 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
 
   const fetchLeads = async (searchQuery = '') => {
     setLeadsLoading(true);
+    setLeadsError('');
     try {
       const token = localStorage.getItem('token');
       const query = new URLSearchParams({ campaign_id: campaignId });
@@ -91,12 +107,12 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
         credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
-      if (res.ok) {
-        const data = await res.json();
-        setLeads(data.leads || []);
-      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Campaign leads could not be loaded.');
+      setLeads(data.leads || []);
     } catch (err) {
       console.error('Failed to fetch leads:', err);
+      setLeadsError(err.message || 'Campaign leads could not be loaded.');
     } finally {
       setLeadsLoading(false);
     }
@@ -104,18 +120,19 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
 
   const fetchSequence = async () => {
     setSequenceLoading(true);
+    setSequenceError('');
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/sequences/${campaignId}`, {
         credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
-      if (res.ok) {
-        const data = await res.json();
-        setSequence(data);
-      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Sequence could not be loaded.');
+      setSequence(data);
     } catch (err) {
       console.error('Failed to load sequence:', err);
+      setSequenceError(err.message || 'Sequence could not be loaded.');
     } finally {
       setSequenceLoading(false);
     }
@@ -126,15 +143,15 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
     setStatusUpdating(true);
     const token = localStorage.getItem('token');
     try {
-      if (campaign.status === 'active') {
+      if (['active', 'warming_up'].includes(campaign.status)) {
         const res = await fetch(`/api/v1/outreach/campaigns/${campaign.id}/pause`, {
           method: 'POST',
           credentials: 'include',
           headers: { Authorization: token ? `Bearer ${token}` : '' },
         });
         if (res.ok) {
-          toast.success('Campaign paused');
-          setCampaign((prev) => ({ ...prev, status: 'paused' }));
+          toast.success(campaign.status === 'warming_up' ? 'Conditional launch canceled' : 'Campaign paused');
+          setCampaign((prev) => ({ ...prev, status: 'paused', auto_launch_enabled: false }));
         } else {
           toast.error('Failed to pause campaign');
         }
@@ -198,7 +215,8 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
   if (!campaign) {
     return (
       <div className="max-w-6xl mx-auto px-6 py-8 text-center text-gray-500">
-        <p className="text-sm">Campaign not found or has been removed.</p>
+        <p className="text-sm">{campaignError || 'Campaign not found or has been removed.'}</p>
+        {campaignError && <button type="button" onClick={fetchCampaign} className="mt-4 mr-4 text-xs font-semibold text-indigo-600 hover:text-indigo-800">Retry</button>}
         <button
           onClick={onBack}
           className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800"
@@ -239,6 +257,11 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
           <p className="text-xs text-gray-400 mt-1">
             Persona not set · created {createdDate}
           </p>
+          {campaign.status === 'warming_up' && <p className="mt-2 text-xs text-amber-800">
+            Waiting for confirmed engagement from every lead and the full cooldown.
+            {campaign.auto_launch_missing_count > 0 && ` ${campaign.auto_launch_missing_count} lead(s) still need engagement.`}
+            {campaign.auto_launch_error && ` ${campaign.auto_launch_error}`}
+          </p>}
         </div>
 
         <div className="flex items-center gap-3">
@@ -250,6 +273,12 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
             >
               <Pause className="h-3.5 w-3.5" />
               {statusUpdating ? 'Pausing...' : 'Pause Campaign'}
+            </button>
+          )}
+          {campaign.status === 'warming_up' && (
+            <button onClick={handleToggleStatus} disabled={statusUpdating}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-800 disabled:opacity-50">
+              <Pause className="h-3.5 w-3.5" /> {statusUpdating ? 'Canceling...' : 'Cancel auto-launch'}
             </button>
           )}
           {campaign.status === 'paused' && (
@@ -264,7 +293,7 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
           )}
           {campaign.status === 'draft' && (
             <button
-              onClick={handleToggleStatus}
+              onClick={() => openEditor(3)}
               disabled={statusUpdating}
               className="inline-flex items-center gap-1.5 rounded-xl bg-[#5145cd] hover:bg-[#4338ca] text-white px-4 py-2 text-xs font-semibold shadow-2xs transition-colors"
             >
@@ -273,7 +302,7 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
             </button>
           )}
           <button
-            onClick={() => onEdit && onEdit(campaign.id, campaign.draft_step || 2, campaign.name)}
+            onClick={() => openEditor(campaign.draft_step || 2)}
             className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 shadow-2xs transition-colors"
           >
             <Pencil className="h-3.5 w-3.5 text-indigo-600" />
@@ -532,6 +561,10 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
             <div className="flex items-center justify-center py-16 text-gray-400">
               <RefreshCw className="h-6 w-6 animate-spin" />
             </div>
+          ) : leadsError ? (
+            <div role="alert" className="py-16 text-center text-xs text-red-600">
+              {leadsError} <button type="button" onClick={() => fetchLeads(leadsSearch)} className="ml-2 font-semibold underline">Retry</button>
+            </div>
           ) : leads.length === 0 ? (
             <div className="py-20 text-center text-xs text-gray-400">
               No leads assigned yet.
@@ -582,7 +615,7 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
               <p className="text-xs text-gray-400 mt-0.5">Automated outreach steps and conditional branches</p>
             </div>
             <button
-              onClick={() => onEdit && onEdit(campaign.id, 2)}
+              onClick={() => openEditor(2)}
               className="rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3.5 py-1.5 text-xs font-semibold transition-colors inline-flex items-center gap-1.5"
             >
               <Pencil className="w-3.5 h-3.5" />
@@ -593,6 +626,10 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
           {sequenceLoading ? (
             <div className="flex items-center justify-center py-20 text-gray-400">
               <RefreshCw className="h-6 w-6 animate-spin" />
+            </div>
+          ) : sequenceError ? (
+            <div role="alert" className="py-16 text-center text-xs text-red-600">
+              {sequenceError} <button type="button" onClick={fetchSequence} className="ml-2 font-semibold underline">Retry</button>
             </div>
           ) : (sequence?.nodes?.length || campaign?.sequence?.nodes?.length) ? (
             <div className="space-y-3 max-w-2xl">
@@ -638,7 +675,7 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
                 This campaign has no published sequence flow. Click below to configure your sequence.
               </p>
               <button
-                onClick={() => onEdit && onEdit(campaign.id, 2)}
+                onClick={() => openEditor(2)}
                 className="mt-4 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 text-xs font-semibold shadow-xs transition-colors inline-flex items-center gap-1.5"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -656,13 +693,13 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
             <h3 className="text-sm font-bold text-gray-900">Campaign settings</h3>
             <div className="flex items-center gap-2.5">
               <button
-                onClick={() => onEdit && onEdit(campaign.id, 2)}
+                onClick={() => openEditor(2)}
                 className="rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-3.5 py-1.5 text-xs font-semibold transition-colors"
               >
                 Edit in builder
               </button>
               <button
-                onClick={() => onEdit && onEdit(campaign.id, 3)}
+                onClick={() => openEditor(3)}
                 className="rounded-lg border border-gray-200 bg-white hover:bg-gray-50 px-3.5 py-1.5 text-xs font-semibold text-gray-700 transition-colors shadow-2xs"
               >
                 Edit settings

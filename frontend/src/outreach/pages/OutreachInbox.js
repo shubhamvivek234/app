@@ -1,5 +1,28 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
+
+const THREAD_PAGE_SIZE = 50;
+
+const inboxFetch = (url, options = {}) => {
+  const token = localStorage.getItem('token');
+  return fetch(url, {
+    ...options,
+    credentials: 'include',
+    headers: { Authorization: token ? `Bearer ${token}` : '', ...options.headers },
+  });
+};
+
+async function waitForInboxJob(jobId) {
+  for (let attempt = 0; attempt < 45; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    const response = await inboxFetch(`/api/v1/outreach/inbox/jobs/${jobId}`);
+    if (!response.ok) throw new Error('Could not check inbox job status');
+    const job = await response.json();
+    if (job.status === 'completed') return job;
+    if (job.status === 'failed') throw new Error(job.error || 'Inbox action failed');
+  }
+  throw new Error('Still processing in the background. Refresh the inbox shortly.');
+}
 import {
   Search,
   ChevronDown,
@@ -10,9 +33,6 @@ import {
   Sparkles,
   CheckCircle2,
   ExternalLink,
-  Volume2,
-  Play,
-  Pause,
   User,
   Clock,
   Tag,
@@ -36,10 +56,12 @@ export default function OutreachInbox() {
   const [isSending, setIsSending] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMoreThreads, setHasMoreThreads] = useState(false);
   const [filterSource, setFilterSource] = useState('all'); // 'all' | 'outreach'
   const [aiSuggestions, setAiSuggestions] = useState([]);
   const [loadingAi, setLoadingAi] = useState(false);
-  const [playingVoiceId, setPlayingVoiceId] = useState(null);
 
   // Unravler AI Parity: Reminders, Snippets & Tags State
   const [remindersOpen, setRemindersOpen] = useState(false);
@@ -63,68 +85,78 @@ export default function OutreachInbox() {
   const [showCreateTag, setShowCreateTag] = useState(false);
 
   const messagesEndRef = useRef(null);
+  const threadsRequestId = useRef(0);
+  const selectedThreadId = useRef(null);
 
   const fetchAccounts = async () => {
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch('/api/v1/outreach/accounts', {
+      const res = await inboxFetch('/api/v1/outreach/accounts', {
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
         const data = await res.json();
-        setAccounts(data || []);
+        const activeAccounts = (data || []).filter((account) => account.status === 'active');
+        setAccounts(activeAccounts);
+        if (selectedAccountId !== 'all' && !activeAccounts.some((account) => account.id === selectedAccountId)) {
+          setSelectedAccountId('all');
+        }
+      } else {
+        toast.error('Could not load sender accounts');
       }
     } catch (err) {
       console.error('Failed to load accounts:', err);
     }
   };
 
-  const fetchThreads = async () => {
-    setLoading(true);
+  const fetchThreads = async (offset = 0) => {
+    const requestId = ++threadsRequestId.current;
+    if (offset) setLoadingMore(true);
+    else { setLoading(true); setLoadError(''); }
     try {
       const token = localStorage.getItem('token');
-      let url = `/api/v1/outreach/inbox?account_id=${selectedAccountId}`;
+      let url = `/api/v1/outreach/inbox?account_id=${selectedAccountId}&skip=${offset}&limit=${THREAD_PAGE_SIZE}`;
       if (filterSource === 'outreach') {
         url += '&source=outreach';
       }
       if (searchQuery.trim()) {
         url += `&search=${encodeURIComponent(searchQuery.trim())}`;
       }
-      const res = await fetch(url, {
+      const res = await inboxFetch(url, {
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
-      if (res.ok) {
-        const data = await res.json();
-        setThreads(data || []);
-        if (selectedThread) {
-          const updated = data.find((t) => t.id === selectedThread.id);
-          if (updated) setSelectedThread(updated);
-        } else if (data && data.length > 0) {
-          setSelectedThread(data[0]);
-          fetchReminders(data[0].id);
-        }
+      if (!res.ok) throw new Error('Could not load conversations');
+      const data = await res.json();
+      if (requestId !== threadsRequestId.current) return;
+      setThreads((previous) => offset ? [...previous, ...data] : data);
+      setHasMoreThreads(data.length === THREAD_PAGE_SIZE);
+      if (offset) return;
+      const updated = data.find((t) => t.id === selectedThreadId.current);
+      if (updated) setSelectedThread(updated);
+      else if (data.length) {
+        handleSelectThread(data[0]);
+      } else {
+        selectedThreadId.current = null;
+        setSelectedThread(null);
+        setRemindersList([]);
       }
     } catch (err) {
       console.error('Failed to load threads:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSeedDemo = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      const res = await fetch('/api/v1/outreach/inbox/seed-demo', {
-        method: 'POST',
-        headers: { Authorization: token ? `Bearer ${token}` : '' },
-      });
-      if (res.ok) {
-        toast.success('Sample conversations loaded');
-        await fetchThreads();
+      if (requestId === threadsRequestId.current) {
+        if (!offset) {
+          setThreads([]);
+          setSelectedThread(null);
+          selectedThreadId.current = null;
+          setHasMoreThreads(false);
+          setLoadError(err.message || 'Could not load conversations');
+        }
+        toast.error(err.message || 'Could not load conversations');
       }
-    } catch (err) {
-      console.error('Failed to seed sample conversations:', err);
-      toast.error('Failed to load sample conversations');
+    } finally {
+      if (requestId === threadsRequestId.current) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
   };
 
@@ -163,12 +195,12 @@ export default function OutreachInbox() {
     setLoadingReminders(true);
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`/api/v1/outreach/inbox/${threadId}/reminders`, {
+      const res = await inboxFetch(`/api/v1/outreach/inbox/${threadId}/reminders`, {
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
         const data = await res.json();
-        setRemindersList(data || []);
+        if (selectedThreadId.current === threadId) setRemindersList(data || []);
       }
     } catch (err) {
       console.error('Failed to load reminders:', err);
@@ -196,7 +228,7 @@ export default function OutreachInbox() {
         targetDate = d.toISOString();
       }
 
-      const res = await fetch(`/api/v1/outreach/inbox/${selectedThread.id}/reminders`, {
+      const res = await inboxFetch(`/api/v1/outreach/inbox/${selectedThread.id}/reminders`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -229,15 +261,21 @@ export default function OutreachInbox() {
   };
 
   const handleDeleteReminder = async (remId) => {
+    if (!remId) return;
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`/api/v1/outreach/inbox/reminders/${remId}`, {
+      const res = await inboxFetch(`/api/v1/outreach/inbox/reminders/${remId}`, {
         method: 'DELETE',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
+        const data = await res.json();
         setRemindersList((prev) => prev.filter((r) => r.id !== remId));
-        setSelectedThread((prev) => ({ ...prev, remind_at: null, reminder_note: null }));
+        setSelectedThread((prev) => prev && ({
+          ...prev,
+          remind_at: data.next_reminder?.remind_at || null,
+          reminder_note: data.next_reminder?.note || null,
+        }));
         toast.success('Reminder dismissed');
       } else {
         toast.error('Failed to dismiss reminder');
@@ -251,7 +289,7 @@ export default function OutreachInbox() {
   const fetchSnippets = async () => {
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch('/api/v1/outreach/inbox/snippets/list', {
+      const res = await inboxFetch('/api/v1/outreach/inbox/snippets/list', {
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
@@ -267,7 +305,7 @@ export default function OutreachInbox() {
     if (!newSnippetTitle.trim() || !newSnippetBody.trim()) return;
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch('/api/v1/outreach/inbox/snippets', {
+      const res = await inboxFetch('/api/v1/outreach/inbox/snippets', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -299,7 +337,7 @@ export default function OutreachInbox() {
   const handleDeleteSnippet = async (id) => {
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`/api/v1/outreach/inbox/snippets/${id}`, {
+      const res = await inboxFetch(`/api/v1/outreach/inbox/snippets/${id}`, {
         method: 'DELETE',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
@@ -323,7 +361,7 @@ export default function OutreachInbox() {
   const fetchTags = async () => {
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch('/api/v1/outreach/inbox/tags/list', {
+      const res = await inboxFetch('/api/v1/outreach/inbox/tags/list', {
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
@@ -339,7 +377,7 @@ export default function OutreachInbox() {
     if (!selectedThread) return;
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`/api/v1/outreach/inbox/${selectedThread.id}/tags`, {
+      const res = await inboxFetch(`/api/v1/outreach/inbox/${selectedThread.id}/tags`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -367,7 +405,7 @@ export default function OutreachInbox() {
     if (!newTagName.trim()) return;
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch('/api/v1/outreach/inbox/tags', {
+      const res = await inboxFetch('/api/v1/outreach/inbox/tags', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -395,7 +433,8 @@ export default function OutreachInbox() {
 
 
   useEffect(() => {
-    fetchThreads();
+    const timer = setTimeout(() => fetchThreads(), searchQuery ? 250 : 0);
+    return () => { clearTimeout(timer); threadsRequestId.current += 1; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAccountId, filterSource, searchQuery]);
 
@@ -404,16 +443,19 @@ export default function OutreachInbox() {
   }, [selectedThread?.messages]);
 
   const handleSelectThread = async (thread) => {
+    selectedThreadId.current = thread.id;
     setSelectedThread(thread);
     setAiSuggestions([]);
+    setRemindersList([]);
     fetchReminders(thread.id);
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`/api/v1/outreach/inbox/${thread.id}`, {
+      const res = await inboxFetch(`/api/v1/outreach/inbox/${thread.id}`, {
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
         const full = await res.json();
+        if (selectedThreadId.current !== thread.id) return;
         setSelectedThread(full);
         setThreads((prev) =>
           prev.map((t) => (t.id === thread.id ? { ...t, unread_count: 0 } : t))
@@ -421,32 +463,39 @@ export default function OutreachInbox() {
       }
     } catch (err) {
       console.error('Failed to fetch thread detail:', err);
+      toast.error('Could not load conversation details');
     }
   };
 
   const handleSendReply = async () => {
-    if (!replyText.trim() || !selectedThread) return;
+    if (!replyText.trim() || !selectedThread || isSending) return;
+    const thread = selectedThread;
+    const body = replyText.trim();
     setIsSending(true);
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`/api/v1/outreach/inbox/${selectedThread.id}/reply`, {
+      const res = await inboxFetch(`/api/v1/outreach/inbox/${selectedThread.id}/reply`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
         },
-        body: JSON.stringify({ body: replyText.trim() }),
+        body: JSON.stringify({ body }),
       });
 
       if (res.ok) {
         const data = await res.json();
-        setSelectedThread((prev) => ({
-          ...prev,
-          last_message_snippet: replyText.trim(),
-          messages: [...(prev.messages || []), data.message],
-        }));
-        setReplyText('');
-        fetchThreads();
+        if (data.status !== 'queued' || !data.job_id) throw new Error('Reply was not queued');
+        const job = await waitForInboxJob(data.job_id);
+        if (selectedThreadId.current === thread.id) {
+          setSelectedThread((prev) => prev && ({
+            ...prev,
+            last_message_snippet: body,
+            messages: [...(prev.messages || []), job.result.message],
+          }));
+          setReplyText('');
+        }
+        await fetchThreads();
         toast.success('Reply dispatched');
       } else {
         const errData = await res.json().catch(() => ({}));
@@ -454,7 +503,7 @@ export default function OutreachInbox() {
       }
     } catch (err) {
       console.error('Reply failed:', err);
-      toast.error('Failed to dispatch reply');
+      toast.error(err.message || 'Failed to dispatch reply');
     } finally {
       setIsSending(false);
     }
@@ -462,16 +511,17 @@ export default function OutreachInbox() {
 
   const handleLoadAiReplies = async () => {
     if (!selectedThread) return;
+    const threadId = selectedThread.id;
     setLoadingAi(true);
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`/api/v1/outreach/inbox/${selectedThread.id}/ai-reply`, {
+      const res = await inboxFetch(`/api/v1/outreach/inbox/${threadId}/ai-reply`, {
         method: 'POST',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
         const data = await res.json();
-        setAiSuggestions(data.suggestions || []);
+        if (selectedThreadId.current === threadId) setAiSuggestions(data.suggestions || []);
       } else {
         toast.error('Failed to load AI suggestions');
       }
@@ -484,6 +534,7 @@ export default function OutreachInbox() {
   };
 
   const handleSync = async () => {
+    if (isSyncing) return;
     setIsSyncing(true);
     try {
       const token = localStorage.getItem('token');
@@ -491,19 +542,23 @@ export default function OutreachInbox() {
         selectedAccountId !== 'all'
           ? `/api/v1/outreach/inbox/sync?account_id=${selectedAccountId}`
           : '/api/v1/outreach/inbox/sync';
-      const res = await fetch(url, {
+      const res = await inboxFetch(url, {
         method: 'POST',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
-        toast.success('Inbox synchronized');
+        const data = await res.json();
+        if (data.status !== 'queued' || !data.job_id) throw new Error('Sync was not queued');
+        const job = await waitForInboxJob(data.job_id);
+        toast.success(`Inbox synchronized: ${job.result?.synced_threads ?? job.result?.total_threads_synced ?? 0} conversations`);
+        await fetchThreads();
       } else {
-        toast.error('Sync failed');
+        const error = await res.json().catch(() => ({}));
+        throw new Error(error.detail || 'Sync failed');
       }
-      await fetchThreads();
     } catch (err) {
       console.error('Sync error:', err);
-      toast.error('Sync error occurred');
+      toast.error(err.message || 'Sync error occurred');
     } finally {
       setIsSyncing(false);
     }
@@ -513,7 +568,7 @@ export default function OutreachInbox() {
     if (!selectedThread) return;
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`/api/v1/outreach/inbox/${selectedThread.id}/intent`, {
+      const res = await inboxFetch(`/api/v1/outreach/inbox/${selectedThread.id}/intent`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -695,17 +750,15 @@ export default function OutreachInbox() {
             <div className="flex items-center justify-center py-20 text-gray-400">
               <RefreshCw className="h-5 w-5 animate-spin" />
             </div>
+          ) : loadError ? (
+            <div className="my-auto px-4 py-12 text-center text-xs text-red-700">
+              <p>{loadError}</p>
+              <button type="button" onClick={() => fetchThreads()} className="mt-3 rounded-lg border border-red-200 px-3 py-1.5 font-semibold">Retry</button>
+            </div>
           ) : threads.length === 0 ? (
             <div className="my-auto py-24 text-center px-4 space-y-3">
               <p className="text-xs text-gray-400 font-normal">No conversations yet.</p>
               <div className="flex flex-col items-center gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={handleSeedDemo}
-                  className="px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-[#5145cd] font-bold text-xs rounded-xl shadow-2xs transition-colors cursor-pointer"
-                >
-                  Load Sample Conversations
-                </button>
                 {accounts.length > 0 && (
                   <button
                     type="button"
@@ -781,6 +834,16 @@ export default function OutreachInbox() {
               );
             })
           )}
+          {hasMoreThreads && !loading && (
+            <button
+              type="button"
+              onClick={() => fetchThreads(threads.length)}
+              disabled={loadingMore}
+              className="w-full px-4 py-3 text-xs font-semibold text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+            >
+              {loadingMore ? 'Loading…' : 'Load more conversations'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -800,9 +863,9 @@ export default function OutreachInbox() {
                       {selectedThread.lead_name}
                     </h3>
                     <a
-                      href={`https://www.linkedin.com/search/results/all/?keywords=${encodeURIComponent(
-                        selectedThread.lead_name
-                      )}`}
+                      href={selectedThread.lead_profile_url?.startsWith('https://www.linkedin.com/in/') || selectedThread.lead_profile_url?.startsWith('https://linkedin.com/in/')
+                        ? selectedThread.lead_profile_url
+                        : `https://www.linkedin.com/search/results/all/?keywords=${encodeURIComponent(selectedThread.lead_name)}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-gray-400 hover:text-indigo-600 transition-colors"
@@ -905,7 +968,8 @@ export default function OutreachInbox() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => handleDeleteReminder(remindersList[0]?.id || 'active')}
+                  onClick={() => handleDeleteReminder(remindersList.find((rem) => rem.remind_at === selectedThread.remind_at)?.id || remindersList[0]?.id)}
+                  disabled={!remindersList.length}
                   className="text-amber-700 hover:text-amber-900 text-[11px] font-semibold underline"
                 >
                   Dismiss
@@ -942,26 +1006,9 @@ export default function OutreachInbox() {
                       }`}
                     >
                       {msg.is_voice_note && (
-                        <div className="flex items-center gap-2 mb-2 p-2 rounded-xl bg-indigo-500/20 text-white text-xs">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setPlayingVoiceId(playingVoiceId === msg.id ? null : msg.id)
-                            }
-                            className="p-1 rounded-full bg-white text-[#5145cd]"
-                          >
-                            {playingVoiceId === msg.id ? (
-                              <Pause className="w-3 h-3" />
-                            ) : (
-                              <Play className="w-3 h-3" />
-                            )}
-                          </button>
-                          <div className="flex-1 flex items-center gap-1">
-                            <span className="text-[10px] font-semibold">Voice Note</span>
-                            <div className="h-1 flex-1 bg-white/40 rounded-full mx-1" />
-                            <span className="text-[10px] opacity-80">0:15</span>
-                          </div>
-                        </div>
+                        msg.audio_url?.startsWith('https://') ? (
+                          <audio controls preload="none" src={msg.audio_url} className="mb-2 max-w-full" aria-label="Voice note" />
+                        ) : <p className="mb-2 text-[10px]">Voice note audio unavailable</p>
                       )}
                       <p className="whitespace-pre-wrap">{msg.body}</p>
                     </div>

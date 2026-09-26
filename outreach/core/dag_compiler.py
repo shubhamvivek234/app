@@ -170,17 +170,14 @@ class DAGCompiler:
     @staticmethod
     def get_prebuilt_templates() -> list[dict[str, Any]]:
         """
-        Returns high-converting pre-built sequence templates matching media_1790104784825.png,
+        Returns pre-built sequence templates matching media_1790104784825.png,
         media_1790104824235.png, and media_1790104866987.png.
         """
         return [
             {
                 "id": "tpl_connect_and_follow_up",
                 "name": "Connect and follow up",
-                "description": "Standard high-conversion outreach: Clean connection invite with no note, and follow-up message 1 day after acceptance.",
-                "uses": "1,240",
-                "acceptance": "32%",
-                "reply": "24%",
+                "description": "Clean connection invite with no note, and follow-up message 1 day after acceptance.",
                 "nodes": [
                     {
                         "id": "step_connect_root",
@@ -249,9 +246,6 @@ class DAGCompiler:
                 "id": "tpl_profile_warmup",
                 "name": "Profile warm-up",
                 "description": "Multi-touch warm-up sequence: View profile and like recent post before sending a connection invite and welcome message.",
-                "uses": "890",
-                "acceptance": "38%",
-                "reply": "29%",
                 "nodes": [
                     {
                         "id": "step_warmup_visit",
@@ -355,10 +349,7 @@ class DAGCompiler:
             {
                 "id": "tpl_voice_note_outreach",
                 "name": "Voice note outreach",
-                "description": "High-reply multi-touch strategy: Profile visit, clean invite, and hyper-personalized AI voice note upon acceptance.",
-                "uses": "2,150",
-                "acceptance": "38%",
-                "reply": "41%",
+                "description": "Profile visit, clean invite, and personalized voice note upon acceptance.",
                 "nodes": [
                     {
                         "id": "step_vn_visit",
@@ -483,9 +474,6 @@ class DAGCompiler:
                 "id": "tpl_multitouch_inmail",
                 "name": "Multi-touch InMail & engage",
                 "description": "Engage via follow and post like before dispatching targeted InMail directly to decision makers.",
-                "uses": "1,420",
-                "acceptance": "45%",
-                "reply": "34%",
                 "nodes": [
                     {
                         "id": "step_inmail_follow",

@@ -81,6 +81,7 @@ async def test_sequence_api_endpoints():
     mock_db = AsyncMock()
     mock_db.outreach_sequences.find_one = AsyncMock(return_value=None)
     mock_db.outreach_sequences.update_one = AsyncMock()
+    mock_db.outreach_campaigns.find_one = AsyncMock(return_value={"id": "camp_xyz", "workspace_id": "u1", "status": "draft"})
 
     user = {"user_id": "u1"}
 
@@ -143,4 +144,3 @@ def test_dag_compiler_converging_branches():
     assert order.index("step_a") < order.index("step_c")
     assert order.index("step_b") < order.index("step_d")
     assert order.index("step_c") < order.index("step_d")
-

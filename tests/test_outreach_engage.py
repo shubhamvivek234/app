@@ -3,6 +3,11 @@ Unit tests for the LinkedIn Pre-Outreach Engage & Grow Studio,
 Writing Styles Mimicry, and Swipe Files Repurposer.
 """
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def sandbox_linkedin_sessions(monkeypatch):
+    monkeypatch.setenv("OUTREACH_MOCK_AUTH", "true")
 from fastapi import HTTPException
 from unittest.mock import AsyncMock, patch
 from types import SimpleNamespace
@@ -163,9 +168,11 @@ class MockDB:
         self.outreach_engage_lists = MockCollection()
         self.outreach_engage_contacts = MockCollection()
         self.outreach_engage_posts = MockCollection()
+        self.outreach_engage_drafts = MockCollection()
         self.outreach_writing_styles = MockCollection()
         self.outreach_swipe_files = MockCollection()
         self.outreach_accounts = MockCollection()
+        self.outreach_campaigns = MockCollection()
 
 
 @pytest.fixture
@@ -396,6 +403,8 @@ async def test_swipe_files_and_repurpose(db, mock_user):
     assert len(items) == 1
 
     repurpose_req = RepurposeSwipeRequest(target_format="outbound_hook")
-    rep_res = await repurpose_swipe_item(item["id"], repurpose_req, current_user=mock_user, db=db)
+    with patch("outreach.api.swipe.free_llm.generate_text", new_callable=AsyncMock) as generate:
+        generate.return_value = ("A fresh and original outreach hook for your prospect.", "test", "test")
+        rep_res = await repurpose_swipe_item(item["id"], repurpose_req, current_user=mock_user, db=db)
     assert rep_res["target_format"] == "outbound_hook"
     assert len(rep_res["repurposed_text"]) > 10

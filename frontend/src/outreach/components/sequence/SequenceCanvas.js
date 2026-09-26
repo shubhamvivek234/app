@@ -239,6 +239,8 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
 
   const [showTip, setShowTip] = useState(true);
   const [toastMessage, setToastMessage] = useState(null);
+  const [sequenceLoadError, setSequenceLoadError] = useState('');
+  const [sequenceRetryKey, setSequenceRetryKey] = useState(0);
   const hasLoaded = useRef(false);
   const treeRef = useRef(tree);
 
@@ -364,7 +366,9 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
 
   // Load existing sequence or pre-made template tree
   useEffect(() => {
+    let cancelled = false;
     hasLoaded.current = false;
+    setSequenceLoadError('');
 
     if (!campaignId || campaignId === 'new' || campaignId === 'new_campaign') {
       hasLoaded.current = true;
@@ -377,56 +381,64 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
           credentials: 'include',
           headers: { Authorization: token ? `Bearer ${token}` : '' },
         });
-        if (res.ok) {
-          const data = await res.json();
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || 'Sequence could not be loaded.');
+        if (!cancelled) {
           if (data.tree && Array.isArray(data.tree) && data.tree.length > 0) {
             setTree(data.tree);
             setSelectedStepId(null);
           }
+          hasLoaded.current = true;
         }
       } catch (err) {
         console.error('Failed to load sequence:', err);
-      } finally {
-        hasLoaded.current = true;
+        if (!cancelled) setSequenceLoadError(err.message || 'Sequence could not be loaded.');
       }
     };
     loadSequence();
-  }, [campaignId]);
+    return () => { cancelled = true; };
+  }, [campaignId, sequenceRetryKey]);
 
-  const persistSequence = React.useCallback(async (treeToSave = treeRef.current) => {
+  const saveQueueRef = React.useRef(Promise.resolve());
+  const persistSequence = React.useCallback((treeToSave = treeRef.current) => {
     if (!campaignId || campaignId === 'new' || campaignId === 'new_campaign') return false;
     if (!hasLoaded.current) {
       setToastMessage('Sequence is still loading. Wait a moment, then save again.');
       return false;
     }
-    try {
-      const token = localStorage.getItem('token');
-      const { nodes, edges } = flattenTreeToDAG(treeToSave);
-      const res = await fetch('/api/v1/outreach/sequences', {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: token ? `Bearer ${token}` : '',
-        },
-        body: JSON.stringify({ campaign_id: campaignId, nodes, edges, tree: treeToSave }),
-      });
-      if (!res.ok) {
-        const error = await res.json().catch(() => ({}));
-        setToastMessage(error.detail || 'Sequence could not be saved. Please try again.');
+    const save = saveQueueRef.current.catch(() => {}).then(async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const { nodes, edges } = flattenTreeToDAG(treeToSave);
+        const res = await fetch('/api/v1/outreach/sequences', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: token ? `Bearer ${token}` : '',
+          },
+          body: JSON.stringify({ campaign_id: campaignId, nodes, edges, tree: treeToSave }),
+        });
+        if (!res.ok) {
+          const error = await res.json().catch(() => ({}));
+          setToastMessage(error.detail || 'Sequence could not be saved. Please try again.');
+          return false;
+        }
+        if (onSave) onSave({ nodes, edges, tree: treeToSave });
+        return true;
+      } catch (err) {
+        console.error('Failed to save sequence:', err);
+        setToastMessage('Sequence could not be saved. Please check your connection and try again.');
         return false;
       }
-      if (onSave) onSave({ nodes, edges, tree: treeToSave });
-      return true;
-    } catch (err) {
-      console.error('Failed to save sequence:', err);
-      setToastMessage('Sequence could not be saved. Please check your connection and try again.');
-      return false;
-    }
+    });
+    saveQueueRef.current = save;
+    return save;
   }, [campaignId, onSave]);
 
   useEffect(() => {
     if (onRegisterSave) onRegisterSave(persistSequence);
+    return () => { if (onRegisterSave) onRegisterSave(null); };
   }, [onRegisterSave, persistSequence]);
 
   // Auto-save sequence debounced when tree changes
@@ -1075,6 +1087,15 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
       </div>
     );
   };
+
+  if (sequenceLoadError) {
+    return (
+      <div role="alert" className="flex h-full flex-col items-center justify-center gap-3 bg-white p-8 text-center">
+        <p className="text-sm font-semibold text-red-700">{sequenceLoadError}</p>
+        <button type="button" onClick={() => setSequenceRetryKey((value) => value + 1)} className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white">Retry loading sequence</button>
+      </div>
+    );
+  }
 
   return (
     <div

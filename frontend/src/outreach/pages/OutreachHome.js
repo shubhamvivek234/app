@@ -1,14 +1,34 @@
 import React, { useState, useEffect } from 'react';
 import { Check, Plus, UserPlus, Calendar, ArrowRight, Sparkles, Activity } from 'lucide-react';
 import ConnectLinkedInModal from '../components/ConnectLinkedInModal';
+import env from '@/env';
 
-export default function OutreachHome({ onNavigate, onOpenWizard }) {
+export default function OutreachHome({ onNavigate, onOpenWizard, onOpenCampaign }) {
   const [userName, setUserName] = useState('There');
   const [recentCampaigns, setRecentCampaigns] = useState([]);
   const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
   const [connectedAccountsCount, setConnectedAccountsCount] = useState(0);
   const [liveEvents, setLiveEvents] = useState([]);
   const [streamStatus, setStreamStatus] = useState('connecting');
+  const [overviewError, setOverviewError] = useState('');
+
+  const loadOverview = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const headers = { Authorization: token ? `Bearer ${token}` : '' };
+      const [campRes, accRes] = await Promise.all([
+        fetch('/api/v1/outreach/campaigns', { credentials: 'include', headers }),
+        fetch('/api/v1/outreach/accounts', { credentials: 'include', headers }),
+      ]);
+      if (!campRes.ok || !accRes.ok) throw new Error('Could not load outreach setup');
+      const [campaigns, accounts] = await Promise.all([campRes.json(), accRes.json()]);
+      setRecentCampaigns(Array.isArray(campaigns) ? campaigns.slice(0, 5) : []);
+      setConnectedAccountsCount(Array.isArray(accounts) ? accounts.filter((account) => account.status === 'active').length : 0);
+      setOverviewError('');
+    } catch (err) {
+      setOverviewError(err.message || 'Could not load outreach setup');
+    }
+  };
 
   useEffect(() => {
     // Try to get user name from local storage or profile
@@ -20,40 +40,12 @@ export default function OutreachHome({ onNavigate, onOpenWizard }) {
       }
     } catch (_) {}
 
-    // Fetch campaigns for recent list
-    const loadOverview = async () => {
-      try {
-        const token = localStorage.getItem('token');
-        const [campRes, accRes] = await Promise.all([
-          fetch('/api/v1/outreach/campaigns', {
-            headers: { Authorization: token ? `Bearer ${token}` : '' },
-          }),
-          fetch('/api/v1/outreach/accounts', {
-            headers: { Authorization: token ? `Bearer ${token}` : '' },
-          }),
-        ]);
-
-        if (campRes.ok) {
-          const camps = await campRes.json();
-          setRecentCampaigns(camps.slice(0, 5));
-        }
-        if (accRes.ok) {
-          const accs = await accRes.json();
-          setConnectedAccountsCount(accs.length);
-        }
-      } catch (err) {
-        console.error('Failed to load overview:', err);
-      }
-    };
-
     loadOverview();
 
     // Connect to real-time live activity SSE stream ($0 infra cost)
-    const token = localStorage.getItem('token');
-    const sseUrl = `/api/v1/outreach/analytics/live-feed${token ? `?token=${encodeURIComponent(token)}` : ''}`;
     let eventSource;
     try {
-      eventSource = new EventSource(sseUrl);
+      eventSource = new EventSource(`${env.BACKEND_URL}/api/v1/outreach/analytics/live-feed`, { withCredentials: true });
 
       eventSource.addEventListener('connected', () => {
         setStreamStatus('live');
@@ -99,6 +91,12 @@ export default function OutreachHome({ onNavigate, onOpenWizard }) {
           <p className="text-xs text-gray-500 mt-1">Your workspace is ready.</p>
         </div>
 
+        {overviewError && (
+          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+            {overviewError} <button type="button" onClick={loadOverview} className="font-semibold underline">Retry</button>
+          </div>
+        )}
+
         {/* Onboarding Checklist Card */}
         <div className="bg-white rounded-2xl border border-gray-200/80 shadow-xs overflow-hidden">
           <div className="p-6 border-b border-gray-100 flex items-center gap-4">
@@ -108,7 +106,7 @@ export default function OutreachHome({ onNavigate, onOpenWizard }) {
             <div>
               <h3 className="font-bold text-gray-900 text-sm">Finish setting up</h3>
               <p className="text-xs text-gray-500">
-                You are {Math.round((completedSteps / 3) * 100)}% of the way to your first meeting.
+                You are {Math.round((completedSteps / 3) * 100)}% of the way through setup.
               </p>
             </div>
           </div>
@@ -176,7 +174,7 @@ export default function OutreachHome({ onNavigate, onOpenWizard }) {
                 <span className="text-gray-400 font-medium">Done</span>
               ) : (
                 <button
-                  onClick={onOpenWizard}
+                  onClick={() => onOpenWizard('new', 1)}
                   className="px-4 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 font-medium rounded-lg transition-colors"
                 >
                   Start
@@ -201,14 +199,14 @@ export default function OutreachHome({ onNavigate, onOpenWizard }) {
 
           {recentCampaigns.length === 0 ? (
             <div className="py-8 text-center bg-gray-50/50 rounded-xl border border-dashed border-gray-200 text-gray-400 text-xs">
-              No campaigns created yet. Click "+ Create campaign" to start your first sequence.
+              No campaigns created yet. Click "+ Create campaign" to set up your first outreach campaign.
             </div>
           ) : (
             <div className="divide-y divide-gray-100 text-xs">
               {recentCampaigns.map((camp) => (
                 <div
                   key={camp.id}
-                  onClick={() => onNavigate('campaigns')}
+                  onClick={() => onOpenCampaign ? onOpenCampaign(camp.id) : onNavigate('campaigns')}
                   className="py-3 flex items-center justify-between hover:bg-gray-50/60 px-2 rounded-lg cursor-pointer transition-colors"
                 >
                   <span className="font-medium text-gray-900">{camp.name}</span>
@@ -292,10 +290,12 @@ export default function OutreachHome({ onNavigate, onOpenWizard }) {
         isOpen={isConnectModalOpen}
         onClose={() => {
           setIsConnectModalOpen(false);
-          setConnectedAccountsCount((c) => c + 1);
+        }}
+        onAccountConnected={() => {
+          setIsConnectModalOpen(false);
+          loadOverview();
         }}
       />
     </div>
   );
 }
-

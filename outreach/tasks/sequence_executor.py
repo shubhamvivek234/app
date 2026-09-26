@@ -146,6 +146,7 @@ class SequenceExecutor:
                 }
                 if node_type in (SequenceNodeType.CONNECTION_REQUEST, SequenceNodeType.IF_CONNECTED) and branch_signal:
                     updates["is_connected"] = True
+                    updates["accepted_at"] = lead.get("accepted_at") or now
                 await db.outreach_leads.update_one(
                     {"id": lead_id},
                     {"$set": updates, "$unset": {waiting_field: ""}},
@@ -257,6 +258,32 @@ class SequenceExecutor:
             )
             return {"status": "action_failed", "action": node_type, "reason": reason}
 
+        # Analytics reads confirmed action events, not CRM stage guesses. An
+        # idempotent key avoids counting a retried worker step twice.
+        if node_type != SequenceNodeType.IF_CONNECTED and action_result.get("status") != "skipped":
+            action_at = datetime.now(timezone.utc)
+            try:
+                await db.outreach_tasks.update_one(
+                    {"id": f"{lead_id}:{curr_node_id}", "workspace_id": lead["workspace_id"]},
+                    {"$setOnInsert": {
+                        "id": f"{lead_id}:{curr_node_id}",
+                        "workspace_id": lead["workspace_id"],
+                        "user_id": account.get("user_id"),
+                        "campaign_id": lead["campaign_id"],
+                        "lead_id": lead_id,
+                        "account_id": account["id"],
+                        "task_type": node_type.value if isinstance(node_type, SequenceNodeType) else node_type,
+                        "status": "completed",
+                        "created_at": action_at,
+                        "updated_at": action_at,
+                    }},
+                    upsert=True,
+                )
+            except Exception:
+                # The LinkedIn action already happened. Never resend it just
+                # because the analytics event could not be recorded.
+                logger.exception("Could not record outreach action for lead %s", lead_id)
+
         if node_type == SequenceNodeType.CONNECTION_REQUEST and node.get("branches"):
             waiting_since = datetime.now(timezone.utc)
             await db.outreach_leads.update_one(
@@ -299,7 +326,10 @@ class SequenceExecutor:
             if branch_signal:
                 next_node_id = branches["positive"]
                 if node_type == SequenceNodeType.IF_CONNECTED:
-                    await db.outreach_leads.update_one({"id": lead_id}, {"$set": {"is_connected": True}})
+                    await db.outreach_leads.update_one({"id": lead_id}, {"$set": {
+                        "is_connected": True,
+                        "accepted_at": lead.get("accepted_at") or datetime.now(timezone.utc),
+                    }})
             else:
                 if node_type == SequenceNodeType.IF_CONNECTED and not lead.get("waiting_for_connection_at"):
                     waiting_since = datetime.now(timezone.utc)

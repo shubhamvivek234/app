@@ -96,7 +96,7 @@ class OutreachAccount(BaseModel):
     li_a_enc: str = ""            # Encrypted li_a (Sales Nav / Recruiter)
     premium_product: str = "classic"  # classic, sales_navigator, recruiter
     user_agent: str = ""
-    jsession_id: str = ""
+    jsession_id: str = ""  # Encrypted JSESSIONID for new accounts; legacy plaintext is read-only compatible
     status: AccountStatus = AccountStatus.ACTIVE
     country_code: str = "US"
     proxy: ProxyConfig | None = None
@@ -113,6 +113,7 @@ class OutreachAccount(BaseModel):
 
 class CampaignStatus(str, Enum):
     DRAFT = "draft"
+    WARMING_UP = "warming_up"
     ACTIVE = "active"
     PAUSED = "paused"
     COMPLETED = "completed"
@@ -134,6 +135,9 @@ class OutreachCampaign(BaseModel):
     user_id: str
     name: str
     status: CampaignStatus = CampaignStatus.DRAFT
+    auto_launch_enabled: bool = False
+    auto_launch_list_id: str | None = None
+    auto_launch_armed_at: datetime | None = None
     sender_account_ids: list[str] = Field(default_factory=list)  # Sender pooling
     schedule: WorkingSchedule = Field(default_factory=WorkingSchedule)
     limits: DailyLimits = Field(default_factory=DailyLimits)
@@ -219,6 +223,7 @@ class OutreachLead(BaseModel):
     workspace_id: str
     assigned_account_id: str | None = None
     linkedin_url: str
+    linkedin_urn: str | None = None
     first_name: str = ""
     last_name: str = ""
     company_name: str = ""
@@ -226,7 +231,7 @@ class OutreachLead(BaseModel):
     location: str = ""
     email: str | None = None
     phone: str | None = None
-    country_code: str = "us"
+    country_code: str = ""
     pipeline_stage: str = "unassigned"  # unassigned, in_campaign, contacted, replied, call_booked
     custom_variables: dict[str, str] = Field(default_factory=dict)
     
@@ -237,7 +242,9 @@ class OutreachLead(BaseModel):
     last_action_taken: str | None = None
     last_action_at: datetime | None = None
     is_connected: bool = False
+    accepted_at: datetime | None = None
     has_replied: bool = False
+    replied_at: datetime | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -287,6 +294,8 @@ class OutreachInboxThread(BaseModel):
     lead_company: str | None = None
     lead_title: str | None = None
     lead_urn: str
+    conversation_urn: str | None = None
+    lead_profile_url: str | None = None
     is_outreach: bool = False
     campaign_id: str | None = None
     campaign_name: str | None = None

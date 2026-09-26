@@ -3,9 +3,14 @@ Phase 3: Leads CRM API endpoints.
 Provides bulk import, search ingestion, CRM filtering, and Do-Not-Contact management.
 """
 import logging
+import csv
+import io
+import json
+import re
 from typing import Any
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -117,7 +122,31 @@ async def import_leads_csv(
     Parses and ingests a CSV list of LinkedIn leads into a specific campaign with deduplication.
     """
     workspace_id = _workspace_id(current_user)
-    await _require_campaign(req.campaign_id, current_user, db)
+    campaign = await _require_campaign(req.campaign_id, current_user, db)
+    if campaign.get("status") == "warming_up":
+        raise HTTPException(status_code=409, detail="Pause conditional launch before changing its lead cohort")
+    if campaign.get("status") == "active":
+        linked_list_count = await db.outreach_engage_lists.count_documents({
+            "campaign_id": req.campaign_id, "workspace_id": workspace_id,
+        })
+        if linked_list_count:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This active campaign has an Engage warm-up list. Import into a new draft campaign so new contacts complete warm-up before launch.",
+            )
+        sender_count = await db.outreach_accounts.count_documents({
+            "id": {"$in": campaign.get("sender_account_ids", [])},
+            "workspace_id": workspace_id,
+            "status": "active",
+        })
+        sequence = await db.outreach_sequences.find_one({
+            "campaign_id": req.campaign_id, "is_deleted": {"$ne": True},
+        })
+        if not sender_count or not (sequence or {}).get("compiled_dag", {}).get("root_node_ids"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This campaign needs an active sender and a valid sequence before more contacts can be imported.",
+            )
 
     parsed_leads = LeadImporter.parse_csv_content(req.csv_text, req.custom_mapping)
     if not parsed_leads:
@@ -132,7 +161,8 @@ async def import_leads_csv(
         workspace_id=workspace_id,
         db=db,
         skip_already_contacted=req.skip_already_contacted,
-        skip_do_not_contact=req.skip_do_not_contact,
+        skip_do_not_contact=True,
+        campaign=campaign,
     )
 
     return result
@@ -156,20 +186,15 @@ async def import_search_url(
     )
 
 
-@router.get("")
-async def list_leads(
-    campaign_id: str | None = None,
-    execution_state: str | None = None,
-    pipeline_stage: str | None = None,
-    search: str | None = None,
-    skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
-    current_user: dict = Depends(get_current_user),
-    db: AsyncIOMotorDatabase = Depends(get_db),
-):
-    """
-    Returns filterable, paginated leads for the active workspace.
-    """
+async def _lead_query(
+    campaign_id: str | None,
+    execution_state: str | None,
+    pipeline_stage: str | None,
+    search: str | None,
+    location: str | None,
+    current_user: dict,
+    db: AsyncIOMotorDatabase,
+) -> dict[str, Any]:
     workspace_id = _workspace_id(current_user)
     user_id = _user_id(current_user)
 
@@ -185,20 +210,42 @@ async def list_leads(
     if pipeline_stage:
         clauses.append({"pipeline_stage": pipeline_stage})
     if search:
+        escaped = re.escape(search.strip()[:100])
         clauses.append({
             "$or": [
-                {"first_name": {"$regex": search, "$options": "i"}},
-                {"last_name": {"$regex": search, "$options": "i"}},
-                {"company_name": {"$regex": search, "$options": "i"}},
-                {"job_title": {"$regex": search, "$options": "i"}},
+                {"first_name": {"$regex": escaped, "$options": "i"}},
+                {"last_name": {"$regex": escaped, "$options": "i"}},
+                {"company_name": {"$regex": escaped, "$options": "i"}},
+                {"job_title": {"$regex": escaped, "$options": "i"}},
             ]
         })
+    if location:
+        escaped_location = re.escape(location.strip()[:100])
+        clauses.append({"$or": [
+            {"location": {"$regex": escaped_location, "$options": "i"}},
+            {"country_code": {"$regex": escaped_location, "$options": "i"}},
+        ]})
 
-    query: dict[str, Any] = {"$and": clauses} if len(clauses) > 1 else clauses[0]
+    return {"$and": clauses} if len(clauses) > 1 else clauses[0]
 
+
+@router.get("")
+async def list_leads(
+    campaign_id: str | None = None,
+    execution_state: str | None = None,
+    pipeline_stage: str | None = None,
+    search: str | None = None,
+    location: str | None = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Returns filterable, paginated leads for the active workspace."""
+    query = await _lead_query(campaign_id, execution_state, pipeline_stage, search, location, current_user, db)
 
     total = await db.outreach_leads.count_documents(query)
-    cursor = db.outreach_leads.find(query).skip(skip).limit(limit).sort("created_at", -1)
+    cursor = db.outreach_leads.find(query).sort([("created_at", -1), ("id", -1)]).skip(skip).limit(limit)
     leads = await cursor.to_list(length=limit)
 
     for l in leads:
@@ -210,6 +257,54 @@ async def list_leads(
         "skip": skip,
         "limit": limit,
     }
+
+
+EXPORT_COLUMNS = (
+    "first_name", "last_name", "linkedin_url", "company_name", "job_title",
+    "location", "email", "phone", "campaign_id", "pipeline_stage",
+    "execution_state", "created_at", "last_action_taken", "last_action_at", "custom_variables",
+)
+
+
+def _safe_csv_cell(value: Any) -> str:
+    if isinstance(value, datetime):
+        value = value.isoformat()
+    if isinstance(value, dict):
+        value = json.dumps(value, ensure_ascii=False)
+    value = str(value or "")
+    return "'" + value if value.lstrip().startswith(("=", "+", "-", "@")) else value
+
+
+@router.get("/export")
+async def export_leads(
+    campaign_id: str | None = None,
+    execution_state: str | None = None,
+    pipeline_stage: str | None = None,
+    search: str | None = None,
+    location: str | None = None,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Export every matching workspace lead, independent of the current UI page."""
+    query = await _lead_query(campaign_id, execution_state, pipeline_stage, search, location, current_user, db)
+
+    async def rows():
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(EXPORT_COLUMNS)
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+        cursor = db.outreach_leads.find(query).sort([("created_at", -1), ("id", -1)])
+        async for lead in cursor:
+            writer.writerow([_safe_csv_cell(lead.get(field)) for field in EXPORT_COLUMNS])
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+
+    return StreamingResponse(rows(), media_type="text/csv; charset=utf-8", headers={
+        "Content-Disposition": 'attachment; filename="outreach-leads.csv"',
+    })
 
 
 @router.delete("/{lead_id}")
@@ -228,12 +323,25 @@ async def delete_lead(
     lead = await db.outreach_leads.find_one(lead_filter)
     if not lead:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+    if lead.get("campaign_id"):
+        campaign = await _require_campaign(lead["campaign_id"], current_user, db)
+        if campaign.get("status") == "warming_up":
+            raise HTTPException(status_code=409, detail="Pause conditional launch before removing a lead")
 
-    await db.outreach_leads.delete_one(lead_filter)
-    await db.outreach_campaigns.update_one(
-        _campaign_filter(lead["campaign_id"], current_user),
-        {"$inc": {"leads_count": -1}}
-    )
+    result = await db.outreach_leads.delete_one({
+        **lead_filter,
+        "execution_claimed_at": {"$exists": False},
+    })
+    if not result.deleted_count:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This contact is currently being processed. Retry after the action finishes.",
+        )
+    if lead.get("campaign_id"):
+        await db.outreach_campaigns.update_one(
+            _campaign_filter(lead["campaign_id"], current_user),
+            {"$inc": {"leads_count": -1}}
+        )
 
     return {"status": "success", "message": "Lead removed"}
 
@@ -355,13 +463,16 @@ async def update_lead_stage(
     if not lead:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
 
-    await db.outreach_leads.update_one(
+    result = await db.outreach_leads.update_one(
         {
             "id": lead_id,
             "$or": [{"workspace_id": workspace_id}, {"workspace_id": user_id}, {"user_id": user_id}],
         },
         {"$set": {"pipeline_stage": req.pipeline_stage, "updated_at": datetime.now(timezone.utc)}},
     )
+
+    if not result.matched_count:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
 
     return {
         "status": "updated",

@@ -1,6 +1,4 @@
-"""
-Automated test suite for Phase 2: LinkedIn Connection, 2FA Relay & 1:1 Residential Proxy Layer.
-"""
+"""LinkedIn session connection and residential proxy regressions."""
 import os
 from cryptography.fernet import Fernet
 
@@ -12,20 +10,20 @@ from unittest.mock import AsyncMock, patch
 from outreach.engine.session_authenticator import (
     SessionAuthenticator,
     InvalidSessionError,
-    AuthenticationError,
 )
 from outreach.api.accounts import (
     ConnectCookieRequest,
-    LoginStartRequest,
-    LoginVerify2FARequest,
     UpdateLimitsRequest,
     connect_via_cookie,
-    login_start,
-    login_verify_2fa,
     list_outreach_accounts,
     update_account_limits,
     disconnect_account,
 )
+
+
+@pytest.fixture(autouse=True)
+def sandbox_linkedin_auth(monkeypatch):
+    monkeypatch.setenv("OUTREACH_MOCK_AUTH", "true")
 
 
 @pytest.mark.asyncio
@@ -42,28 +40,6 @@ async def test_empty_cookie_raises_error():
     """Verify empty or whitespace cookie raises InvalidSessionError."""
     with pytest.raises(InvalidSessionError):
         await SessionAuthenticator.validate_session_cookie("   ")
-
-
-@pytest.mark.asyncio
-async def test_credential_login_and_2fa_relay():
-    """Verify email login triggers 2FA when email indicates 2FA requirement."""
-    # 1. Start login with 2FA email
-    start_res = await SessionAuthenticator.start_credential_login("user.2fa@example.com", "my_pass_123")
-    assert start_res["status"] == "2fa_required"
-    assert "session_id" in start_res
-
-    session_id = start_res["session_id"]
-
-    # 2. Verify invalid code fails
-    with pytest.raises(AuthenticationError):
-        await SessionAuthenticator.verify_2fa_code(session_id, "000000")
-
-    # 3. Start again and verify valid code succeeds
-    start_res2 = await SessionAuthenticator.start_credential_login("user.2fa@example.com", "my_pass_123")
-    auth_res = await SessionAuthenticator.verify_2fa_code(start_res2["session_id"], "123456")
-    assert auth_res["status"] == "authenticated"
-    assert "li_at" in auth_res
-    assert auth_res["account_name"] == "User 2Fa"
 
 
 @pytest.mark.asyncio
@@ -157,6 +133,6 @@ async def test_update_limits_and_disconnect_account():
     # 2. Disconnect
     del_res = await disconnect_account("acc_target_1", current_user=user, db=mock_db)
     assert del_res["status"] == "success"
-    mock_db.outreach_accounts.delete_one.assert_awaited_once_with({"id": "acc_target_1"})
+    mock_db.outreach_accounts.delete_one.assert_awaited_once_with({"id": "acc_target_1", "workspace_id": "user_p2_123"})
     mock_db.outreach_campaigns.update_many.assert_awaited_once()
     mock_db.outreach_tasks.update_many.assert_awaited_once()

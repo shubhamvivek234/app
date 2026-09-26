@@ -8,6 +8,11 @@ if not os.environ.get("ENCRYPTION_KEY"):
     os.environ["ENCRYPTION_KEY"] = Fernet.generate_key().decode()
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def sandbox_linkedin_sessions(monkeypatch):
+    monkeypatch.setenv("OUTREACH_MOCK_AUTH", "true")
 from unittest.mock import AsyncMock
 from fastapi import UploadFile
 import io
@@ -197,4 +202,3 @@ async def test_sequence_executor_handles_voice_note_step():
     assert result["status"] == "success"
     assert result["action"] == SequenceNodeType.VOICE_NOTE
     mock_db.outreach_leads.update_one.assert_called()
-

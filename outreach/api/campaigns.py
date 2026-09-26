@@ -3,6 +3,7 @@ Phase 5: Campaigns API router for LinkedIn Outbound Engine.
 Supports campaign CRUD, sender pooling allocation, working schedule updates, and launch/pause.
 """
 import logging
+import os
 from typing import Any
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -13,6 +14,7 @@ from api.deps import get_current_user
 from db.mongo import get_db
 from outreach.core.dag_compiler import DAGCompiler, contains_ai_prompt_token
 from outreach.core.lead_importer import normalize_linkedin_url
+from outreach.core.crypto import decrypt_secret
 from outreach.core.rate_limiter import OutboundRateLimiter
 from outreach.models import (
     CampaignStatus,
@@ -39,11 +41,11 @@ async def _fetch_cursor_docs(cursor_or_coro: Any, length: int = 10000) -> list[d
     return []
 
 
-async def _lead_metrics(db: AsyncIOMotorDatabase, campaign_ids: list[str]) -> dict[str, dict[str, int]]:
+async def _lead_metrics(db: AsyncIOMotorDatabase, campaign_ids: list[str], workspace_id: str) -> dict[str, dict[str, int]]:
     if not campaign_ids:
         return {}
     docs = await _fetch_cursor_docs(db.outreach_leads.aggregate([
-        {"$match": {"campaign_id": {"$in": campaign_ids}}},
+        {"$match": {"workspace_id": workspace_id, "campaign_id": {"$in": campaign_ids}}},
         {"$group": {
             "_id": "$campaign_id",
             "leads_count": {"$sum": 1},
@@ -81,15 +83,9 @@ def _workspace_id(current_user: dict) -> str:
 
 
 def _campaign_filter(campaign_id: str, current_user: dict, include_deleted: bool = False) -> dict[str, Any]:
-    user_id = _user_id(current_user)
-    workspace_id = _workspace_id(current_user)
     query = {
         "id": campaign_id,
-        "$or": [
-            {"user_id": user_id},
-            {"workspace_id": workspace_id},
-            {"workspace_id": user_id},  # legacy personal-workspace records
-        ],
+        "workspace_id": _workspace_id(current_user),
     }
     if not include_deleted:
         query["is_deleted"] = {"$ne": True}
@@ -108,7 +104,7 @@ class AutoDraftRequest(BaseModel):
     campaign_id: str | None = None
     draft_step: int | None = 1
     draft_progress: int | None = 20
-    next_step_label: str | None = "Next: add your leads"
+    next_step_label: str | None = "Next: configure sequence"
     sender_account_ids: list[str] | None = None
     schedule: dict[str, Any] | None = None
     limits: dict[str, Any] | None = None
@@ -133,6 +129,150 @@ class LaunchCampaignRequest(BaseModel):
     status: str | None = None
 
 
+class ArmWarmupRequest(BaseModel):
+    engage_list_id: str
+    warmup_hours: int = Field(default=24, ge=24, le=48)
+
+
+def conditional_auto_launch_enabled() -> bool:
+    """Deliberate release gate; enabling requires a separate product/legal decision."""
+    return os.getenv("OUTREACH_CONDITIONAL_AUTO_LAUNCH_ENABLED", "false").lower() == "true"
+
+
+def _canonical_profile(raw_url: str) -> str:
+    return normalize_linkedin_url(raw_url).replace("https://www.linkedin.com/", "https://linkedin.com/")
+
+
+async def _evaluate_warmup(
+    campaign_id: str, workspace_id: str, db: AsyncIOMotorDatabase,
+    now: datetime | None = None, required_list_id: str | None = None,
+) -> dict[str, Any]:
+    """Count only recent, timestamped confirmed actions against every current lead."""
+    now = now or datetime.now(timezone.utc)
+    linked_lists = await _fetch_cursor_docs(db.outreach_engage_lists.find({
+        "campaign_id": campaign_id, "workspace_id": workspace_id,
+    }), length=100)
+    if required_list_id:
+        linked_lists = [item for item in linked_lists if item.get("id") == required_list_id]
+    action_due_by_url: dict[str, datetime] = {}
+    for engage_list in linked_lists:
+        list_id = engage_list["id"]
+        contacts = await _fetch_cursor_docs(db.outreach_engage_contacts.find({
+            "list_id": list_id, "workspace_id": workspace_id,
+        }), length=10000)
+        contact_urls = {contact.get("id"): _canonical_profile(contact.get("profile_url", "")) for contact in contacts}
+        posts = await _fetch_cursor_docs(db.outreach_engage_posts.find({
+            "list_id": list_id, "workspace_id": workspace_id,
+            "status": {"$in": ["liked", "commented"]},
+        }), length=10000)
+        for post in posts:
+            profile_url = contact_urls.get(post.get("contact_id"))
+            if not profile_url:
+                continue
+            action_times = [value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+                            for field in ("liked_at", "commented_at")
+                            if isinstance((value := post.get(field)), datetime)]
+            if not action_times:
+                continue
+            last_action = max(action_times)
+            if last_action < now - timedelta(days=7) or last_action > now + timedelta(minutes=5):
+                continue
+            due = last_action + timedelta(hours=int(engage_list.get("warmup_hours", 24)))
+            action_due_by_url[profile_url] = max(action_due_by_url.get(profile_url, due), due)
+    leads = await _fetch_cursor_docs(db.outreach_leads.find({
+        "campaign_id": campaign_id, "workspace_id": workspace_id,
+    }), length=10000)
+    lead_urls = [_canonical_profile(lead.get("linkedin_url", "")) for lead in leads]
+    missing_count = sum(not profile or profile not in action_due_by_url for profile in lead_urls)
+    if hasattr(db.outreach_leads, "count_documents"):
+        total_leads = await db.outreach_leads.count_documents({"campaign_id": campaign_id, "workspace_id": workspace_id})
+        missing_count += max(0, total_leads - len(leads))
+    cohort_due = [action_due_by_url[url] for url in lead_urls if url in action_due_by_url]
+    ready_at = max(cohort_due) if cohort_due else None
+    return {
+        "linked_lists_count": len(linked_lists), "leads_count": len(leads),
+        "missing_count": missing_count, "ready_at": ready_at,
+        "ready": bool(linked_lists and leads and missing_count == 0 and ready_at and ready_at <= now),
+    }
+
+
+@router.get("/features/conditional-launch")
+async def get_conditional_launch_feature(current_user: dict = Depends(get_current_user)):
+    return {"enabled": conditional_auto_launch_enabled()}
+
+
+@router.post("/{campaign_id}/arm-warmup")
+async def arm_warmup_campaign(
+    campaign_id: str,
+    req: ArmWarmupRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    if not conditional_auto_launch_enabled():
+        raise HTTPException(status_code=403, detail="Conditional auto-launch is not enabled for this deployment")
+    workspace_id = _workspace_id(current_user)
+    campaign_filter = _campaign_filter(campaign_id, current_user)
+    campaign = await db.outreach_campaigns.find_one(campaign_filter)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if campaign.get("status") != CampaignStatus.DRAFT:
+        raise HTTPException(status_code=409, detail="Only draft campaigns can be armed for warm-up")
+    engage_list = await db.outreach_engage_lists.find_one({
+        "id": req.engage_list_id, "workspace_id": workspace_id,
+    })
+    if not engage_list:
+        raise HTTPException(status_code=404, detail="Engagement list not found")
+    if engage_list.get("campaign_id") not in (None, campaign_id):
+        raise HTTPException(status_code=409, detail="Engagement list is already linked to another campaign")
+    leads = await _fetch_cursor_docs(db.outreach_leads.find({
+        "campaign_id": campaign_id, "workspace_id": workspace_id,
+    }), length=10000)
+    if not leads or not campaign.get("sender_account_ids"):
+        raise HTTPException(status_code=400, detail="Add leads and select a sender before arming auto-launch")
+    sequence = await db.outreach_sequences.find_one({
+        "campaign_id": campaign_id, "workspace_id": workspace_id, "is_deleted": {"$ne": True},
+    })
+    if not sequence or not sequence.get("nodes"):
+        raise HTTPException(status_code=400, detail="Save a sequence before arming auto-launch")
+    now = datetime.now(timezone.utc)
+    result = await db.outreach_campaigns.update_one(
+        {**campaign_filter, "status": CampaignStatus.DRAFT},
+        {"$set": {
+            "status": CampaignStatus.WARMING_UP.value, "auto_launch_enabled": False,
+            "auto_launch_list_id": req.engage_list_id,
+            "auto_launch_lead_ids": sorted(str(lead["id"]) for lead in leads),
+            "auto_launch_sequence_updated_at": sequence.get("updated_at"),
+            "auto_launch_armed_at": now, "auto_launch_error": "", "updated_at": now,
+        }},
+    )
+    if not result.modified_count:
+        raise HTTPException(status_code=409, detail="Campaign changed while arming auto-launch")
+    armed_filter = {**campaign_filter, "status": CampaignStatus.WARMING_UP.value,
+                    "auto_launch_armed_at": now, "auto_launch_enabled": False}
+    try:
+        linked = await db.outreach_engage_lists.update_one(
+            {"id": req.engage_list_id, "workspace_id": workspace_id,
+             "campaign_id": {"$in": [None, campaign_id]}},
+            {"$set": {"campaign_id": campaign_id, "warmup_hours": req.warmup_hours, "updated_at": now}},
+        )
+        if not (getattr(linked, "matched_count", 0) or getattr(linked, "modified_count", 0)):
+            raise HTTPException(status_code=409, detail="Engagement list changed while linking it to this campaign")
+        enabled = await db.outreach_campaigns.update_one(
+            armed_filter, {"$set": {"auto_launch_enabled": True, "updated_at": datetime.now(timezone.utc)}},
+        )
+        if not enabled.modified_count:
+            raise HTTPException(status_code=409, detail="Campaign changed before auto-launch could be armed")
+    except Exception:
+        # The worker only scans enabled campaigns. Roll back a partially linked attempt.
+        await db.outreach_campaigns.update_one(armed_filter, {"$set": {
+            "status": CampaignStatus.DRAFT.value, "auto_launch_enabled": False,
+            "auto_launch_error": "Could not link the selected Engage list",
+        }})
+        raise
+    return {"status": CampaignStatus.WARMING_UP.value, "campaign_id": campaign_id,
+            "message": "Campaign is waiting for confirmed engagement from every lead and the full cooldown."}
+
+
 @router.get("")
 async def list_campaigns(
     current_user: dict = Depends(get_current_user),
@@ -141,20 +281,15 @@ async def list_campaigns(
     """
     Returns list of campaigns with outbound KPI metrics matching Part 1, Image 2.
     """
-    user_id = _user_id(current_user)
     workspace_id = _workspace_id(current_user)
     campaigns = await _fetch_cursor_docs(
         db.outreach_campaigns.find({
-            "$or": [
-                {"user_id": user_id},
-                {"workspace_id": workspace_id},
-                {"workspace_id": user_id},
-            ],
+            "workspace_id": workspace_id,
             "is_deleted": {"$ne": True},
         }).sort([("updated_at", -1), ("created_at", -1)]),
         length=100,
     )
-    metrics_by_campaign = await _lead_metrics(db, [c.get("id") for c in campaigns if c.get("id")])
+    metrics_by_campaign = await _lead_metrics(db, [c.get("id") for c in campaigns if c.get("id")], workspace_id)
     for c in campaigns:
         c.pop("_id", None)
         metrics = metrics_by_campaign.get(c.get("id"), {})
@@ -181,6 +316,8 @@ async def auto_draft_campaign(
     if req.campaign_id:
         existing = await db.outreach_campaigns.find_one(_campaign_filter(req.campaign_id, current_user))
         if existing:
+            if existing.get("status") in {CampaignStatus.ACTIVE, CampaignStatus.WARMING_UP}:
+                raise HTTPException(status_code=409, detail="Pause the campaign before editing its draft settings")
             updates: dict[str, Any] = {
                 "updated_at": datetime.now(timezone.utc),
             }
@@ -204,12 +341,11 @@ async def auto_draft_campaign(
             if doc:
                 doc.pop("_id", None)
                 return doc
-        elif await db.outreach_campaigns.find_one({"id": req.campaign_id}):
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
 
     # Assign sequential default name if not provided
-    count = await db.outreach_campaigns.count_documents({"user_id": user_id, "is_deleted": {"$ne": True}})
-    default_name = req.name or f"test{count + 1}"
+    count = await db.outreach_campaigns.count_documents({"workspace_id": workspace_id, "is_deleted": {"$ne": True}})
+    default_name = req.name or f"Campaign {count + 1}"
 
     schedule_data = req.schedule if isinstance(req.schedule, dict) else (req.schedule.model_dump() if req.schedule else WorkingSchedule().model_dump())
     limits_data = req.limits if isinstance(req.limits, dict) else (req.limits.model_dump() if req.limits else DailyLimits().model_dump())
@@ -225,7 +361,7 @@ async def auto_draft_campaign(
         "limits": limits_data,
         "draft_step": req.draft_step or 1,
         "draft_progress": req.draft_progress or 20,
-        "next_step_label": req.next_step_label or "Next: add your leads",
+        "next_step_label": req.next_step_label or "Next: configure sequence",
         "is_deleted": False,
         "created_at": datetime.now(timezone.utc),
         "updated_at": datetime.now(timezone.utc),
@@ -268,7 +404,7 @@ async def get_campaign(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Returns single campaign details, funnel metrics, and linked senders."""
-    user_id = _user_id(current_user)
+    workspace_id = _workspace_id(current_user)
     campaign = await db.outreach_campaigns.find_one(_campaign_filter(campaign_id, current_user))
     if not campaign:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
@@ -276,20 +412,20 @@ async def get_campaign(
     campaign.pop("_id", None)
 
     # Lead counts
-    total_leads = await db.outreach_leads.count_documents({"campaign_id": campaign_id})
+    total_leads = await db.outreach_leads.count_documents({"campaign_id": campaign_id, "workspace_id": workspace_id})
     contacted_leads = await db.outreach_leads.count_documents({
-        "campaign_id": campaign_id,
+        "campaign_id": campaign_id, "workspace_id": workspace_id,
         "$or": [
             {"last_action_at": {"$ne": None}},
             {"execution_state": {"$in": ["invited", "connected", "messaged", "completed", "accepted", "replied"]}},
         ],
     })
     acceptances = await db.outreach_leads.count_documents({
-        "campaign_id": campaign_id,
+        "campaign_id": campaign_id, "workspace_id": workspace_id,
         "$or": [{"is_connected": True}, {"execution_state": {"$in": ["connected", "accepted"]}}],
     })
     replies = await db.outreach_leads.count_documents({
-        "campaign_id": campaign_id,
+        "campaign_id": campaign_id, "workspace_id": workspace_id,
         "$or": [{"has_replied": True}, {"execution_state": "replied"}],
     })
     interested = campaign.get("interested_count", 0)
@@ -306,11 +442,7 @@ async def get_campaign(
         acc_docs = await _fetch_cursor_docs(
             db.outreach_accounts.find({
                 "id": {"$in": sender_ids},
-                "$or": [
-                    {"user_id": user_id},
-                    {"workspace_id": _workspace_id(current_user)},
-                    {"workspace_id": user_id},
-                ],
+                "workspace_id": workspace_id,
             }),
             length=100,
         )
@@ -326,7 +458,7 @@ async def get_campaign(
     campaign["senders"] = senders
 
     # Sequence summary
-    sequence = await db.outreach_sequences.find_one({"campaign_id": campaign_id})
+    sequence = await db.outreach_sequences.find_one({"campaign_id": campaign_id, "workspace_id": workspace_id})
     if sequence:
         sequence.pop("_id", None)
         campaign["sequence"] = sequence
@@ -347,6 +479,10 @@ async def update_campaign(
     campaign = await db.outreach_campaigns.find_one(campaign_filter)
     if not campaign:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+    if campaign.get("status") == CampaignStatus.ACTIVE:
+        raise HTTPException(status_code=409, detail="Campaign is already active")
+    if campaign.get("status") not in {CampaignStatus.DRAFT, CampaignStatus.PAUSED}:
+        raise HTTPException(status_code=409, detail="Only draft or paused campaigns can be edited")
 
     updates: dict[str, Any] = {"updated_at": datetime.now(timezone.utc)}
     if req.name is not None:
@@ -385,14 +521,17 @@ async def delete_campaign(
 
     now = datetime.now(timezone.utc)
     # 1. Soft-delete campaign
+    deletion_updates = {"is_deleted": True, "auto_launch_enabled": False, "updated_at": now}
+    if campaign.get("status") in {CampaignStatus.ACTIVE, CampaignStatus.WARMING_UP}:
+        deletion_updates["status"] = CampaignStatus.PAUSED.value
     await db.outreach_campaigns.update_one(
         campaign_filter,
-        {"$set": {"is_deleted": True, "updated_at": now}}
+        {"$set": deletion_updates}
     )
 
     # 2. Cascade cancel all pending/queued/scheduled tasks to prevent unwanted execution
     await db.outreach_tasks.update_many(
-        {"campaign_id": campaign_id, "status": {"$in": ["queued", "pending", "scheduled"]}},
+        {"campaign_id": campaign_id, "workspace_id": _workspace_id(current_user), "status": {"$in": ["queued", "pending", "scheduled"]}},
         {"$set": {
             "status": "cancelled",
             "cancelled_due_to_campaign_delete": True,
@@ -402,7 +541,7 @@ async def delete_campaign(
 
     # 3. Soft-unassign leads enrolled in this campaign
     await db.outreach_leads.update_many(
-        {"campaign_id": campaign_id, "$or": [{"user_id": user_id}, {"workspace_id": _workspace_id(current_user)}, {"workspace_id": user_id}]},
+        {"campaign_id": campaign_id, "workspace_id": _workspace_id(current_user)},
         {"$set": {
             "pipeline_stage": "unassigned",
             "campaign_id": None,
@@ -413,7 +552,7 @@ async def delete_campaign(
 
     # 4. Soft-delete associated sequence if any
     await db.outreach_sequences.update_one(
-        {"campaign_id": campaign_id},
+        {"campaign_id": campaign_id, "workspace_id": _workspace_id(current_user)},
         {"$set": {"is_deleted": True, "updated_at": now}}
     )
 
@@ -435,14 +574,17 @@ async def restore_campaign(
 
     now = datetime.now(timezone.utc)
     # 1. Restore campaign
+    restore_updates = {"is_deleted": False, "auto_launch_enabled": False, "updated_at": now}
+    if campaign.get("status") in {CampaignStatus.ACTIVE, CampaignStatus.WARMING_UP}:
+        restore_updates["status"] = CampaignStatus.PAUSED.value
     await db.outreach_campaigns.update_one(
         campaign_filter,
-        {"$set": {"is_deleted": False, "updated_at": now}}
+        {"$set": restore_updates}
     )
 
     # 2. Restore cancelled tasks that were halted by the deletion
     await db.outreach_tasks.update_many(
-        {"campaign_id": campaign_id, "cancelled_due_to_campaign_delete": True},
+        {"campaign_id": campaign_id, "workspace_id": _workspace_id(current_user), "cancelled_due_to_campaign_delete": True},
         {
             "$set": {"status": "queued", "updated_at": now},
             "$unset": {"cancelled_due_to_campaign_delete": ""}
@@ -451,7 +593,7 @@ async def restore_campaign(
 
     # 3. Re-enroll unassigned leads back into the campaign
     await db.outreach_leads.update_many(
-        {"previous_campaign_id": campaign_id, "$or": [{"user_id": user_id}, {"workspace_id": _workspace_id(current_user)}, {"workspace_id": user_id}], "campaign_id": None},
+        {"previous_campaign_id": campaign_id, "workspace_id": _workspace_id(current_user), "campaign_id": None},
         {
             "$set": {"campaign_id": campaign_id, "pipeline_stage": "enrolled", "updated_at": now},
             "$unset": {"previous_campaign_id": ""}
@@ -460,7 +602,7 @@ async def restore_campaign(
 
     # 4. Restore sequence
     await db.outreach_sequences.update_one(
-        {"campaign_id": campaign_id},
+        {"campaign_id": campaign_id, "workspace_id": _workspace_id(current_user)},
         {"$set": {"is_deleted": False, "updated_at": now}}
     )
 
@@ -496,9 +638,9 @@ async def duplicate_campaign(
         "sender_account_ids": list(campaign.get("sender_account_ids", [])),
         "schedule": dict(campaign.get("schedule", {})),
         "limits": dict(campaign.get("limits", {})),
-        "draft_step": 2,
-        "draft_progress": 60,
-        "next_step_label": "Next: add your leads",
+        "draft_step": 1,
+        "draft_progress": 20,
+        "next_step_label": "Next: configure sequence",
         "leads_count": 0,
         "leads_contacted": 0,
         "acceptances_count": 0,
@@ -510,7 +652,7 @@ async def duplicate_campaign(
     }
 
     # If original campaign has an associated sequence, clone it for the new campaign
-    seq = await db.outreach_sequences.find_one({"campaign_id": campaign_id, "is_deleted": {"$ne": True}})
+    seq = await db.outreach_sequences.find_one({"campaign_id": campaign_id, "workspace_id": _workspace_id(current_user), "is_deleted": {"$ne": True}})
     if seq:
         new_seq_doc = {
             "campaign_id": new_id,
@@ -538,6 +680,17 @@ async def launch_campaign(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
+    return await _launch_campaign_impl(campaign_id, req, current_user, db)
+
+
+async def _launch_campaign_impl(
+    campaign_id: str,
+    req: LaunchCampaignRequest | None,
+    current_user: dict,
+    db: AsyncIOMotorDatabase,
+    *,
+    auto_launch_claim_id: str | None = None,
+):
     """
     Activates campaign and pools/distributes enrolled leads across assigned senders.
     """
@@ -546,6 +699,18 @@ async def launch_campaign(
     campaign = await db.outreach_campaigns.find_one(campaign_filter)
     if not campaign:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+    if campaign.get("status") == CampaignStatus.ACTIVE:
+        raise HTTPException(status_code=409, detail="Campaign is already active")
+    allowed_statuses = {CampaignStatus.DRAFT, CampaignStatus.PAUSED}
+    if auto_launch_claim_id:
+        allowed_statuses.add(CampaignStatus.WARMING_UP)
+    if campaign.get("status") not in allowed_statuses:
+        raise HTTPException(status_code=409, detail="Only draft or paused campaigns can be launched")
+    if campaign.get("status") == CampaignStatus.WARMING_UP and (
+        not auto_launch_claim_id or not campaign.get("auto_launch_enabled")
+        or campaign.get("auto_launch_claim_id") != auto_launch_claim_id
+    ):
+        raise HTTPException(status_code=409, detail="Warm-up activation was canceled or superseded")
 
     # Apply any runtime parameters passed during launch
     updates: dict[str, Any] = {"updated_at": datetime.now(timezone.utc)}
@@ -553,7 +718,7 @@ async def launch_campaign(
         if req.name:
             updates["name"] = req.name
             campaign["name"] = req.name
-        if req.sender_account_ids:
+        if req.sender_account_ids is not None:
             updates["sender_account_ids"] = req.sender_account_ids
             campaign["sender_account_ids"] = req.sender_account_ids
         if req.schedule is not None:
@@ -579,13 +744,22 @@ async def launch_campaign(
     active_senders = await _fetch_cursor_docs(db.outreach_accounts.find({
         "id": {"$in": senders},
         "status": "active",
-        "$or": [
-            {"user_id": user_id},
-            {"workspace_id": _workspace_id(current_user)},
-            {"workspace_id": user_id},
-        ],
+        "workspace_id": _workspace_id(current_user),
     }), length=100)
-    active_sender_ids = {account.get("id") for account in active_senders}
+    mock_mode = os.getenv("OUTREACH_MOCK_AUTH", "false").lower() in {"true", "1"}
+    active_sender_ids = set()
+    for account in active_senders:
+        encrypted_cookie = account.get("session_cookie_enc") or account.get("encrypted_session_cookie")
+        proxy_host = (account.get("proxy") or account.get("proxy_config") or {}).get("host")
+        if not encrypted_cookie or (not mock_mode and (not account.get("jsession_id") or not proxy_host or proxy_host in {"127.0.0.1", "localhost"})):
+            continue
+        try:
+            cookie = decrypt_secret(encrypted_cookie).removeprefix("li_at=")
+        except Exception:
+            continue
+        if not cookie or (not mock_mode and cookie.startswith(("mock_", "test_"))):
+            continue
+        active_sender_ids.add(account.get("id"))
     if active_sender_ids != set(senders):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -605,7 +779,7 @@ async def launch_campaign(
     updates["limits"] = campaign["limits"]
 
     # 1. Ensure Sequence DAG is compiled for this campaign
-    seq = await db.outreach_sequences.find_one({"campaign_id": campaign_id, "is_deleted": {"$ne": True}})
+    seq = await db.outreach_sequences.find_one({"campaign_id": campaign_id, "workspace_id": _workspace_id(current_user), "is_deleted": {"$ne": True}})
     root_node_id = None
     if seq and isinstance(seq, dict) and seq.get("nodes"):
         if contains_ai_prompt_token(seq.get("nodes")):
@@ -630,7 +804,7 @@ async def launch_campaign(
                 detail=f"These sequence steps are not supported by the campaign runner yet: {', '.join(unsupported)}. Remove or replace them before launching.",
             )
         await db.outreach_sequences.update_one(
-            {"campaign_id": campaign_id},
+            {"campaign_id": campaign_id, "workspace_id": _workspace_id(current_user)},
             {"$set": {"compiled_dag": compiled, "is_deleted": False, "updated_at": datetime.now(timezone.utc)}}
         )
         root_nodes = compiled.get("root_node_ids", [])
@@ -644,9 +818,10 @@ async def launch_campaign(
             try:
                 compiled = DAGCompiler.validate_and_compile(default_tpl["nodes"], default_tpl["edges"])
                 await db.outreach_sequences.update_one(
-                    {"campaign_id": campaign_id},
+                    {"campaign_id": campaign_id, "workspace_id": _workspace_id(current_user)},
                     {"$set": {
                         "campaign_id": campaign_id,
+                        "workspace_id": _workspace_id(current_user),
                         "nodes": default_tpl["nodes"],
                         "edges": default_tpl["edges"],
                         "compiled_dag": compiled,
@@ -660,60 +835,31 @@ async def launch_campaign(
                 logger.warning("Could not auto-compile default sequence on launch: %s", exc)
 
     # 2. Distribute unassigned leads across sender pool (Round-Robin Pooling) & initialize state
-    total_leads = await db.outreach_leads.count_documents({"campaign_id": campaign_id})
+    total_leads = await db.outreach_leads.count_documents({"campaign_id": campaign_id, "workspace_id": _workspace_id(current_user)})
     if total_leads == 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Add at least one lead before launching this campaign.")
+    if not root_node_id:
+        raise HTTPException(status_code=400, detail="Save a valid sequence before launching this campaign.")
 
-    # An opt-in Engage list delays queued outreach until its last confirmed
-    # interaction has had the configured warm-up window. It never auto-engages.
+    # The same strict all-leads gate serves manual launch and conditional launch.
     workspace_id = _workspace_id(current_user)
-    linked_lists = await _fetch_cursor_docs(db.outreach_engage_lists.find({
-        "campaign_id": campaign_id, "workspace_id": workspace_id,
-    }), length=100)
-    warmup_until = None
-    warmed_urls: set[str] = set()
-    for engage_list in linked_lists:
-        list_id = engage_list["id"]
-        contacts = await _fetch_cursor_docs(db.outreach_engage_contacts.find({
-            "list_id": list_id, "workspace_id": workspace_id,
-        }), length=10000)
-        contact_urls = {contact.get("id"): normalize_linkedin_url(contact.get("profile_url", "")) for contact in contacts}
-        engaged_posts = await _fetch_cursor_docs(db.outreach_engage_posts.find({
-            "list_id": list_id, "workspace_id": workspace_id,
-            "status": {"$in": ["liked", "commented"]},
-        }), length=10000)
-        if not engaged_posts:
-            raise HTTPException(status_code=409, detail=(
-                f"Engagement list '{engage_list.get('name', list_id)}' is linked to this campaign but has no confirmed likes or comments. "
-                "Engage first or unlink the list before launch."
-            ))
-        for post in engaged_posts:
-            profile_url = contact_urls.get(post.get("contact_id"))
-            if not profile_url:
-                continue
-            action_times = [value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-                            for field in ("liked_at", "commented_at")
-                            if isinstance((value := post.get(field)), datetime)]
-            # Legacy status-only rows cannot prove when engagement happened.
-            if not action_times:
-                continue
-            last_action = max(action_times)
-            if last_action < datetime.now(timezone.utc) - timedelta(days=7):
-                continue
-            warmed_urls.add(profile_url)
-            due = last_action + timedelta(hours=int(engage_list.get("warmup_hours", 24)))
-            warmup_until = max(warmup_until, due) if warmup_until else due
-    if linked_lists:
-        lead_urls = await _fetch_cursor_docs(db.outreach_leads.find({"campaign_id": campaign_id}), length=10000)
-        missing = sum(normalize_linkedin_url(lead.get("linkedin_url", "")) not in warmed_urls for lead in lead_urls)
-        if missing:
-            raise HTTPException(status_code=409, detail=(
-                f"{missing} campaign lead(s) have no confirmed engagement in the past seven days in the linked list(s). "
-                "Warm them first or unlink the list before launch."
-            ))
+    warmup = await _evaluate_warmup(
+        campaign_id, workspace_id, db,
+        required_list_id=campaign.get("auto_launch_list_id") if auto_launch_claim_id else None,
+    )
+    warmup_until = warmup["ready_at"]
+    if auto_launch_claim_id and not warmup["linked_lists_count"]:
+        raise HTTPException(status_code=409, detail="Conditional launch requires a linked Engage list")
+    if warmup["linked_lists_count"] and warmup["missing_count"]:
+        raise HTTPException(status_code=409, detail=(
+            f"{warmup['missing_count']} campaign lead(s) have no confirmed engagement in the past seven days in the linked list(s). "
+            "Warm them first or unlink the list before launch."
+        ))
+    if auto_launch_claim_id and not warmup["ready"]:
+        raise HTTPException(status_code=409, detail="The full Engage warm-up cooldown has not elapsed")
 
     unassigned_leads = await _fetch_cursor_docs(
-        db.outreach_leads.find({"campaign_id": campaign_id, "assigned_account_id": None}),
+        db.outreach_leads.find({"campaign_id": campaign_id, "workspace_id": workspace_id, "assigned_account_id": None}),
         length=10000,
     )
 
@@ -728,24 +874,29 @@ async def launch_campaign(
         if root_node_id and not lead.get("current_node_id"):
             lead_updates["current_node_id"] = root_node_id
         await db.outreach_leads.update_one(
-            {"id": lead["id"]},
+            {"id": lead["id"], "workspace_id": workspace_id},
             {"$set": lead_updates}
         )
 
     # 3. Mark Campaign as ACTIVE
     updates["status"] = CampaignStatus.ACTIVE
+    updates["auto_launch_enabled"] = False
+    updates["auto_launch_claim_id"] = None
     if warmup_until:
         updates["warmup_until"] = warmup_until
         if warmup_until > datetime.now(timezone.utc):
             await db.outreach_leads.update_many(
-                {"campaign_id": campaign_id, "execution_state": LeadExecutionState.QUEUED,
+                {"campaign_id": campaign_id, "workspace_id": workspace_id, "execution_state": LeadExecutionState.QUEUED,
                  "$or": [{"next_action_due_at": None}, {"next_action_due_at": {"$lt": warmup_until}}]},
                 {"$set": {"next_action_due_at": warmup_until}},
             )
-    await db.outreach_campaigns.update_one(
-        campaign_filter,
-        {"$set": updates}
-    )
+    final_filter = {**campaign_filter, "status": campaign["status"]}
+    if auto_launch_claim_id:
+        final_filter["auto_launch_claim_id"] = auto_launch_claim_id
+        final_filter["auto_launch_enabled"] = True
+    activated = await db.outreach_campaigns.update_one(final_filter, {"$set": updates})
+    if not activated.modified_count:
+        raise HTTPException(status_code=409, detail="Campaign changed before activation; no outreach will run")
 
     logger.info("Campaign %s launched with %s senders and %s leads pooled.", campaign_id, len(senders), len(unassigned_leads))
     return {
@@ -772,6 +923,7 @@ async def pause_campaign(
 
     await db.outreach_campaigns.update_one(
         campaign_filter,
-        {"$set": {"status": CampaignStatus.PAUSED, "updated_at": datetime.now(timezone.utc)}}
+        {"$set": {"status": CampaignStatus.PAUSED, "auto_launch_enabled": False,
+                  "auto_launch_claim_id": None, "updated_at": datetime.now(timezone.utc)}}
     )
     return {"status": "paused", "campaign_id": campaign_id}

@@ -6,7 +6,8 @@ Unit tests for LinkedIn Unified Inbox API endpoints:
 - update_thread_intent
 """
 import pytest
-from unittest.mock import AsyncMock
+from fastapi import HTTPException
+from unittest.mock import AsyncMock, patch
 from outreach.models import (
     OutreachInboxThread,
     OutreachInboxMessage,
@@ -42,6 +43,13 @@ class MockCollection:
         self.items = list(items or [])
 
     def find(self, query=None, *args, **kwargs):
+        def matches_condition(item, condition):
+            return all(
+                item.get(key) != expected["$ne"] if isinstance(expected, dict) and "$ne" in expected
+                else item.get(key) == expected
+                for key, expected in condition.items()
+            )
+
         matched = []
         for item in self.items:
             match = True
@@ -67,7 +75,7 @@ class MockCollection:
                             if not sub_or:
                                 and_matched = False
                                 break
-                        elif not all(item.get(ck) == cv for ck, cv in cond.items()):
+                        elif not matches_condition(item, cond):
                             and_matched = False
                             break
                     if not and_matched:
@@ -204,7 +212,9 @@ async def test_generate_ai_reply_options():
         "last_message_snippet": "Tell me more about what you offer.",
     })
 
-    res = await generate_ai_reply_options(thread_id="th_ai", current_user=user, db=db)
+    with patch("outreach.api.inbox.free_llm.generate_text", new_callable=AsyncMock) as generate:
+        generate.return_value = ('["Hi Bob, what would you like to know?", "Hi Bob, happy to share more.", "Hi Bob, I can follow up later."]', "test", "test")
+        res = await generate_ai_reply_options(thread_id="th_ai", current_user=user, db=db)
     assert len(res.suggestions) == 3
     assert any("Bob" in s for s in res.suggestions)
 
@@ -235,11 +245,12 @@ async def test_update_thread_intent():
 
 
 @pytest.mark.asyncio
-async def test_seed_demo_threads():
+async def test_seed_demo_threads(monkeypatch):
     """Verify seed_demo_threads populates demo conversations into unified inbox."""
     db = MockDB()
     user = {"user_id": "usr_seed_1", "default_workspace_id": "ws_seed"}
 
+    monkeypatch.setenv("OUTREACH_MOCK_AUTH", "true")
     res = await seed_demo_threads(current_user=user, db=db)
     assert res["status"] == "seeded"
     assert res["count"] == 2
@@ -254,7 +265,7 @@ async def test_seed_demo_threads():
 
 @pytest.mark.asyncio
 async def test_send_thread_reply_in_demo_mode():
-    """Verify send_thread_reply dispatches and records reply in thread messages."""
+    """Sample conversations must never pretend to send a LinkedIn reply."""
     db = MockDB()
     user = {"user_id": "usr_reply_1", "default_workspace_id": "ws_reply"}
 
@@ -270,12 +281,6 @@ async def test_send_thread_reply_in_demo_mode():
     })
 
     req = ReplyRequest(body="Hey Jordan! Thanks for following up.")
-    res = await send_thread_reply(
-        thread_id="th_reply_demo",
-        req=req,
-        current_user=user,
-        db=db,
-    )
-    assert res["status"] == "sent"
-    assert res["message"]["body"] == "Hey Jordan! Thanks for following up."
-    assert res["message"]["sender_name"] == "You"
+    with pytest.raises(HTTPException) as exc:
+        await send_thread_reply(thread_id="th_reply_demo", req=req, current_user=user, db=db)
+    assert exc.value.status_code == 409

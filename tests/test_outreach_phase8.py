@@ -147,3 +147,68 @@ async def test_billing_api_lifecycle_and_zero_cost_teardown():
     assert cancel_res["status"] == "canceled"
     assert cancel_res["released_proxies_count"] == 1
     mock_db.outreach_accounts.update_one.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_cancel_pauses_campaigns_and_disables_senders_before_proxy_release():
+    from unittest.mock import patch
+
+    db = AsyncMock()
+    db.outreach_accounts.find = lambda query: AsyncMock(to_list=AsyncMock(return_value=[{
+        "id": "sender_1", "workspace_id": "ws_1", "status": "active",
+        "proxy": {"proxy_id": "proxy_1"},
+    }]))
+    user = {"user_id": "owner_1", "default_workspace_id": "ws_1"}
+    with patch("outreach.api.billing.JITProxyManager") as manager:
+        manager.return_value.release_proxy = AsyncMock(return_value=True)
+        result = await cancel_subscription(current_user=user, db=db)
+
+    assert result["released_proxies_count"] == 1
+    db.outreach_campaigns.update_many.assert_awaited_once()
+    db.outreach_accounts.update_one.assert_awaited()
+    assert db.outreach_campaigns.update_many.await_args.args[0]["workspace_id"] == "ws_1"
+    assert db.outreach_accounts.update_many.await_args.args[1]["$set"]["status"] == "paused"
+
+
+@pytest.mark.asyncio
+async def test_cancel_preserves_proxy_reference_when_release_fails():
+    from unittest.mock import patch
+
+    db = AsyncMock()
+    db.outreach_accounts.find = lambda query: AsyncMock(to_list=AsyncMock(return_value=[{
+        "id": "sender_1", "workspace_id": "ws_1", "proxy": {"proxy_id": "proxy_1"},
+    }]))
+    with patch("outreach.api.billing.JITProxyManager") as manager:
+        manager.return_value.release_proxy = AsyncMock(return_value=False)
+        result = await cancel_subscription(current_user={"user_id": "ws_1"}, db=db)
+
+    assert result["released_proxies_count"] == 0
+    assert result["failed_proxy_releases"] == 1
+    assert not any("$unset" in call.args[1] for call in db.outreach_accounts.update_one.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_update_billing_email_lifecycle():
+    """Verify updating billing email persists and returns in get_outreach_plans."""
+    from outreach.api.billing import update_billing_email, UpdateBillingEmailRequest
+
+    mock_db = AsyncMock()
+    mock_db.outreach_subscriptions.update_one = AsyncMock()
+    user = {"user_id": "usr_billing_123", "email": "fallback@example.com"}
+
+    res = await update_billing_email(
+        req=UpdateBillingEmailRequest(billing_email="accounting@company.com"),
+        current_user=user,
+        db=mock_db,
+    )
+    assert res["status"] == "success"
+    assert res["billing_email"] == "accounting@company.com"
+    mock_db.outreach_subscriptions.update_one.assert_called_once()
+
+    # Verify invalid email raises 400
+    with pytest.raises(Exception):
+        await update_billing_email(
+            req=UpdateBillingEmailRequest(billing_email="not-an-email"),
+            current_user=user,
+            db=mock_db,
+        )

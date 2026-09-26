@@ -74,9 +74,19 @@ function isBackendFetchTarget(input) {
     return input.startsWith('/api/') || (BACKEND_URL && input.startsWith(BACKEND_URL));
   }
   if (input instanceof Request) {
-    return input.url.startsWith('/api/') || (BACKEND_URL && input.url.startsWith(BACKEND_URL));
+    const requestUrl = new URL(input.url);
+    return (
+      (requestUrl.origin === window.location.origin && requestUrl.pathname.startsWith('/api/'))
+      || (BACKEND_URL && input.url.startsWith(BACKEND_URL))
+    );
   }
   return false;
+}
+
+export function backendFetchUrl(url) {
+  return typeof url === 'string' && url.startsWith('/api/') && BACKEND_URL
+    ? `${BACKEND_URL}${url}`
+    : url;
 }
 
 function sanitizeFetchHeaders(headersLike) {
@@ -104,6 +114,7 @@ export function initHttpInterceptors() {
     const nextConfig = { ...config };
     nextConfig.headers = nextConfig.headers || {};
     if (isBackendRequest(nextConfig)) {
+      nextConfig.url = backendFetchUrl(nextConfig.url);
       nextConfig.withCredentials = true;
       if (!nextConfig.headers['X-Trace-ID']) {
         nextConfig.headers['X-Trace-ID'] = generateTraceId();
@@ -162,14 +173,19 @@ export function initHttpInterceptors() {
       }
 
       if (input instanceof Request) {
-        const nextRequest = new Request(input, {
+        const originalUrl = new URL(input.url);
+        const sameOriginApi = originalUrl.origin === window.location.origin && originalUrl.pathname.startsWith('/api/');
+        const routedInput = sameOriginApi
+          ? new Request(backendFetchUrl(`${originalUrl.pathname}${originalUrl.search}`), input)
+          : input;
+        const nextRequest = new Request(routedInput, {
           credentials: 'include',
           headers,
         });
         return originalFetch(nextRequest, init);
       }
 
-      return originalFetch(input, {
+      return originalFetch(backendFetchUrl(input), {
         ...init,
         credentials: 'include',
         headers,

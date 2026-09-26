@@ -33,15 +33,10 @@ def _workspace_id(current_user: dict) -> str:
 
 
 def _campaign_filter(campaign_id: str, current_user: dict) -> dict[str, Any]:
-    user_id = _user_id(current_user)
     return {
         "id": campaign_id,
         "is_deleted": {"$ne": True},
-        "$or": [
-            {"user_id": user_id},
-            {"workspace_id": _workspace_id(current_user)},
-            {"workspace_id": user_id},
-        ],
+        "workspace_id": _workspace_id(current_user),
     }
 
 
@@ -65,6 +60,55 @@ class SaveTemplateRequest(BaseModel):
     tree: list[dict[str, Any]] | None = None
 
 
+def _compile_visual_tree(tree: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compile the editor's visible tree so it cannot diverge from saved execution nodes."""
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
+
+    def visit(steps: list[dict[str, Any]], parent_id: str | None = None, branch_label: str | None = None) -> None:
+        if not isinstance(steps, list):
+            raise DAGValidationError("Sequence tree contains invalid steps")
+        previous_id = parent_id
+        for index, step in enumerate(steps):
+            if not isinstance(step, dict) or not step.get("id") or not step.get("type"):
+                raise DAGValidationError("Every visible sequence step needs an ID and type")
+            delay_hours = round(float(step.get("delay_days", 0)) * 24) if "delay_days" in step else round(float(step.get("delay_hours", 0)))
+            nodes.append({
+                "id": step["id"], "type": step["type"], "delay_hours": delay_hours,
+                "config": step.get("config") or {},
+            })
+            if previous_id:
+                edges.append({
+                    "source": previous_id, "target": step["id"],
+                    "label": branch_label if index == 0 and branch_label else "",
+                })
+            previous_id = step["id"]
+            branches = step.get("branches") or {}
+            for side in ("left", "right"):
+                branch = branches.get(side) or {}
+                if branch.get("steps"):
+                    visit(branch["steps"], step["id"], branch.get("condition"))
+            if step.get("steps"):
+                visit(step["steps"], step["id"])
+
+    try:
+        visit(tree)
+    except (TypeError, ValueError) as exc:
+        raise DAGValidationError("Sequence tree contains an invalid delay") from exc
+    return DAGCompiler.validate_and_compile(nodes, edges)
+
+
+def _same_execution_graph(visible: dict[str, Any], saved: dict[str, Any]) -> bool:
+    if visible.get("root_node_ids") != saved.get("root_node_ids"):
+        return False
+    visible_nodes = visible.get("nodes", {})
+    saved_nodes = saved.get("nodes", {})
+    if visible_nodes.keys() != saved_nodes.keys():
+        return False
+    fields = ("type", "delay_hours", "config", "next_default", "branches")
+    return all(all(visible_nodes[node_id].get(field) == saved_nodes[node_id].get(field) for field in fields) for node_id in visible_nodes)
+
+
 @router.get("/templates")
 async def get_sequence_templates(
     current_user: dict | None = Depends(get_current_user),
@@ -74,14 +118,9 @@ async def get_sequence_templates(
     templates = list(DAGCompiler.get_prebuilt_templates())
     if db is not None and current_user is not None:
         try:
-            user_id = str(current_user.get("_id") or current_user.get("id") or current_user.get("user_id") or "")
-            ws_id = current_user.get("workspace_id", user_id)
+            ws_id = _workspace_id(current_user)
             cursor = db.outreach_templates.find({
-                "$or": [
-                    {"user_id": user_id},
-                    {"workspace_id": ws_id},
-                    {"workspace_id": user_id},
-                ]
+                "workspace_id": ws_id,
             }).sort("created_at", -1)
             custom_templates = await cursor.to_list(length=100)
             for doc in custom_templates:
@@ -102,12 +141,14 @@ async def save_custom_template(
     """Saves an outreach sequence graph as a reusable custom template."""
     try:
         compiled_dag = DAGCompiler.validate_and_compile(req.nodes, req.edges)
+        if req.tree is not None and not _same_execution_graph(_compile_visual_tree(req.tree), compiled_dag):
+            raise DAGValidationError("Visible sequence does not match its execution steps. Save the editor again.")
     except DAGValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     import uuid
-    user_id = str(current_user.get("_id") or current_user.get("id") or current_user.get("user_id") or "")
-    ws_id = current_user.get("workspace_id", user_id)
+    user_id = _user_id(current_user)
+    ws_id = _workspace_id(current_user)
     template_id = f"tpl_custom_{uuid.uuid4().hex[:10]}"
 
     doc = {
@@ -138,15 +179,10 @@ async def delete_custom_template(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Deletes a user-saved custom template."""
-    user_id = str(current_user.get("_id") or current_user.get("id") or current_user.get("user_id") or "")
-    ws_id = current_user.get("workspace_id", user_id)
+    ws_id = _workspace_id(current_user)
     result = await db.outreach_templates.delete_one({
         "id": template_id,
-        "$or": [
-            {"user_id": user_id},
-            {"workspace_id": ws_id},
-            {"workspace_id": user_id},
-        ],
+        "workspace_id": ws_id,
     })
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Template not found or cannot delete prebuilt template")
@@ -177,7 +213,7 @@ async def get_campaign_sequence(
     if not campaign:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
 
-    seq_doc = await db.outreach_sequences.find_one({"campaign_id": campaign_id, "is_deleted": {"$ne": True}})
+    seq_doc = await db.outreach_sequences.find_one({"campaign_id": campaign_id, "workspace_id": _workspace_id(current_user), "is_deleted": {"$ne": True}})
     if not seq_doc:
         # Return default template
         templates = DAGCompiler.get_prebuilt_templates()
@@ -205,9 +241,13 @@ async def save_campaign_sequence(
     campaign = await db.outreach_campaigns.find_one(_campaign_filter(req.campaign_id, current_user))
     if not campaign:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+    if campaign.get("status") in {"active", "warming_up"}:
+        raise HTTPException(status_code=409, detail="Pause the campaign before editing its sequence")
 
     try:
         compiled_dag = DAGCompiler.validate_and_compile(req.nodes, req.edges)
+        if req.tree is not None and not _same_execution_graph(_compile_visual_tree(req.tree), compiled_dag):
+            raise DAGValidationError("Visible sequence does not match its execution steps. Save the editor again.")
     except DAGValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -224,7 +264,7 @@ async def save_campaign_sequence(
         doc["tree"] = req.tree
 
     await db.outreach_sequences.update_one(
-        {"campaign_id": req.campaign_id},
+        {"campaign_id": req.campaign_id, "workspace_id": _workspace_id(current_user)},
         {"$set": {**doc, "is_deleted": False}},
         upsert=True,
     )

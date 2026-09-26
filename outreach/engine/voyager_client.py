@@ -19,7 +19,7 @@ VOYAGER_BASE_URL = "https://www.linkedin.com/voyager/api"
 class VoyagerRestrictionError(RuntimeError):
     def __init__(self, status_code: int):
         self.status_code = status_code
-        super().__init__(f"LinkedIn returned HTTP {status_code} while fetching profile posts")
+        super().__init__(f"LinkedIn returned HTTP {status_code}")
 
 
 class VoyagerClient:
@@ -29,13 +29,16 @@ class VoyagerClient:
     """
 
     def __init__(self, session_cookie_enc: str, jsession_id: str = "", proxy_url: str | None = None):
-        self.session_cookie = decrypt_secret(session_cookie_enc)
-        self.jsession_id = jsession_id or "ajax:123456789"
+        self.session_cookie = decrypt_secret(session_cookie_enc).removeprefix("li_at=")
+        mock_mode = os.getenv("OUTREACH_MOCK_AUTH", "false").lower() in {"true", "1"}
+        csrf_cookie = decrypt_secret(jsession_id) if jsession_id.startswith("gAAAAA") else jsession_id
+        if not mock_mode and self.session_cookie.startswith(("mock_", "test_")):
+            raise ValueError("Test LinkedIn sessions cannot be used for live outreach")
+        if not mock_mode and not csrf_cookie:
+            raise ValueError("Sender JSESSIONID is missing. Reconnect the LinkedIn account.")
+        self.jsession_id = csrf_cookie or "ajax:123456789"
         self.proxy_url = proxy_url
-        self.is_mock = (
-            self.session_cookie.startswith("mock_")
-            or os.getenv("OUTREACH_MOCK_AUTH", "false").lower() == "true"
-        )
+        self.is_mock = mock_mode
 
     def _get_headers(self) -> dict[str, str]:
         return {
@@ -348,7 +351,7 @@ class VoyagerClient:
             logger.error("Voyager send_voice_note error: %s", exc)
             return {"status": "error", "error": str(exc)}
 
-    async def fetch_conversations(self, count: int = 20) -> list[dict[str, Any]]:
+    async def fetch_conversations(self, count: int = 20, start: int = 0) -> list[dict[str, Any]]:
         """
         Fetches active conversation threads for this LinkedIn account.
         """
@@ -356,7 +359,9 @@ class VoyagerClient:
             now = datetime.now(timezone.utc)
             return [
                 {
+                    "thread_urn": "urn:li:fs_conversation:mock-jordan",
                     "lead_urn": "urn:li:fsd_profile:ACoAABuilder1",
+                    "lead_profile_url": "https://www.linkedin.com/in/jordan-davis",
                     "lead_name": "Jordan Davis",
                     "lead_headline": "Head of Growth at FinTech Labs",
                     "lead_avatar": "",
@@ -381,18 +386,21 @@ class VoyagerClient:
                 }
             ]
 
-        url = f"{VOYAGER_BASE_URL}/messaging/conversations?count={count}"
+        url = f"{VOYAGER_BASE_URL}/messaging/conversations?count={count}&start={start}"
         try:
             async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15.0) as client:
                 resp = await client.get(url, headers=self._get_headers())
                 if resp.status_code == 200:
                     data = resp.json()
                     # In production Voyager returns elements in elements array
-                    return data.get("elements", [])
-                return []
+                    elements = data.get("elements")
+                    if not isinstance(elements, list):
+                        raise ValueError("LinkedIn returned an unexpected inbox response")
+                    return elements
+                raise VoyagerRestrictionError(resp.status_code)
         except Exception as exc:
             logger.error("Voyager fetch_conversations error: %s", exc)
-            return []
+            raise
 
     async def send_conversation_reply(self, thread_urn: str, message_body: str) -> dict[str, Any]:
         """

@@ -12,6 +12,7 @@ if not os.environ.get("ENCRYPTION_KEY"):
     os.environ["ENCRYPTION_KEY"] = Fernet.generate_key().decode()
 
 import pytest
+from fastapi import HTTPException
 
 from outreach.api.leads import (
     LeadFinderPreviewRequest,
@@ -98,6 +99,9 @@ class MockCollection:
                 if k == "$or":
                     if not any(item.get(sub_k) == sub_v for cond in v for sub_k, sub_v in cond.items()):
                         match = False
+                elif isinstance(v, dict) and "$ne" in v:
+                    if item.get(k) == v["$ne"]:
+                        match = False
                 elif item.get(k) != v:
                     match = False
             if match:
@@ -116,7 +120,10 @@ class MockCollection:
         for item in self.items:
             match = True
             for k, v in (query or {}).items():
-                if item.get(k) != v:
+                if k == "$or":
+                    if not any(all(item.get(sub_k) == sub_v for sub_k, sub_v in cond.items()) for cond in v):
+                        match = False
+                elif item.get(k) != v:
                     match = False
             if match:
                 if "$set" in update:
@@ -124,14 +131,14 @@ class MockCollection:
                 if "$unset" in update:
                     for un_k in update["$unset"]:
                         item.pop(un_k, None)
-                return AsyncMock(modified_count=1)
+                return AsyncMock(modified_count=1, matched_count=1)
         if upsert:
             new_item = dict(query)
             if "$set" in update:
                 new_item.update(update["$set"])
             self.items.append(new_item)
             return AsyncMock(upserted_id="mock_upserted_id")
-        return AsyncMock(modified_count=0)
+        return AsyncMock(modified_count=0, matched_count=0)
 
     async def delete_one(self, query):
         for i, item in enumerate(self.items):
@@ -180,38 +187,32 @@ async def test_preview_lead_finder():
         limit=5,
     )
     db = MockDatabase()
-    res = await preview_lead_finder(req, current_user=USER, db=db)
-
-    assert "results" in res
-    assert len(res["results"]) == 5
-    assert res["total_matched"] > 0
-    candidate = res["results"][0]
-    assert "linkedin_url" in candidate
-    assert candidate["connection_degree"] == "2nd"
-    assert candidate["location"] == "San Francisco, CA"
-    assert candidate["has_posted_recently"] is True
+    with pytest.raises(HTTPException) as exc:
+        await preview_lead_finder(req, current_user=USER, db=db)
+    assert exc.value.status_code == 501
+    assert db.outreach_leads.items == []
 
 
 @pytest.mark.asyncio
 async def test_enroll_finder_leads():
     db = MockDatabase()
-    db.outreach_campaigns.items.append({"id": "cmp_1", "name": "Test Campaign", "leads_count": 0})
+    db.outreach_campaigns.items.append({"id": "cmp_1", "workspace_id": "ws_test_1", "status": "draft", "name": "Test Campaign", "leads_count": 0})
 
     leads = [
         {"linkedin_url": "https://linkedin.com/in/lead-1", "first_name": "L1", "last_name": "One"},
         {"linkedin_url": "https://linkedin.com/in/lead-2", "first_name": "L2", "last_name": "Two"},
     ]
     req = LeadFinderEnrollRequest(campaign_id="cmp_1", leads=leads)
-    res = await enroll_finder_leads(req, current_user=USER, db=db)
-
-    assert res["enrolled"] == 2
-    assert len(db.outreach_leads.items) == 2
+    with pytest.raises(HTTPException) as exc:
+        await enroll_finder_leads(req, current_user=USER, db=db)
+    assert exc.value.status_code == 501
+    assert db.outreach_leads.items == []
 
 
 @pytest.mark.asyncio
 async def test_import_post_engagers():
     db = MockDatabase()
-    db.outreach_campaigns.items.append({"id": "cmp_1", "name": "Engager Campaign", "leads_count": 0})
+    db.outreach_campaigns.items.append({"id": "cmp_1", "workspace_id": "ws_test_1", "status": "draft", "name": "Engager Campaign", "leads_count": 0})
 
     req = ImportPostEngagersRequest(
         campaign_id="cmp_1",
@@ -221,13 +222,10 @@ async def test_import_post_engagers():
         export_comments=True,
         max_leads=8,
     )
-    res = await import_post_engagers(req, current_user=USER, db=db)
-
-    assert res["status"] == "enrolled"
-    assert res["enrolled"] == 8
-    assert res["export_likes"] is True
-    assert res["export_comments"] is True
-    assert len(db.outreach_leads.items) == 8
+    with pytest.raises(HTTPException) as exc:
+        await import_post_engagers(req, current_user=USER, db=db)
+    assert exc.value.status_code == 501
+    assert db.outreach_leads.items == []
 
 
 @pytest.mark.asyncio
@@ -371,7 +369,7 @@ async def test_prompts_library_and_preview():
     )
     prev_res = await preview_evaluated_message(prev_req, current_user=USER, db=db)
     assert "Hey Jordan" in prev_res["evaluated_text"]
-    assert "scaling autonomous reasoning at Supabase" in prev_res["evaluated_text"]
+    assert "[Prompt guidance not generated:" in prev_res["evaluated_text"]
 
 
 # ── 4. Outreach Analytics Dashboard Tests ─────────────────────────────────
@@ -399,4 +397,3 @@ async def test_outreach_analytics_live_feed():
     assert res.media_type == "text/event-stream"
     assert res.headers["Cache-Control"] == "no-cache"
     assert res.headers["Connection"] == "keep-alive"
-

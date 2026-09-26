@@ -105,28 +105,40 @@ const getTimezoneDetail = (timeZone) => {
   }
 };
 
-export default function OutreachCampaignWizard({ campaignId = 'new_campaign', initialStep = 2, initialName = '', onBack, onComplete }) {
+export default function OutreachCampaignWizard({ campaignId = 'new_campaign', initialStep = 1, initialName = '', onBack, onComplete }) {
   const [activeCampaignId, setActiveCampaignId] = useState(
     campaignId && campaignId !== 'new' && campaignId !== 'new_campaign' ? campaignId : null
   );
-  const [currentStep, setCurrentStep] = useState(initialStep || 2);
+  const [draftLoading, setDraftLoading] = useState(true);
+  const [draftError, setDraftError] = useState('');
+  const [draftRetryKey, setDraftRetryKey] = useState(0);
+  const [currentStep, setCurrentStep] = useState(initialStep || 1);
   const [campaignName, setCampaignName] = useState(initialName || '');
   const hasUserEditedName = React.useRef(Boolean(initialName));
   const [senders, setSenders] = useState([]);
+  const [senderError, setSenderError] = useState('');
+  const [senderRetryKey, setSenderRetryKey] = useState(0);
   const [selectedSenders, setSelectedSenders] = useState([]);
   const [leadsModalOpen, setLeadsModalOpen] = useState(false);
   const [connectModalOpen, setConnectModalOpen] = useState(false);
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
   const [timezone, setTimezone] = useState('UTC');
   const [isLaunching, setIsLaunching] = useState(false);
+  const [conditionalLaunchEnabled, setConditionalLaunchEnabled] = useState(false);
+  const [autoLaunchAfterWarmup, setAutoLaunchAfterWarmup] = useState(false);
+  const [engageLists, setEngageLists] = useState([]);
+  const [selectedEngageListId, setSelectedEngageListId] = useState('');
+  const [warmupHours, setWarmupHours] = useState(24);
   const [leadsCount, setLeadsCount] = useState(0);
   const [enrolledLeads, setEnrolledLeads] = useState([]);
   const [loadingLeads, setLoadingLeads] = useState(false);
+  const [leadsError, setLeadsError] = useState('');
 
   const [schedule, setSchedule] = useState(createDefaultSchedule);
   const sequenceSaveRef = React.useRef(null);
+  const navigationInFlight = React.useRef(false);
   const registerSequenceSave = React.useCallback((saveSequence) => {
-    if (saveSequence) sequenceSaveRef.current = saveSequence;
+    sequenceSaveRef.current = saveSequence;
   }, []);
 
   const [limits, setLimits] = useState({
@@ -215,19 +227,20 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
     const targetCid = cid || activeCampaignId || campaignId;
     if (!targetCid || targetCid === 'new' || targetCid === 'new_campaign') return;
     setLoadingLeads(true);
+    setLeadsError('');
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/leads?campaign_id=${targetCid}&limit=20`, {
         credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
-      if (res.ok) {
-        const data = await res.json();
-        setEnrolledLeads(data.leads || []);
-        setLeadsCount(data.total || data.leads?.length || 0);
-      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Campaign leads could not be loaded.');
+      setEnrolledLeads(data.leads || []);
+      setLeadsCount(data.total ?? data.leads?.length ?? 0);
     } catch (err) {
       console.error('Failed to fetch enrolled leads:', err);
+      setLeadsError(err.message || 'Campaign leads could not be loaded.');
     } finally {
       setLoadingLeads(false);
     }
@@ -255,10 +268,10 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
       const progress = step === 1 ? 20 : step === 2 ? 60 : 80;
       const nextLabel =
         step === 1
-          ? 'Next: add your leads'
-          : step === 2
           ? 'Next: configure sequence'
-          : 'Next: review and launch';
+          : step === 2
+          ? 'Next: review senders and launch'
+          : 'Next: launch';
 
       const payload = {
         name: targetName,
@@ -303,18 +316,44 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
     return null;
   };
 
+  const navigateToStep = async (nextStep) => {
+    if (nextStep === currentStep || navigationInFlight.current) return;
+    navigationInFlight.current = true;
+    try {
+      if (currentStep === 2 && sequenceSaveRef.current && !(await sequenceSaveRef.current())) {
+        toast.error('Sequence could not be saved. Please review it and try again.');
+        return;
+      }
+      if (!(await syncDraft(undefined, nextStep))) {
+        toast.error('Campaign changes could not be saved. Please try again.');
+        return;
+      }
+      setCurrentStep(nextStep);
+    } catch (err) {
+      toast.error(err.message || 'Campaign changes could not be saved. Please try again.');
+    } finally {
+      navigationInFlight.current = false;
+    }
+  };
+
   // Initial load / create draft
   useEffect(() => {
+    let cancelled = false;
     const initCampaign = async () => {
       const token = localStorage.getItem('token');
-      if (campaignId && campaignId !== 'new' && campaignId !== 'new_campaign') {
-        try {
+      setDraftLoading(true);
+      setDraftError('');
+      try {
+        if (campaignId && campaignId !== 'new' && campaignId !== 'new_campaign') {
           const res = await fetch(`/api/v1/outreach/campaigns/${campaignId}`, {
             credentials: 'include',
             headers: { Authorization: token ? `Bearer ${token}` : '' },
           });
-          if (res.ok) {
-            const data = await res.json();
+          if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Campaign could not be loaded');
+          const data = await res.json();
+          if (!data?.id) throw new Error('Campaign could not be loaded');
+          if (['active', 'warming_up'].includes(data.status)) throw new Error('Pause the campaign before editing its sequence or settings.');
+          if (!cancelled) {
             setActiveCampaignId(data.id);
             if (data.name && !hasUserEditedName.current) {
               setCampaignName(data.name);
@@ -326,12 +365,8 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
             if (initialStep) setCurrentStep(initialStep);
             else if (data.draft_step) setCurrentStep(data.draft_step);
           }
-        } catch (err) {
-          console.error('Failed to load campaign:', err);
-        }
-      } else {
-        // Auto-create draft immediately in MongoDB if none provided
-        try {
+        } else {
+          // Auto-create draft immediately in MongoDB if none provided
           const defaultInitialName = (campaignName || initialName || '').trim() || 'Connect and follow up';
           const res = await fetch('/api/v1/outreach/campaigns/auto-draft', {
             method: 'POST',
@@ -342,33 +377,38 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
             },
             body: JSON.stringify({
               name: defaultInitialName,
-              draft_step: initialStep || 2,
+              draft_step: initialStep || 1,
               draft_progress: initialStep === 1 ? 20 : initialStep === 2 ? 60 : 80,
               next_step_label:
                 initialStep === 1
-                  ? 'Next: add your leads'
-                  : initialStep === 2
                   ? 'Next: configure sequence'
-                  : 'Next: review and launch',
+                  : initialStep === 2
+                  ? 'Next: review senders and launch'
+                  : 'Next: launch',
               schedule: { timezone, days: schedule },
               limits,
             }),
           });
-          if (res.ok) {
-            const doc = await res.json();
+          if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Campaign draft could not be created');
+          const doc = await res.json();
+          if (!doc?.id) throw new Error('Campaign draft could not be created');
+          if (!cancelled) {
             setActiveCampaignId(doc.id);
             if (doc.name && !hasUserEditedName.current) {
               setCampaignName(doc.name);
             }
           }
-        } catch (err) {
-          console.error('Auto-draft creation failed:', err);
         }
+      } catch (err) {
+        if (!cancelled) setDraftError(err.message || 'Campaign draft could not be loaded');
+      } finally {
+        if (!cancelled) setDraftLoading(false);
       }
     };
     initCampaign();
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [campaignId, initialStep]);
+  }, [campaignId, initialStep, draftRetryKey]);
 
   useEffect(() => {
     if (activeCampaignId) {
@@ -376,6 +416,26 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCampaignId]);
+
+  useEffect(() => {
+    if (currentStep !== 3) return undefined;
+    let canceled = false;
+    const loadWarmupOptions = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const options = { credentials: 'include', headers: { Authorization: token ? `Bearer ${token}` : '' } };
+        const [featureRes, listRes] = await Promise.all([
+          fetch('/api/v1/outreach/campaigns/features/conditional-launch', options),
+          fetch('/api/v1/outreach/engage/lists', options),
+        ]);
+        if (canceled) return;
+        if (featureRes.ok) setConditionalLaunchEnabled(Boolean((await featureRes.json()).enabled));
+        if (listRes.ok) setEngageLists((await listRes.json()) || []);
+      } catch (_) { /* Manual launch remains available. */ }
+    };
+    loadWarmupOptions();
+    return () => { canceled = true; };
+  }, [currentStep]);
 
   const handleLaunch = async () => {
     if (!campaignName.trim()) {
@@ -398,6 +458,10 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
       toast.error('Add at least one lead before launching this campaign.');
       return;
     }
+    if (autoLaunchAfterWarmup && (!conditionalLaunchEnabled || !selectedEngageListId)) {
+      toast.error('Select a Social Warm-Up Cohort before arming conditional launch.');
+      return;
+    }
     setIsLaunching(true);
     try {
       const savedDraft = await syncDraft(campaignName, 3);
@@ -417,21 +481,26 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
         daily_limits: limits,
         status: 'active',
       };
-      const res = await fetch(`/api/v1/outreach/campaigns/${targetId}/launch`, {
+      const path = autoLaunchAfterWarmup ? 'arm-warmup' : 'launch';
+      const res = await fetch(`/api/v1/outreach/campaigns/${targetId}/${path}`, {
         method: 'POST',
         credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(autoLaunchAfterWarmup
+          ? { engage_list_id: selectedEngageListId, warmup_hours: Number(warmupHours) }
+          : payload),
       });
       if (!res.ok) {
         const error = await res.json().catch(() => ({}));
         throw new Error(error.detail || 'Campaign could not be launched.');
       }
       setReviewModalOpen(false);
-      showToast('Campaign successfully launched!');
+      showToast(autoLaunchAfterWarmup
+        ? 'Campaign armed. It will wait for every lead to be engaged and the cooldown to finish.'
+        : 'Campaign successfully launched!');
       setTimeout(() => {
         if (onComplete) onComplete();
         else if (onBack) onBack();
@@ -447,29 +516,31 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
   useEffect(() => {
     // Fetch available senders
     const fetchSenders = async () => {
+      setSenderError('');
       try {
         const token = localStorage.getItem('token');
         const res = await fetch('/api/v1/outreach/accounts', {
           credentials: 'include',
           headers: { Authorization: token ? `Bearer ${token}` : '' },
         });
-        if (res.ok) {
-          const data = await res.json();
-          setSenders(data);
-          const activeAccounts = data.filter((account) => account.status === 'active');
-          const activeIds = new Set(activeAccounts.map((account) => account.id));
-          setSelectedSenders((current) => {
-            const stillActive = current.filter((id) => activeIds.has(id));
-            return stillActive.length || !activeAccounts.length ? stillActive : [activeAccounts[0].id];
-          });
-        }
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || 'LinkedIn senders could not be loaded.');
+        if (!Array.isArray(data)) throw new Error('LinkedIn senders returned an invalid response.');
+        setSenders(data);
+        const activeAccounts = data.filter((account) => account.status === 'active');
+        const activeIds = new Set(activeAccounts.map((account) => account.id));
+        setSelectedSenders((current) => {
+          const stillActive = current.filter((id) => activeIds.has(id));
+          return stillActive.length || !activeAccounts.length ? stillActive : [activeAccounts[0].id];
+        });
       } catch (err) {
         console.error('Failed to fetch senders:', err);
+        setSenderError(err.message || 'LinkedIn senders could not be loaded.');
       }
     };
     fetchSenders();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [senderRetryKey]);
 
   const handleSaveAsTemplate = async () => {
     try {
@@ -527,6 +598,18 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
       toast.error(err.message || 'Failed to save template.');
     }
   };
+
+  if (draftLoading || draftError || !activeCampaignId) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 bg-white p-8 text-center">
+        <p className="text-sm font-semibold text-gray-900">{draftLoading ? 'Preparing your campaign…' : draftError || 'Campaign draft is unavailable'}</p>
+        {!draftLoading && <div className="flex gap-3">
+          <button type="button" onClick={() => setDraftRetryKey((current) => current + 1)} className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white">Retry</button>
+          {onBack && <button type="button" onClick={onBack} className="rounded-lg border border-gray-300 px-4 py-2 text-xs font-semibold text-gray-700">Back to campaigns</button>}
+        </div>}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full max-h-full min-h-0 bg-white overflow-hidden">
@@ -623,17 +706,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
             <button
               onClick={async () => {
                 if (currentStep < 3) {
-                  const nextStep = currentStep + 1;
-                  const saved = await syncDraft(undefined, nextStep);
-                  if (!saved) {
-                    toast.error('Campaign changes could not be saved. Please try again.');
-                    return;
-                  }
-                  if (currentStep === 2 && sequenceSaveRef.current && !(await sequenceSaveRef.current())) {
-                    toast.error('Sequence could not be saved. Please review it and try again.');
-                    return;
-                  }
-                  setCurrentStep(nextStep);
+                  await navigateToStep(currentStep + 1);
                 } else {
                   setReviewModalOpen(true);
                 }
@@ -652,7 +725,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
         {/* Row 2: Step Indicator Tabs */}
         <div className="flex items-center gap-8 px-6 py-2.5 text-xs font-semibold bg-gray-50/40">
           <button
-            onClick={() => setCurrentStep(1)}
+            onClick={() => navigateToStep(1)}
             className={`flex items-center gap-2 transition-colors ${
               currentStep === 1 ? 'text-indigo-600 font-bold' : 'text-gray-400 hover:text-gray-600'
             }`}
@@ -673,7 +746,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
           </button>
 
           <button
-            onClick={() => setCurrentStep(2)}
+            onClick={() => navigateToStep(2)}
             className={`flex items-center gap-2 transition-colors ${
               currentStep === 2 ? 'text-indigo-600 font-bold' : 'text-gray-400 hover:text-gray-600'
             }`}
@@ -689,7 +762,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
           </button>
 
           <button
-            onClick={() => setCurrentStep(3)}
+            onClick={() => navigateToStep(3)}
             className={`flex items-center gap-2 transition-colors ${
               currentStep === 3 ? 'text-indigo-600 font-bold' : 'text-gray-400 hover:text-gray-600'
             }`}
@@ -712,14 +785,19 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
         {currentStep === 1 && (
           <div className="flex-1 min-h-0 overflow-y-auto bg-[#f8f9fa] py-8 px-6">
             <div className="max-w-4xl mx-auto space-y-6">
-              {leadsCount === 0 ? (
+              {leadsError && (
+                <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                  {leadsError} <button type="button" onClick={() => fetchEnrolledLeads(activeCampaignId)} className="ml-2 font-semibold underline">Retry</button>
+                </div>
+              )}
+              {loadingLeads ? <p className="text-sm text-gray-500">Loading campaign leads…</p> : leadsError ? null : leadsCount === 0 ? (
                 <div className="bg-white rounded-2xl border border-gray-200 p-12 text-center shadow-xs">
                   <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600 mb-4">
                     <Users className="h-7 w-7" />
                   </div>
                   <h2 className="text-2xl font-bold text-gray-900 tracking-tight">Add your leads</h2>
                   <p className="text-sm text-gray-500 mt-2 max-w-md mx-auto leading-relaxed">
-                    Paste a LinkedIn search URL or upload a CSV spreadsheet. We will handle deduplication automatically.
+                    Upload a CSV spreadsheet of LinkedIn profiles. We will handle deduplication automatically.
                   </p>
                   <button
                     onClick={() => setLeadsModalOpen(true)}
@@ -754,10 +832,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                         Add more leads
                       </button>
                       <button
-                        onClick={async () => {
-                          await syncDraft();
-                          setCurrentStep(2);
-                        }}
+                        onClick={() => navigateToStep(2)}
                         className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 px-4 py-2 text-xs font-semibold text-white shadow-2xs transition-colors"
                       >
                         Proceed to Sequence →
@@ -831,7 +906,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                   type="text"
                   value={campaignName}
                   onChange={(e) => setCampaignName(e.target.value)}
-                  placeholder="test1"
+                  placeholder="First outreach campaign"
                   className="mt-3 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm font-medium text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 bg-white transition-all shadow-2xs"
                 />
                 <p className="text-xs text-gray-500 mt-2.5">
@@ -856,7 +931,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => setSelectedSenders(senders.map((s) => s.id))}
+                      onClick={() => setSelectedSenders(senders.filter((s) => s.status === 'active').map((s) => s.id))}
                       className="rounded-lg border border-gray-200 bg-white px-3.5 py-1 text-xs font-semibold text-indigo-600 hover:bg-gray-50 transition-colors shadow-2xs"
                     >
                       Select all
@@ -873,6 +948,12 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
 
                 {/* Accounts Card */}
                 <div className="rounded-2xl border border-gray-200 bg-white p-7 shadow-xs">
+                  {senderError && (
+                    <div role="alert" className="mb-4 flex items-center justify-between gap-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+                      <span>{senderError}</span>
+                      <button type="button" className="font-bold underline" onClick={() => setSenderRetryKey((key) => key + 1)}>Retry</button>
+                    </div>
+                  )}
                   {senders.length === 0 ? (
                     <div className="py-6 text-center text-xs text-gray-500 leading-relaxed">
                       <p>
@@ -1161,6 +1242,42 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                 </p>
               </div>
 
+              <div className="rounded-2xl border border-indigo-200 bg-indigo-50/60 p-6 space-y-3">
+                <h3 className="text-sm font-bold text-gray-900">Social Warm-Up Cohort</h3>
+                <p className="text-xs text-gray-600">
+                  Optional: hold this campaign until every lead has confirmed engagement in a linked Engage list and the 24- or 48-hour cooldown has elapsed.
+                </p>
+                {conditionalLaunchEnabled ? (
+                  <>
+                    <label className="flex items-center gap-2 text-xs font-semibold text-gray-800">
+                      <input type="checkbox" aria-label="Automatically launch after warm-up" checked={autoLaunchAfterWarmup}
+                        onChange={(event) => setAutoLaunchAfterWarmup(event.target.checked)} />
+                      Automatically launch after warm-up
+                    </label>
+                    {autoLaunchAfterWarmup && (
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <fieldset className="space-y-1 text-xs font-semibold text-gray-700">
+                          <legend>Social warm-up cohort</legend>
+                          {engageLists.filter((list) => !list.campaign_id || list.campaign_id === activeCampaignId)
+                            .map((list) => <label key={list.id} className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white p-2">
+                              <input type="radio" name="engage-cohort" value={list.id} checked={selectedEngageListId === list.id}
+                                onChange={() => setSelectedEngageListId(list.id)} />
+                              {list.name}
+                            </label>)}
+                          {engageLists.length === 0 && <p>No Engage lists yet. Create one in Engage & Grow first.</p>}
+                        </fieldset>
+                        <label className="text-xs font-semibold text-gray-700">Cooldown
+                          <select value={warmupHours} onChange={(event) => setWarmupHours(Number(event.target.value))}
+                            className="mt-1 w-full rounded-lg border border-gray-200 bg-white p-2 text-xs">
+                            <option value={24}>24 hours</option><option value={48}>48 hours</option>
+                          </select>
+                        </label>
+                      </div>
+                    )}
+                  </>
+                ) : <p className="text-xs text-amber-800">Conditional auto-launch is unavailable for this deployment. You can still launch manually after reviewing engagement.</p>}
+              </div>
+
               {/* Bottom CTA Button matching media_1790103490135.png */}
               <button
                 type="button"
@@ -1180,8 +1297,10 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
           <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-gray-100 space-y-6">
             <div className="flex items-center justify-between pb-3 border-b border-gray-100">
               <div>
-                <h3 className="text-lg font-bold text-gray-900">Review campaign launch</h3>
-                <p className="text-xs text-gray-500">Confirm settings before activating outbound automations</p>
+                <h3 className="text-lg font-bold text-gray-900">{autoLaunchAfterWarmup ? 'Review conditional launch' : 'Review campaign launch'}</h3>
+                <p className="text-xs text-gray-500">{autoLaunchAfterWarmup
+                  ? 'You explicitly authorize activation when every lead is engaged and the cooldown has elapsed.'
+                  : 'Confirm settings before activating outbound automations'}</p>
               </div>
               <button
                 onClick={() => setReviewModalOpen(false)}
@@ -1214,6 +1333,9 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                 <span className="text-gray-500">Max Connection Invites:</span>
                 <span className="font-bold text-indigo-600">{limits.connection_invites} / day / sender</span>
               </div>
+              {autoLaunchAfterWarmup && <div className="p-3 bg-indigo-50 rounded-xl text-indigo-900">
+                Linked Engage list: {engageLists.find((list) => list.id === selectedEngageListId)?.name || 'Not selected'} · {warmupHours}-hour cooldown. You can pause before activation.
+              </div>}
             </div>
 
             <div className="flex items-center gap-3 pt-2">
@@ -1230,7 +1352,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                 disabled={isLaunching}
                 className="flex-1 py-3 bg-[#5851ea] hover:bg-[#4a42e0] rounded-xl text-xs font-semibold text-white shadow-xs transition-colors disabled:opacity-50"
               >
-                {isLaunching ? 'Launching...' : 'Confirm and Launch 🚀'}
+                {isLaunching ? 'Saving...' : autoLaunchAfterWarmup ? 'Confirm conditional launch' : 'Confirm and Launch 🚀'}
               </button>
             </div>
           </div>
@@ -1242,8 +1364,9 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
         isOpen={connectModalOpen}
         onClose={() => setConnectModalOpen(false)}
         onAccountConnected={(newAcc) => {
-          setSenders((prev) => [...prev, newAcc]);
-          setSelectedSenders((prev) => [...prev, newAcc.id]);
+          setSenders((prev) => [...prev.filter((sender) => sender.id !== newAcc.id), newAcc]);
+          setSelectedSenders((prev) => [...new Set([...prev, newAcc.id])]);
+          setSenderError('');
           showToast(`Account ${newAcc.account_name || 'LinkedIn'} connected!`);
         }}
       />

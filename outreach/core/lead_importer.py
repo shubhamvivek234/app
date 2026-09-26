@@ -50,7 +50,19 @@ def normalize_linkedin_url(raw_url: str) -> str:
     parts = path.split("/")
     if len(parts) < 3 or parts[1] != "in" or not parts[2]:
         return ""
-    return f"https://www.linkedin.com/in/{parts[2]}"
+    if not re.fullmatch(r"[a-z0-9._-]+", parts[2]) or parts[2] in {".", ".."}:
+        return ""
+    return f"https://{parsed.hostname}/in/{parts[2]}"
+
+
+def _dedupe_key(raw_url: str) -> str:
+    """Treat www and bare LinkedIn hosts as the same profile."""
+    return normalize_linkedin_url(raw_url).replace("https://www.linkedin.com/", "https://linkedin.com/")
+
+
+def _host_variants(url: str) -> set[str]:
+    bare = _dedupe_key(url)
+    return {bare, bare.replace("https://linkedin.com/", "https://www.linkedin.com/")}
 
 
 def detect_csv_headers(header_row: list[str]) -> dict[str, str]:
@@ -77,7 +89,7 @@ def detect_csv_headers(header_row: list[str]) -> dict[str, str]:
     return mapping
 
 
-async def _fetch_cursor_docs(cursor_or_coro: Any, length: int = 50000) -> list[dict[str, Any]]:
+async def _fetch_cursor_docs(cursor_or_coro: Any, length: int | None = 50000) -> list[dict[str, Any]]:
     """Helper to safely fetch documents across Motor cursor and test mock variants."""
     target = cursor_or_coro
     if hasattr(target, "__await__"):
@@ -99,7 +111,7 @@ class LeadImporter:
         """
         Parses raw CSV string into normalized lead dictionaries.
         """
-        f = io.StringIO(csv_text)
+        f = io.StringIO(csv_text.lstrip("\ufeff"))
         reader = csv.DictReader(f)
         if not reader.fieldnames:
             return []
@@ -115,26 +127,26 @@ class LeadImporter:
             elif "url" in row:
                 raw_url = row.get("url", "")
 
-            cleaned_url = normalize_linkedin_url(raw_url)
+            cleaned_url = normalize_linkedin_url(raw_url or "")
             if not cleaned_url:
                 continue
 
             lead_data = {
                 "linkedin_url": cleaned_url,
-                "first_name": row.get(header_mapping.get("first_name", ""), "").strip(),
-                "last_name": row.get(header_mapping.get("last_name", ""), "").strip(),
-                "company_name": row.get(header_mapping.get("company_name", ""), "").strip(),
-                "job_title": row.get(header_mapping.get("job_title", ""), "").strip(),
-                "location": row.get(header_mapping.get("location", ""), "").strip(),
-                "email": row.get(header_mapping.get("email", ""), "").strip() or None,
-                "phone": row.get(header_mapping.get("phone", ""), "").strip() or None,
+                "first_name": (row.get(header_mapping.get("first_name", "")) or "").strip(),
+                "last_name": (row.get(header_mapping.get("last_name", "")) or "").strip(),
+                "company_name": (row.get(header_mapping.get("company_name", "")) or "").strip(),
+                "job_title": (row.get(header_mapping.get("job_title", "")) or "").strip(),
+                "location": (row.get(header_mapping.get("location", "")) or "").strip(),
+                "email": (row.get(header_mapping.get("email", "")) or "").strip() or None,
+                "phone": (row.get(header_mapping.get("phone", "")) or "").strip() or None,
                 "custom_variables": {},
             }
 
             # Collect any additional columns as custom variables for dynamic template tags
             mapped_values = set(header_mapping.values())
             for col_name, val in row.items():
-                if col_name and col_name not in mapped_values and val:
+                if col_name and col_name not in mapped_values and isinstance(val, str) and val:
                     lead_data["custom_variables"][col_name.strip()] = val.strip()
 
             parsed_leads.append(lead_data)
@@ -149,6 +161,7 @@ class LeadImporter:
         db: AsyncIOMotorDatabase,
         skip_already_contacted: bool = True,
         skip_do_not_contact: bool = True,
+        campaign: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Deduplicates and bulk-inserts parsed leads into MongoDB for the given campaign.
@@ -156,12 +169,23 @@ class LeadImporter:
         if not leads:
             return {"imported_count": 0, "skipped_count": 0, "duplicates_count": 0}
 
-        campaign = await db.outreach_campaigns.find_one({"id": campaign_id, "is_deleted": {"$ne": True}})
+        if campaign is None:
+            campaign = await db.outreach_campaigns.find_one({
+                "id": campaign_id,
+                "workspace_id": workspace_id,
+                "is_deleted": {"$ne": True},
+            })
+        if not isinstance(campaign, dict):
+            campaign = {}
         active_senders = []
         if campaign and campaign.get("status") == "active":
             configured_sender_ids = list(campaign.get("sender_account_ids", []))
             active_sender_docs = await _fetch_cursor_docs(
-                db.outreach_accounts.find({"id": {"$in": configured_sender_ids}, "status": "active"}),
+                db.outreach_accounts.find({
+                    "id": {"$in": configured_sender_ids},
+                    "workspace_id": workspace_id,
+                    "status": "active",
+                }),
                 length=100,
             )
             active_senders = [account["id"] for account in active_sender_docs if account.get("id")]
@@ -172,37 +196,56 @@ class LeadImporter:
                 "campaign_id": campaign_id,
                 "assigned_account_id": {"$in": active_senders},
             })
-            sequence = await db.outreach_sequences.find_one({"campaign_id": campaign_id, "is_deleted": {"$ne": True}})
+            sequence = await db.outreach_sequences.find_one({
+                "campaign_id": campaign_id,
+                "is_deleted": {"$ne": True},
+            })
             root_ids = (sequence or {}).get("compiled_dag", {}).get("root_node_ids", [])
             root_node_id = root_ids[0] if root_ids else None
 
+        candidate_urls: set[str] = set()
+        for lead in leads:
+            url = normalize_linkedin_url(lead.get("linkedin_url", ""))
+            if url:
+                candidate_urls.update(_host_variants(url))
+
         # 1. Fetch existing leads in this campaign for deduplication
         existing_campaign_leads = await _fetch_cursor_docs(
-            db.outreach_leads.find({"campaign_id": campaign_id}, {"linkedin_url": 1}),
-            length=50000,
+            db.outreach_leads.find({
+                "campaign_id": campaign_id,
+                "workspace_id": workspace_id,
+                "linkedin_url": {"$in": list(candidate_urls)},
+            }, {"linkedin_url": 1}),
+            length=max(len(candidate_urls), 1),
         )
-        existing_urls = {doc["linkedin_url"] for doc in existing_campaign_leads if "linkedin_url" in doc}
+        existing_urls = {_dedupe_key(doc["linkedin_url"]) for doc in existing_campaign_leads if "linkedin_url" in doc}
 
         # 2. Fetch cross-campaign contacted leads if enabled
         cross_campaign_urls = set()
         if skip_already_contacted:
             contacted_docs = await _fetch_cursor_docs(
                 db.outreach_leads.find(
-                    {"workspace_id": workspace_id, "execution_state": {"$nin": [LeadExecutionState.QUEUED]}},
+                    {
+                        "workspace_id": workspace_id,
+                        "last_action_at": {"$ne": None},
+                        "linkedin_url": {"$in": list(candidate_urls)},
+                    },
                     {"linkedin_url": 1},
                 ),
-                length=50000,
+                length=None,
             )
-            cross_campaign_urls = {doc["linkedin_url"] for doc in contacted_docs if "linkedin_url" in doc}
+            cross_campaign_urls = {_dedupe_key(doc["linkedin_url"]) for doc in contacted_docs if "linkedin_url" in doc}
 
         # 3. Fetch Do-Not-Contact URLs
         dnc_urls = set()
-        if skip_do_not_contact:
-            dnc_docs = await _fetch_cursor_docs(
-                db.outreach_do_not_contact.find({"workspace_id": workspace_id}, {"linkedin_url": 1}),
-                length=10000,
-            )
-            dnc_urls = {doc["linkedin_url"] for doc in dnc_docs if "linkedin_url" in doc}
+        dnc_docs = await _fetch_cursor_docs(
+            db.outreach_do_not_contact.find({
+                "workspace_id": workspace_id,
+                "linkedin_url": {"$in": list(candidate_urls)},
+            }, {"linkedin_url": 1}),
+            length=max(len(candidate_urls), 1),
+        )
+        dnc_urls = {_dedupe_key(doc["linkedin_url"]) for doc in dnc_docs if "linkedin_url" in doc}
 
         to_insert: list[dict[str, Any]] = []
         seen_in_batch: set[str] = set()
@@ -210,26 +253,30 @@ class LeadImporter:
         skipped_count = 0
 
         for lead in leads:
-            url = lead["linkedin_url"]
+            url = normalize_linkedin_url(lead.get("linkedin_url", ""))
+            if not url:
+                skipped_count += 1
+                continue
 
             # Deduplicate within batch
-            if url in seen_in_batch:
+            key = _dedupe_key(url)
+            if key in seen_in_batch:
                 duplicates_count += 1
                 continue
-            seen_in_batch.add(url)
+            seen_in_batch.add(key)
 
             # Deduplicate against campaign
-            if url in existing_urls:
+            if key in existing_urls:
                 duplicates_count += 1
                 continue
 
             # Deduplicate against previous campaigns
-            if skip_already_contacted and url in cross_campaign_urls:
+            if skip_already_contacted and key in cross_campaign_urls:
                 skipped_count += 1
                 continue
 
             # Check Do-Not-Contact list
-            if skip_do_not_contact and url in dnc_urls:
+            if key in dnc_urls:
                 skipped_count += 1
                 continue
 

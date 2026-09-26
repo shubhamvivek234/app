@@ -17,7 +17,6 @@ import {
   X,
   Check,
   ChevronDown,
-  Filter,
 } from 'lucide-react';
 import ImportLeadsModal from '../components/ImportLeadsModal';
 
@@ -26,10 +25,25 @@ const PIPELINE_STAGES = [
   { id: 'in_campaign', label: 'In Campaign', dotColor: 'bg-amber-400', textColor: 'text-amber-700', countBadge: 'bg-amber-50 text-amber-800' },
   { id: 'contacted', label: 'Contacted', dotColor: 'bg-purple-500', textColor: 'text-purple-700', countBadge: 'bg-purple-50 text-purple-800' },
   { id: 'replied', label: 'Replied', dotColor: 'bg-emerald-500', textColor: 'text-emerald-700', countBadge: 'bg-emerald-50 text-emerald-800' },
-  { id: 'call_booked', label: 'call booked', dotColor: 'bg-rose-500', textColor: 'text-rose-700', countBadge: 'bg-rose-50 text-rose-800' },
+  { id: 'call_booked', label: 'Call booked', dotColor: 'bg-rose-500', textColor: 'text-rose-700', countBadge: 'bg-rose-50 text-rose-800' },
 ];
 
-export default function OutreachLeads() {
+const PAGE_SIZE = 50;
+const authHeaders = () => {
+  const token = localStorage.getItem('token');
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
+
+const errorMessage = async (response, fallback) => {
+  const body = await response.json().catch(() => ({}));
+  return typeof body.detail === 'string' ? body.detail : fallback;
+};
+
+const displayLocation = (lead) => lead.location || (
+  lead.country_code?.toLowerCase() === 'us' ? '' : lead.country_code
+);
+
+export default function OutreachLeads({ onOpenWizard }) {
   const [leads, setLeads] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -37,6 +51,15 @@ export default function OutreachLeads() {
   const [selectedState, setSelectedState] = useState('');
   const [selectedStage, setSelectedStage] = useState('');
   const [selectedLocation, setSelectedLocation] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [debouncedLocation, setDebouncedLocation] = useState('');
+  const [page, setPage] = useState(0);
+  const [error, setError] = useState('');
+  const [campaigns, setCampaigns] = useState([]);
+  const [importCampaignId, setImportCampaignId] = useState('');
+  const [exporting, setExporting] = useState(false);
+  const [updatingLeadId, setUpdatingLeadId] = useState(null);
+  const [deletingLeadId, setDeletingLeadId] = useState(null);
   const [selectedLead, setSelectedLead] = useState(null);
   const [columnPickerOpen, setColumnPickerOpen] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState({
@@ -59,75 +82,161 @@ export default function OutreachLeads() {
     localStorage.setItem('outreach_leads_view_mode', mode);
   };
 
-  const fetchLeads = async () => {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim());
+      setDebouncedLocation(selectedLocation.trim());
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, selectedLocation]);
+
+  useEffect(() => { setPage(0); }, [selectedList, selectedState, selectedStage, debouncedSearch, debouncedLocation]);
+
+  const fetchCampaigns = async () => {
+    try {
+      const res = await fetch('/api/v1/outreach/campaigns', {
+        credentials: 'include', headers: authHeaders(),
+      });
+      if (!res.ok) throw new Error(await errorMessage(res, 'Could not load campaigns'));
+      const data = await res.json();
+      const nextCampaigns = Array.isArray(data) ? data : [];
+      setCampaigns(nextCampaigns);
+      setImportCampaignId((previous) => nextCampaigns.some((campaign) => campaign.id === previous)
+        ? previous : nextCampaigns[0]?.id || '');
+      setSelectedList((previous) => previous === 'all' || nextCampaigns.some((campaign) => campaign.id === previous)
+        ? previous : 'all');
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  useEffect(() => { fetchCampaigns(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const buildParams = () => {
+    const params = new URLSearchParams();
+    if (selectedList !== 'all') params.set('campaign_id', selectedList);
+    if (debouncedSearch) params.set('search', debouncedSearch);
+    if (selectedState) params.set('execution_state', selectedState);
+    if (selectedStage) params.set('pipeline_stage', selectedStage);
+    if (debouncedLocation) params.set('location', debouncedLocation);
+    return params;
+  };
+
+  const fetchLeads = async (signal) => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('token');
-      const params = new URLSearchParams();
-      if (searchQuery) params.append('search', searchQuery);
-      if (selectedState) params.append('execution_state', selectedState);
-      if (selectedStage) params.append('pipeline_stage', selectedStage);
-
+      const params = buildParams();
+      params.set('skip', String(page * PAGE_SIZE));
+      params.set('limit', String(PAGE_SIZE));
       const res = await fetch(`/api/v1/outreach/leads?${params.toString()}`, {
-        headers: { Authorization: token ? `Bearer ${token}` : '' },
+        credentials: 'include', headers: authHeaders(), signal,
       });
-      if (res.ok) {
-        const data = await res.json();
-        setLeads(data.leads || []);
-        setTotal(data.total || 0);
+      if (!res.ok) throw new Error(await errorMessage(res, 'Could not load leads'));
+      const data = await res.json();
+      if (page > 0 && !data.leads?.length && data.total <= page * PAGE_SIZE) {
+        setPage(page - 1);
+        return;
       }
+      setLeads(data.leads || []);
+      setTotal(data.total || 0);
+      setError('');
     } catch (err) {
-      console.error('Failed to fetch leads:', err);
+      if (err.name !== 'AbortError') {
+        setLeads([]);
+        setTotal(0);
+        setError(err.message);
+      }
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchLeads();
+    const controller = new AbortController();
+    fetchLeads(controller.signal);
+    return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery, selectedState, selectedStage]);
+  }, [page, debouncedSearch, selectedState, selectedStage, debouncedLocation, selectedList]);
+
+  const openImport = () => {
+    if (!importCampaignId) {
+      setError('Create a campaign in Campaigns before importing contacts.');
+      return;
+    }
+    setModalOpen(true);
+  };
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const res = await fetch(`/api/v1/outreach/leads/export?${buildParams().toString()}`, {
+        credentials: 'include', headers: authHeaders(),
+      });
+      if (!res.ok) throw new Error(await errorMessage(res, 'Could not export leads'));
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'outreach-leads.csv';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setError('');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const handleDeleteLead = async (leadId) => {
     if (!window.confirm('Delete this contact?')) return;
+    setDeletingLeadId(leadId);
     try {
-      const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/leads/${leadId}`, {
-        method: 'DELETE',
-        headers: { Authorization: token ? `Bearer ${token}` : '' },
+        method: 'DELETE', credentials: 'include', headers: authHeaders(),
       });
-      if (res.ok) {
-        setLeads((prev) => prev.filter((l) => l.id !== leadId));
-        setTotal((prev) => Math.max(0, prev - 1));
-      }
+      if (!res.ok) throw new Error(await errorMessage(res, 'Could not delete contact'));
+      setSelectedLead((previous) => previous?.id === leadId ? null : previous);
+      if (leads.length === 1 && page > 0) setPage((previous) => previous - 1);
+      else await fetchLeads();
+      await fetchCampaigns();
     } catch (err) {
-      console.error('Delete lead failed:', err);
+      setError(err.message);
+    } finally {
+      setDeletingLeadId(null);
     }
   };
 
   const handleUpdateStage = async (leadId, newStage) => {
-    // Optimistic local update
+    if (updatingLeadId) return;
+    const oldStage = leads.find((lead) => lead.id === leadId)?.pipeline_stage || 'unassigned';
+    if (oldStage === newStage) return;
+    setUpdatingLeadId(leadId);
     setLeads((prev) =>
       prev.map((l) => (l.id === leadId ? { ...l, pipeline_stage: newStage } : l))
     );
+    setSelectedLead((previous) => previous?.id === leadId ? { ...previous, pipeline_stage: newStage } : previous);
 
     try {
-      const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/leads/${leadId}/stage`, {
-        method: 'PATCH',
+        method: 'PATCH', credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: token ? `Bearer ${token}` : '',
+          ...authHeaders(),
         },
         body: JSON.stringify({ pipeline_stage: newStage }),
       });
-      if (!res.ok) {
-        console.error('Failed to update stage on server');
-        fetchLeads();
-      }
+      if (!res.ok) throw new Error(await errorMessage(res, 'Could not update pipeline stage'));
+      setError('');
+      if (selectedStage && newStage !== selectedStage) await fetchLeads();
     } catch (err) {
-      console.error('Error updating stage:', err);
-      fetchLeads();
+      setLeads((prev) => prev.map((lead) => lead.id === leadId ? { ...lead, pipeline_stage: oldStage } : lead));
+      setSelectedLead((previous) => previous?.id === leadId ? { ...previous, pipeline_stage: oldStage } : previous);
+      setError(err.message);
+    } finally {
+      setUpdatingLeadId(null);
     }
   };
 
@@ -167,29 +276,18 @@ export default function OutreachLeads() {
     return f || l ? `${f}${l}` : 'LI';
   };
 
-  const availableLocations = Array.from(
-    new Set(
-      leads
-        .map((l) => l.country_code || l.location)
-        .filter((loc) => Boolean(loc && typeof loc === 'string' && loc.trim()))
-    )
-  ).sort();
-
-  const displayedLeads = leads.filter((lead) => {
-    if (selectedLocation) {
-      const loc = (lead.country_code || lead.location || '').toLowerCase();
-      if (!loc.includes(selectedLocation.toLowerCase())) return false;
-    }
-    return true;
-  });
+  const displayedLeads = leads;
+  const campaignName = (id) => id
+    ? campaigns.find((campaign) => campaign.id === id)?.name || 'Unknown campaign'
+    : 'Unassigned';
 
   return (
     <div className="flex h-full max-h-full min-h-0 bg-[#fafafa] overflow-hidden">
-      {/* Left Sidebar: Lists matching media_1790103640399.png */}
-      <div className="w-60 border-r border-gray-200/80 bg-white p-5 flex flex-col justify-between shrink-0 h-full">
-        <div>
-          <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">MY LISTS</span>
-          <div className="mt-3 space-y-1">
+      {/* Campaign-scoped lead lists */}
+      <div className="w-60 border-r border-gray-200/80 bg-white p-5 flex flex-col justify-between shrink-0 h-full gap-4">
+        <div className="min-h-0 flex-1 flex flex-col">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">CAMPAIGNS</span>
+          <div className="mt-3 space-y-1 overflow-y-auto min-h-0">
             <button
               onClick={() => setSelectedList('all')}
               className={`w-full flex items-center justify-between px-3 py-2 text-xs font-medium rounded-xl transition-colors ${
@@ -202,17 +300,32 @@ export default function OutreachLeads() {
                 <Users className="h-3.5 w-3.5" />
                 <span>All contacts</span>
               </div>
-              <span className="text-[11px] font-semibold text-gray-600">{total}</span>
+              {selectedList === 'all' && <span className="text-[11px] font-semibold text-gray-600">{total}</span>}
             </button>
+            {campaigns.map((campaign) => (
+              <button
+                key={campaign.id}
+                onClick={() => { setSelectedList(campaign.id); setImportCampaignId(campaign.id); }}
+                className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-xs font-medium rounded-xl transition-colors ${
+                  selectedList === campaign.id ? 'bg-indigo-50 text-indigo-700 font-bold' : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                <span className="truncate">{campaign.name}</span>
+                <span className="text-[11px] font-semibold text-gray-600">{campaign.leads_count || 0}</span>
+              </button>
+            ))}
+            {!campaigns.length && (
+              <p className="px-3 py-2 text-xs text-gray-500">Create a campaign to start importing contacts.</p>
+            )}
           </div>
         </div>
 
         <button
-          onClick={() => setModalOpen(true)}
+          onClick={campaigns.length ? openImport : onOpenWizard}
           className="w-full flex items-center justify-center gap-2 py-2 text-xs font-semibold text-indigo-600 border border-indigo-200 rounded-xl hover:bg-indigo-50 transition-colors shadow-2xs"
         >
           <Plus className="h-3.5 w-3.5" />
-          Create new list
+          {campaigns.length ? 'Import contacts' : 'Create campaign'}
         </button>
       </div>
 
@@ -222,7 +335,9 @@ export default function OutreachLeads() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
           <div>
             <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Leads</h1>
-            <p className="text-xs text-gray-400 mt-0.5">{total} leads in All contacts</p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {total} leads {selectedList === 'all' ? 'in this workspace' : `in ${campaignName(selectedList)}`}
+            </p>
           </div>
 
           <div className="flex items-center gap-2.5">
@@ -252,14 +367,30 @@ export default function OutreachLeads() {
               </button>
             </div>
 
-            <button className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 shadow-2xs transition-colors">
+            <button
+              onClick={handleExport}
+              disabled={exporting || !total}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 shadow-2xs transition-colors disabled:opacity-50"
+            >
               <Download className="h-3.5 w-3.5 text-gray-500" />
-              Export
+              {exporting ? 'Exporting...' : 'Export CSV'}
             </button>
 
+            <select
+              aria-label="Import contacts into campaign"
+              value={importCampaignId}
+              onChange={(e) => setImportCampaignId(e.target.value)}
+              className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-700 max-w-44"
+            >
+              {!campaigns.length && <option value="">No campaigns</option>}
+              {campaigns.map((campaign) => (
+                <option key={campaign.id} value={campaign.id}>{campaign.name}</option>
+              ))}
+            </select>
             <button
-              onClick={() => setModalOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 shadow-xs transition-colors"
+              onClick={campaigns.length ? openImport : onOpenWizard}
+              disabled={!importCampaignId}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 shadow-xs transition-colors disabled:opacity-50"
             >
               <Plus className="h-3.5 w-3.5" />
               Import contacts
@@ -289,9 +420,12 @@ export default function OutreachLeads() {
               <option value="">All statuses</option>
               <option value="queued">Queued</option>
               <option value="waiting_delay">Waiting delay</option>
+              <option value="waiting_trigger">Waiting trigger</option>
               <option value="accepted">Accepted</option>
               <option value="replied">Replied</option>
               <option value="finished">Finished</option>
+              <option value="bounced">Bounced</option>
+              <option value="failed">Failed</option>
             </select>
           </div>
 
@@ -310,20 +444,15 @@ export default function OutreachLeads() {
             </select>
           </div>
 
-          {/* Location Filter matching Prosp All locations */}
           <div className="relative">
-            <select
+            <input
+              type="search"
+              aria-label="Filter leads by location"
+              placeholder="Filter location"
               value={selectedLocation}
               onChange={(e) => setSelectedLocation(e.target.value)}
               className="rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-medium text-gray-700 shadow-2xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 cursor-pointer"
-            >
-              <option value="">All locations</option>
-              {availableLocations.map((loc) => (
-                <option key={loc} value={loc}>
-                  {loc}
-                </option>
-              ))}
-            </select>
+            />
           </div>
 
           {/* Columns Visibility Picker matching Prosp Columns */}
@@ -339,6 +468,14 @@ export default function OutreachLeads() {
 
             {columnPickerOpen && (
               <div className="absolute right-0 mt-1.5 w-44 rounded-xl border border-gray-200 bg-white p-2 shadow-lg z-20 space-y-1 text-xs">
+                <label className="flex items-center gap-2 px-2 py-1 hover:bg-gray-50 rounded-lg cursor-pointer">
+                  <input type="checkbox" checked={visibleColumns.pipelineStage} onChange={(e) => setVisibleColumns((prev) => ({ ...prev, pipelineStage: e.target.checked }))} />
+                  <span>Pipeline stage</span>
+                </label>
+                <label className="flex items-center gap-2 px-2 py-1 hover:bg-gray-50 rounded-lg cursor-pointer">
+                  <input type="checkbox" checked={visibleColumns.executionState} onChange={(e) => setVisibleColumns((prev) => ({ ...prev, executionState: e.target.checked }))} />
+                  <span>Execution status</span>
+                </label>
                 <label className="flex items-center gap-2 px-2 py-1 hover:bg-gray-50 rounded-lg cursor-pointer">
                   <input
                     type="checkbox"
@@ -380,13 +517,20 @@ export default function OutreachLeads() {
           </div>
 
           <button
-            onClick={fetchLeads}
+            onClick={() => { fetchLeads(); fetchCampaigns(); }}
             className="p-2 rounded-xl bg-white border border-gray-200 text-gray-500 hover:text-gray-800 hover:bg-gray-50 shadow-2xs transition-colors"
             title="Refresh leads"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>
+
+        {error && (
+          <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700 flex justify-between gap-3">
+            <span>{error}</span>
+            <button onClick={() => setError('')} aria-label="Dismiss error"><X className="h-4 w-4" /></button>
+          </div>
+        )}
 
         {/* Loading Indicator */}
         {loading ? (
@@ -395,12 +539,12 @@ export default function OutreachLeads() {
           </div>
         ) : displayedLeads.length === 0 ? (
           <div className="rounded-2xl border border-gray-200/90 bg-white p-16 text-center text-gray-500 shadow-2xs">
-            <p className="text-xs text-gray-500 font-medium">No leads match your filter.</p>
+            <p className="text-xs text-gray-500 font-medium">No leads match the current filters.</p>
             <button
-              onClick={() => setModalOpen(true)}
+              onClick={campaigns.length ? openImport : onOpenWizard}
               className="mt-2 text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition-colors cursor-pointer"
             >
-              + Import your first leads list
+              + Import contacts
             </button>
           </div>
         ) : viewMode === 'kanban' ? (
@@ -427,7 +571,7 @@ export default function OutreachLeads() {
                       </span>
                     </div>
                     <span className="text-[11px] font-semibold text-gray-500">
-                      {columnLeads.length}
+                      {columnLeads.length} on this page
                     </span>
                   </div>
 
@@ -490,7 +634,8 @@ export default function OutreachLeads() {
                                 e.stopPropagation();
                                 handleDeleteLead(lead.id);
                               }}
-                              className="text-gray-300 hover:text-red-600 p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                              disabled={deletingLeadId === lead.id}
+                              className="text-gray-300 hover:text-red-600 p-0.5 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity disabled:opacity-50"
                               title="Delete contact"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -506,11 +651,11 @@ export default function OutreachLeads() {
                               </div>
                             )}
 
-                            {(lead.country_code || lead.location) && (
+                            {displayLocation(lead) && (
                               <div className="flex items-center gap-1.5 truncate">
                                 <MapPin className="w-3 h-3 text-gray-400 shrink-0" />
                                 <span className="truncate font-mono uppercase text-[10px]">
-                                  {lead.country_code || lead.location}
+                                  {displayLocation(lead)}
                                 </span>
                               </div>
                             )}
@@ -531,6 +676,7 @@ export default function OutreachLeads() {
                             <select
                               value={lead.pipeline_stage || 'unassigned'}
                               onChange={(e) => handleUpdateStage(lead.id, e.target.value)}
+                              disabled={updatingLeadId === lead.id}
                               className="text-[10px] font-medium text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-2 py-0.5 cursor-pointer focus:ring-0"
                             >
                               {PIPELINE_STAGES.map((s) => (
@@ -546,6 +692,7 @@ export default function OutreachLeads() {
                                   e.stopPropagation();
                                   handleAdvanceStage(lead);
                                 }}
+                                disabled={updatingLeadId === lead.id}
                                 className="inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 transition-colors p-1"
                                 title="Advance to next pipeline stage"
                               >
@@ -613,6 +760,7 @@ export default function OutreachLeads() {
                           <select
                             value={lead.pipeline_stage || 'unassigned'}
                             onChange={(e) => handleUpdateStage(lead.id, e.target.value)}
+                            disabled={updatingLeadId === lead.id}
                             className="rounded-lg border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-gray-700 shadow-2xs focus:ring-indigo-500 cursor-pointer"
                           >
                             {PIPELINE_STAGES.map((s) => (
@@ -642,17 +790,14 @@ export default function OutreachLeads() {
                       {visibleColumns.jobTitle && <td className="py-3 px-4 text-gray-600 truncate max-w-xs">{lead.job_title || '—'}</td>}
                       {visibleColumns.location && (
                         <td className="py-3 px-4 text-gray-500">
-                          {lead.country_code ? (
-                            <span className="font-mono uppercase">{lead.country_code}</span>
-                          ) : (
-                            lead.location || '—'
-                          )}
+                          {displayLocation(lead) || '—'}
                         </td>
                       )}
                       {visibleColumns.email && <td className="py-3 px-4 text-gray-500">{lead.email || '—'}</td>}
                       <td className="py-3 px-4 text-right" onClick={(e) => e.stopPropagation()}>
                         <button
                           onClick={() => handleDeleteLead(lead.id)}
+                          disabled={deletingLeadId === lead.id}
                           className="text-gray-400 hover:text-red-600 p-1 transition-colors"
                           title="Delete contact"
                         >
@@ -666,14 +811,28 @@ export default function OutreachLeads() {
             </table>
           </div>
         )}
+        {total > 0 && (
+          <div className="mt-4 flex items-center justify-between text-xs text-gray-600">
+            <span>Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of {total}</span>
+            <div className="flex gap-2">
+              <button onClick={() => setPage((current) => current - 1)} disabled={page === 0 || loading} className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 disabled:opacity-50">Previous</button>
+              <button onClick={() => setPage((current) => current + 1)} disabled={(page + 1) * PAGE_SIZE >= total || loading} className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 disabled:opacity-50">Next</button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Import Modal */}
       <ImportLeadsModal
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
-        campaignId="default_campaign"
-        onLeadsImported={() => fetchLeads()}
+        campaignId={importCampaignId}
+        onLeadsImported={() => {
+          if (selectedList === importCampaignId && page === 0) fetchLeads();
+          setSelectedList(importCampaignId);
+          setPage(0);
+          fetchCampaigns();
+        }}
       />
 
       {/* Slide-over Lead Details Drawer matching Prosp Part 2 */}
@@ -745,11 +904,8 @@ export default function OutreachLeads() {
                 <div className="flex items-center justify-between">
                   <select
                     value={selectedLead.pipeline_stage || 'unassigned'}
-                    onChange={(e) => {
-                      const newStage = e.target.value;
-                      handleUpdateStage(selectedLead.id, newStage);
-                      setSelectedLead((prev) => ({ ...prev, pipeline_stage: newStage }));
-                    }}
+                    onChange={(e) => handleUpdateStage(selectedLead.id, e.target.value)}
+                    disabled={updatingLeadId === selectedLead.id}
                     className="text-xs font-semibold text-gray-800 bg-white border border-gray-200 rounded-lg px-3 py-1.5 cursor-pointer shadow-2xs focus:ring-1 focus:ring-indigo-500"
                   >
                     {PIPELINE_STAGES.map((s) => (
@@ -797,7 +953,7 @@ export default function OutreachLeads() {
                   <div className="flex items-center gap-3 p-2.5 rounded-xl border border-gray-100 bg-white shadow-2xs">
                     <MapPin className="w-4 h-4 text-gray-400 shrink-0" />
                     <span className="truncate flex-1">
-                      {selectedLead.location || selectedLead.country_code || 'Location unverified'}
+                      {displayLocation(selectedLead) || 'Location unverified'}
                     </span>
                   </div>
 
@@ -819,14 +975,14 @@ export default function OutreachLeads() {
                 <div className="p-3.5 rounded-xl border border-gray-100 bg-white shadow-2xs space-y-2">
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-semibold text-gray-900">
-                      {selectedLead.campaign_name || 'Active Campaign'}
+                      {campaignName(selectedLead.campaign_id)}
                     </span>
                     <span className="text-[10px] text-gray-400">
-                      ID: {selectedLead.campaign_id ? selectedLead.campaign_id.slice(-6) : 'default'}
+                      ID: {selectedLead.campaign_id || '—'}
                     </span>
                   </div>
                   <p className="text-[11px] text-gray-500">
-                    Lead is enrolled in the campaign automation sequence.
+                    Status: {selectedLead.execution_state || 'queued'}
                   </p>
                 </div>
               </div>
@@ -841,30 +997,30 @@ export default function OutreachLeads() {
                   <div className="relative">
                     <span className="absolute -left-[27px] top-0.5 w-3 h-3 rounded-full bg-emerald-500 ring-4 ring-white" />
                     <p className="text-xs font-bold text-gray-800">Lead added to workspace</p>
-                    <p className="text-[10px] text-gray-400 mt-0.5">Ingested via lead importer</p>
+                    <p className="text-[10px] text-gray-400 mt-0.5">
+                      {selectedLead.created_at ? new Date(selectedLead.created_at).toLocaleString() : 'Date unavailable'}
+                    </p>
                   </div>
 
-                  {selectedLead.execution_state !== 'queued' && (
+                  {selectedLead.last_action_at && (
                     <div className="relative">
                       <span className="absolute -left-[27px] top-0.5 w-3 h-3 rounded-full bg-indigo-500 ring-4 ring-white" />
-                      <p className="text-xs font-bold text-gray-800">Connection invite queued</p>
-                      <p className="text-[10px] text-gray-400 mt-0.5">Automated sequence step #1</p>
+                      <p className="text-xs font-bold text-gray-800">{selectedLead.last_action_taken || 'Outreach action recorded'}</p>
+                      <p className="text-[10px] text-gray-400 mt-0.5">{new Date(selectedLead.last_action_at).toLocaleString()}</p>
                     </div>
                   )}
 
-                  {selectedLead.execution_state === 'accepted' && (
+                  {selectedLead.is_connected && (
                     <div className="relative">
                       <span className="absolute -left-[27px] top-0.5 w-3 h-3 rounded-full bg-indigo-600 ring-4 ring-white" />
                       <p className="text-xs font-bold text-gray-800">Invitation accepted</p>
-                      <p className="text-[10px] text-gray-400 mt-0.5">Moved to Step #2 branch</p>
                     </div>
                   )}
 
-                  {selectedLead.execution_state === 'replied' && (
+                  {selectedLead.has_replied && (
                     <div className="relative">
                       <span className="absolute -left-[27px] top-0.5 w-3 h-3 rounded-full bg-emerald-600 ring-4 ring-white" />
                       <p className="text-xs font-bold text-gray-800">Prospect replied</p>
-                      <p className="text-[10px] text-gray-400 mt-0.5">Sequence paused for human follow-up</p>
                     </div>
                   )}
                 </div>
@@ -874,10 +1030,8 @@ export default function OutreachLeads() {
             {/* Drawer Footer Actions */}
             <div className="p-4 border-t border-gray-100 bg-gray-50 flex items-center justify-between shrink-0">
               <button
-                onClick={() => {
-                  handleDeleteLead(selectedLead.id);
-                  setSelectedLead(null);
-                }}
+                onClick={() => handleDeleteLead(selectedLead.id)}
+                disabled={deletingLeadId === selectedLead.id}
                 className="inline-flex items-center gap-1.5 text-xs font-semibold text-rose-600 hover:text-rose-800 p-2 rounded-lg hover:bg-rose-50 transition-colors"
               >
                 <Trash2 className="w-3.5 h-3.5" />
