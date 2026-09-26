@@ -20,14 +20,14 @@ Completed:
 - Production `WEBSHARE_API_KEY` is configured in EC2 `backend/.env` (secret not committed). Containers were recreated and API reports a live, non-mock key.
 - Fixed Prosp browser CORS and replaced nonexistent Webshare per-proxy order/delete calls with documented plan/proxy inventory reads and atomic local proxy reservations. Removed false zero-idle-cost copy. Commit `b638bf8` pushed and deployed on 2026-09-26.
 - Verification: 152 outreach backend tests, 19 focused frontend tests, production build, and public `app.prosp.ai` CORS preflight passed. EC2 API/MCP healthy; beat and workers running. Webshare API reports only an active free/default plan, so live sender connection remains blocked until a dedicated static residential (ISP) proxy is added.
-- Local/uncommitted IPRoyal pilot support: server-side provider switch (`OUTREACH_PROXY_PROVIDER`), one manually purchased ISP IP with country/URL validation, encrypted credentials, atomic one-sender lease, same-sender reconnect, and migration back to Webshare. Webshare remains default; no auto-purchase, renewal, or cancellation.
-- Connection UI now accepts the purchased proxy country and supports sender reconnection; billing copy distinguishes app assignment from provider charges. Setup: `docs/OUTREACH_PROXY_PROVIDERS.md`. Verification: 168 outreach backend tests, 46 frontend tests, Python compile, Bandit, diff check, Compose config, and production build pass. No live IPRoyal or LinkedIn test; changes not committed or deployed.
+- IPRoyal pilot support is committed and deployed (`15f85d6`): server-side provider switch (`OUTREACH_PROXY_PROVIDER`), one manually purchased ISP IP with country/URL validation, encrypted credentials, atomic one-sender lease, same-sender reconnect, and migration back to Webshare. Webshare remains default; no auto-purchase, renewal, or cancellation.
+- Connection UI now accepts the purchased proxy country and supports sender reconnection; billing copy distinguishes app assignment from provider charges. Setup: `docs/OUTREACH_PROXY_PROVIDERS.md`. Verification: 168 outreach backend tests, 46 frontend tests, Python compile, Bandit, diff check, Compose config, and production build pass. No live IPRoyal or LinkedIn test yet because no purchased IPRoyal proxy is configured.
 
 ## Active Work
-Currently implementing: None. Earlier outreach patches are deployed; IPRoyal pilot changes are local and uncommitted.
+Currently implementing: None. Earlier outreach patches and IPRoyal pilot code are committed and deployed.
 Next:
 - After an IPRoyal ISP static IP is purchased and approved for the intended use, configure server-side URL/country and smoke test a connected sender. Do not claim production readiness from mocked tests.
-- If rollout is approved, commit/deploy pilot changes on request; later switch to a funded Webshare ISP plan and reconnect each sender to migrate its proxy.
+- If rollout is approved, configure `OUTREACH_PROXY_PROVIDER=iproyal`, `IPROYAL_PROXY_URL`, and `IPROYAL_PROXY_COUNTRY` on EC2 for a purchased test IP; later switch to a funded Webshare ISP plan and reconnect each sender to migrate its proxy.
 - Product/legal go-or-no-go before public rollout of session-based outreach; validate the Webshare provisioning endpoint and region availability with a real LinkedIn connection attempt before claiming live readiness.
 - Scheduled Engage scraping/AI drafting and unattended like/comment dispatch remain unimplemented; any automatic LinkedIn interaction requires separate product/legal approval.
 - Decide whether to migrate historical plaintext JSESSIONID records; newly connected/refreshed senders use encrypted storage.
