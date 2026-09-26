@@ -249,10 +249,10 @@ async def cancel_subscription(
         {"$set": {"status": "canceled", "canceled_at": now}},
     )
 
-    # Teardown residential proxies immediately (Zero Cost When Idle)
+    # Clear local assignments. Webshare bills its plan independently.
     accounts = await db.outreach_accounts.find({"workspace_id": workspace_id}).to_list(1000)
-    released_proxies = 0
-    failed_proxy_releases = 0
+    cleared_assignments = 0
+    failed_assignment_clearances = 0
 
     proxy_manager = JITProxyManager()
     for acc in accounts:
@@ -260,18 +260,19 @@ async def cancel_subscription(
         proxy_id = (proxy_data or {}).get("proxy_id") if isinstance(proxy_data, dict) else getattr(proxy_data, "proxy_id", None)
         if proxy_id:
             if await proxy_manager.release_proxy(proxy_id):
+                await db.outreach_proxy_leases.delete_one({"_id": proxy_id, "workspace_id": workspace_id})
                 await db.outreach_accounts.update_one(
                     {"id": acc["id"], "workspace_id": workspace_id},
                     {"$unset": {"proxy": "", "proxy_config": ""}},
                 )
-                released_proxies += 1
+                cleared_assignments += 1
             else:
-                failed_proxy_releases += 1
+                failed_assignment_clearances += 1
 
     return {
-        "status": "canceled_with_cleanup_errors" if failed_proxy_releases else "canceled",
-        "released_proxies_count": released_proxies,
-        "failed_proxy_releases": failed_proxy_releases,
-        "message": ("Subscription canceled, but some proxies could not be released. Contact support to finish cleanup."
-                    if failed_proxy_releases else "Subscription canceled. Proxies released to prevent idle infrastructure costs."),
+        "status": "canceled_with_cleanup_errors" if failed_assignment_clearances else "canceled",
+        "cleared_proxy_assignments_count": cleared_assignments,
+        "failed_proxy_assignment_clearances": failed_assignment_clearances,
+        "message": ("Subscription canceled, but some proxy assignments could not be cleared. Contact support to finish cleanup."
+                    if failed_assignment_clearances else "Subscription canceled. Sender proxy assignments were cleared; manage the Webshare plan separately."),
     }

@@ -36,7 +36,7 @@ export default function OutreachAccounts() {
   }, []);
 
   const handleDisconnect = async (accountId) => {
-    if (!window.confirm('Are you sure you want to disconnect this account? Its dedicated residential proxy will be released.')) {
+    if (!window.confirm('Are you sure you want to disconnect this account? Its proxy assignment will be cleared; your Webshare plan stays active.')) {
       return;
     }
     try {

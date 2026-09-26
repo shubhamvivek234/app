@@ -499,7 +499,7 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
                 <div>
                   <h2 className="text-base font-bold text-gray-900">Billing & Subscriptions</h2>
                   <p className="text-xs text-gray-500 mt-0.5 max-w-2xl leading-relaxed">
-                    Simple per-account pricing. Each connected sender includes a dedicated residential proxy with zero idle costs.
+                    Each sender uses a dedicated static residential proxy from your Webshare plan. Webshare bills that plan separately, including when no sender is connected.
                   </p>
                 </div>
 

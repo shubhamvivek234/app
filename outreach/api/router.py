@@ -48,7 +48,7 @@ async def outreach_health():
             "hybrid_engine": True,
             "voice_cloner": True,
             "multi_sender_pooling": True,
-            "jit_zero_idle_cost": True,
+            "dedicated_proxy_pool": True,
         },
     }
 

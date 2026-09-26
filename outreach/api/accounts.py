@@ -1,15 +1,17 @@
 """
 Phase 2: Accounts API endpoints for LinkedIn Outbound Engine.
 Supports verified session-cookie connection; legacy credential routes are retired.
-Allocates 1:1 dedicated static residential proxies JIT upon connection.
+Assigns one pre-purchased dedicated static residential proxy per sender.
 """
 import logging
 import os
 from typing import Any
 from datetime import datetime, timezone
+from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo.errors import DuplicateKeyError
 
 from api.deps import get_current_user
 from db.mongo import get_db
@@ -20,7 +22,12 @@ from outreach.models import (
     OutreachAccount,
 )
 from outreach.core.crypto import encrypt_secret, decrypt_secret
-from outreach.core.proxy_manager import JITProxyManager
+from outreach.core.proxy_manager import (
+    JITProxyManager,
+    ProxyInventoryExhaustedError,
+    ProxyPlanRequiredError,
+    ProxyProvisioningError,
+)
 from outreach.engine.session_authenticator import (
     SessionAuthenticator,
     InvalidSessionError,
@@ -92,7 +99,7 @@ async def connect_via_cookie(
 ):
     """
     Connects a LinkedIn account using the li_at session cookie.
-    Automatically provisions a 1:1 dedicated static residential proxy.
+    Reserves a 1:1 dedicated static residential proxy from an existing plan.
     """
     user_id = current_user.get("user_id")
     workspace_id = current_user.get("default_workspace_id") or user_id
@@ -102,19 +109,58 @@ async def connect_via_cookie(
     if not csrf_cookie and os.getenv("OUTREACH_MOCK_AUTH", "false").lower() not in {"true", "1"}:
         raise HTTPException(status_code=400, detail="LinkedIn JSESSIONID cookie is required")
 
-    # 1. Order static residential proxy (JIT)
+    # 1. Select and atomically reserve a dedicated proxy already in Webshare.
     proxy_manager = JITProxyManager()
     if proxy_manager.is_mock and os.getenv("OUTREACH_MOCK_AUTH", "false").lower() not in {"true", "1"}:
         raise HTTPException(status_code=503, detail="A residential proxy is not configured for LinkedIn connection")
     persisted = False
+    reserved_proxy_id = None
+    reservation_id = str(uuid4())
+    excluded_proxy_ids: set[str] = set()
     try:
-        proxy_config = await proxy_manager.order_static_residential_proxy(country_code=req.country_code)
-    except Exception as exc:
-        logger.error("Failed to allocate proxy for account: %s", exc)
+        for _ in range(100):
+            proxy_config = await proxy_manager.order_static_residential_proxy(
+                country_code=req.country_code, excluded_proxy_ids=excluded_proxy_ids,
+            )
+            if proxy_config.provider == "webshare_mock":
+                break
+            try:
+                await db.outreach_proxy_leases.insert_one({
+                    "_id": proxy_config.proxy_id,
+                    "workspace_id": workspace_id,
+                    "user_id": user_id,
+                    "reservation_id": reservation_id,
+                    "created_at": datetime.now(timezone.utc),
+                })
+            except DuplicateKeyError:
+                excluded_proxy_ids.add(proxy_config.proxy_id)
+                continue
+            reserved_proxy_id = proxy_config.proxy_id
+            break
+        else:
+            raise ProxyInventoryExhaustedError("No unassigned dedicated ISP proxy is available. Add one in Webshare.")
+    except (ProxyPlanRequiredError, ProxyInventoryExhaustedError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ProxyProvisioningError as exc:
+        logger.error("Could not read dedicated proxy inventory: %s", type(exc).__name__)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to allocate dedicated residential proxy. Please retry.",
+            detail=str(exc),
         ) from exc
+    except Exception as exc:
+        logger.exception("Failed to reserve dedicated proxy")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not reserve a dedicated residential proxy. Please retry.",
+        ) from exc
+
+    async def clear_reservation() -> None:
+        if reserved_proxy_id:
+            await db.outreach_proxy_leases.delete_one({
+                "_id": reserved_proxy_id,
+                "workspace_id": workspace_id,
+                "reservation_id": reservation_id,
+            })
 
     # 2. Validate session cookie through the proxy
     proxy_url = proxy_manager.format_proxy_url(proxy_config)
@@ -127,10 +173,11 @@ async def connect_via_cookie(
             li_a=req.li_a,
         )
     except InvalidSessionError as exc:
-        # Release the proxy if cookie validation fails
+        await clear_reservation()
         await proxy_manager.release_proxy(proxy_config.proxy_id)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except Exception as exc:
+        await clear_reservation()
         await proxy_manager.release_proxy(proxy_config.proxy_id)
         logger.exception("Could not verify LinkedIn session")
         raise HTTPException(status_code=502, detail="LinkedIn session verification failed. Please retry.") from exc
@@ -191,8 +238,8 @@ async def connect_via_cookie(
                 raise RuntimeError("Updated LinkedIn account could not be reloaded")
             old_proxy_id = (existing.get("proxy") or {}).get("proxy_id")
             if old_proxy_id and old_proxy_id != proxy_config.proxy_id:
-                if not await proxy_manager.release_proxy(old_proxy_id):
-                    logger.error("Old proxy %s could not be released after sender refresh", old_proxy_id)
+                await db.outreach_proxy_leases.delete_one({"_id": old_proxy_id, "workspace_id": workspace_id})
+                await proxy_manager.release_proxy(old_proxy_id)
             logger.info("Successfully refreshed session for existing LinkedIn account %s", existing["id"])
             return _sanitize_account(updated)
 
@@ -202,6 +249,7 @@ async def connect_via_cookie(
         return _sanitize_account(account_doc)
     except Exception:
         if not persisted:
+            await clear_reservation()
             await proxy_manager.release_proxy(proxy_config.proxy_id)
         raise
 
@@ -260,7 +308,7 @@ async def disconnect_account(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
-    Disconnects the LinkedIn account and immediately tears down the dedicated proxy.
+    Disconnects the LinkedIn account and clears its dedicated proxy assignment.
     """
     user_id = current_user.get("user_id")
     ws_id = current_user.get("default_workspace_id") or user_id
@@ -298,9 +346,10 @@ async def disconnect_account(
     if proxy_id:
         proxy_manager = JITProxyManager()
         if not await proxy_manager.release_proxy(proxy_id):
-            raise HTTPException(status_code=502, detail="Sender was disabled, but its proxy could not be released. Retry disconnect to finish cleanup.")
+            raise HTTPException(status_code=502, detail="Sender was disabled, but its proxy assignment could not be cleared. Retry disconnect to finish cleanup.")
+        await db.outreach_proxy_leases.delete_one({"_id": proxy_id, "workspace_id": ws_id})
 
     # Delete account from MongoDB
     await db.outreach_accounts.delete_one({"id": account_id, "workspace_id": ws_id})
-    logger.info("Account %s disconnected, unlinked from campaigns, and proxy released for user %s", account_id, user_id)
-    return {"status": "success", "message": "Account disconnected, campaigns updated, and proxy deallocated."}
+    logger.info("Account %s disconnected and proxy assignment cleared for user %s", account_id, user_id)
+    return {"status": "success", "message": "Account disconnected, campaigns updated, and proxy assignment cleared."}

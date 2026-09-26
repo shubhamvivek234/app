@@ -168,4 +168,4 @@ async def test_outreach_health_endpoint():
     assert res["subsystem"] == "linkedin_outbound_engine"
     assert res["version"] == "1.0.0"
     assert res["features"]["hybrid_engine"] is True
-    assert res["features"]["jit_zero_idle_cost"] is True
+    assert res["features"]["dedicated_proxy_pool"] is True

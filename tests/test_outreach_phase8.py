@@ -135,7 +135,7 @@ async def test_billing_api_lifecycle_and_zero_cost_teardown():
     assert seats_res["seats"] == 10
     assert seats_res["price_per_seat"] == 59.99
 
-    # Cancel subscription and verify zero-cost teardown
+    # Cancel subscription and verify the local proxy assignment is cleared.
     mock_account = {
         "id": "acc_with_proxy",
         "proxy_config": {"proxy_id": "px_test_mock_123"},
@@ -145,12 +145,12 @@ async def test_billing_api_lifecycle_and_zero_cost_teardown():
 
     cancel_res = await cancel_subscription(current_user=user, db=mock_db)
     assert cancel_res["status"] == "canceled"
-    assert cancel_res["released_proxies_count"] == 1
+    assert cancel_res["cleared_proxy_assignments_count"] == 1
     mock_db.outreach_accounts.update_one.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_cancel_pauses_campaigns_and_disables_senders_before_proxy_release():
+async def test_cancel_pauses_campaigns_and_disables_senders_before_proxy_unassignment():
     from unittest.mock import patch
 
     db = AsyncMock()
@@ -163,7 +163,7 @@ async def test_cancel_pauses_campaigns_and_disables_senders_before_proxy_release
         manager.return_value.release_proxy = AsyncMock(return_value=True)
         result = await cancel_subscription(current_user=user, db=db)
 
-    assert result["released_proxies_count"] == 1
+    assert result["cleared_proxy_assignments_count"] == 1
     db.outreach_campaigns.update_many.assert_awaited_once()
     db.outreach_accounts.update_one.assert_awaited()
     assert db.outreach_campaigns.update_many.await_args.args[0]["workspace_id"] == "ws_1"
@@ -171,7 +171,7 @@ async def test_cancel_pauses_campaigns_and_disables_senders_before_proxy_release
 
 
 @pytest.mark.asyncio
-async def test_cancel_preserves_proxy_reference_when_release_fails():
+async def test_cancel_preserves_proxy_reference_when_unassignment_fails():
     from unittest.mock import patch
 
     db = AsyncMock()
@@ -182,8 +182,8 @@ async def test_cancel_preserves_proxy_reference_when_release_fails():
         manager.return_value.release_proxy = AsyncMock(return_value=False)
         result = await cancel_subscription(current_user={"user_id": "ws_1"}, db=db)
 
-    assert result["released_proxies_count"] == 0
-    assert result["failed_proxy_releases"] == 1
+    assert result["cleared_proxy_assignments_count"] == 0
+    assert result["failed_proxy_assignment_clearances"] == 1
     assert not any("$unset" in call.args[1] for call in db.outreach_accounts.update_one.await_args_list)
 
 
