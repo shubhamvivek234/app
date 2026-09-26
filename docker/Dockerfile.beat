@@ -17,6 +17,7 @@ COPY media_pipeline/ media_pipeline/
 COPY platform_adapters/ platform_adapters/
 COPY db/ db/
 COPY utils/ utils/
+COPY outreach/ outreach/
 
 ENV PATH=/home/appuser/.local/bin:$PATH \
     PYTHONPATH=/app:/home/appuser/.local/lib/python3.11/site-packages \
