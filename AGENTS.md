@@ -15,14 +15,15 @@ Completed:
 - Added visible cancel controls and fail-closed guards: no armed-list unlink/delete, no edits/imports during warm-up, no reauthorization on campaign delete/restore, working-hours trigger check, and sanitized worker/session errors.
 - Subscription cancellation now pauses campaigns/senders, cancels queued tasks, and reports failed proxy releases without discarding their records. Settings Help copy no longer implies jitter/proxies make unauthorized automation safe.
 - Verification: 148 outreach backend tests and 44 outreach frontend tests pass; Python compile, diff check, and frontend production build pass with existing dependency/Tailwind/source-map warnings. No live LinkedIn/proxy end-to-end check.
-- Release commits `2eca1fc`, `7b76a85`, and `a72192c` were pushed to `origin/main` on 2026-09-26. Frontend should auto-deploy via Vercel. Backend EC2 is deployed at `a72192c`; API and MCP are healthy, and beat/worker/worker_media/worker_video are running.
+- Release commits through `ec74472` were pushed to `origin/main` on 2026-09-26. Frontend should auto-deploy via Vercel. Backend EC2 is deployed; API and MCP are healthy, and beat/worker/worker_media/worker_video are running.
 - Deployment fixes: added `outreach/` to media worker and beat Docker images so the shared Celery app can import outreach tasks.
+- Production `WEBSHARE_API_KEY` is configured in EC2 `backend/.env` (secret not committed). Containers were recreated and API reports a live, non-mock key.
 
 ## Active Work
 Currently implementing: None. Outreach patches are committed, pushed, and backend-deployed.
 Next:
 - Smoke test first-run, a connected sender, Draft & Review, and real Voyager inbox payload in production.
-- Product/legal go-or-no-go before public rollout of session-based outreach; validate the Webshare provisioning endpoint and region availability with the provider before claiming live readiness.
+- Product/legal go-or-no-go before public rollout of session-based outreach; validate the Webshare provisioning endpoint and region availability with a real LinkedIn connection attempt before claiming live readiness.
 - Scheduled Engage scraping/AI drafting and unattended like/comment dispatch remain unimplemented; any automatic LinkedIn interaction requires separate product/legal approval.
 - Decide whether to migrate historical plaintext JSESSIONID records; newly connected/refreshed senders use encrypted storage.
 - Live logged-in Engage smoke test after Mac unlock; review whether scheduled auto-engagement should instead be a human-approved queue.
