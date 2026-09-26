@@ -18,11 +18,13 @@ Completed:
 - Release commits through `ec74472` were pushed to `origin/main` on 2026-09-26. Frontend should auto-deploy via Vercel. Backend EC2 is deployed; API and MCP are healthy, and beat/worker/worker_media/worker_video are running.
 - Deployment fixes: added `outreach/` to media worker and beat Docker images so the shared Celery app can import outreach tasks.
 - Production `WEBSHARE_API_KEY` is configured in EC2 `backend/.env` (secret not committed). Containers were recreated and API reports a live, non-mock key.
+- Fixed Prosp browser CORS and replaced nonexistent Webshare per-proxy order/delete calls with documented plan/proxy inventory reads and atomic local proxy reservations. Removed false zero-idle-cost copy. Commit `b638bf8` pushed and deployed on 2026-09-26.
+- Verification: 152 outreach backend tests, 19 focused frontend tests, production build, and public `app.prosp.ai` CORS preflight passed. EC2 API/MCP healthy; beat and workers running. Webshare API reports only an active free/default plan, so live sender connection remains blocked until a dedicated static residential (ISP) proxy is added.
 
 ## Active Work
 Currently implementing: None. Outreach patches are committed, pushed, and backend-deployed.
 Next:
-- Smoke test first-run, a connected sender, Draft & Review, and real Voyager inbox payload in production.
+- After a dedicated Webshare ISP proxy is available in US (the modal's current region), smoke test a connected sender, first-run, Draft & Review, and real Voyager inbox payload in production.
 - Product/legal go-or-no-go before public rollout of session-based outreach; validate the Webshare provisioning endpoint and region availability with a real LinkedIn connection attempt before claiming live readiness.
 - Scheduled Engage scraping/AI drafting and unattended like/comment dispatch remain unimplemented; any automatic LinkedIn interaction requires separate product/legal approval.
 - Decide whether to migrate historical plaintext JSESSIONID records; newly connected/refreshed senders use encrypted storage.
