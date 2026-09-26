@@ -1,5 +1,11 @@
 # LinkedIn Outbound & AI Sequence Engine: Production Architecture Document
 
+> **Historical design note:** This document contains an earlier proposed
+> per-proxy ordering and zero-idle-cost model. The implemented connector uses
+> pre-purchased proxy inventory and local leases. See
+> [Outreach proxy providers](OUTREACH_PROXY_PROVIDERS.md) for current setup and
+> billing behavior.
+
 **Author / Architect:** Antigravity Systems Architect  
 **Target System:** Unravler Core Platform (`SocialEntangler`)  
 **Domain:** Enterprise LinkedIn Cold Outreach, Multi-Account Pooling & Voice AI Automation  

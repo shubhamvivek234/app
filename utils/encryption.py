@@ -60,6 +60,16 @@ def decrypt(ciphertext: str) -> str:
         raise ValueError("Invalid or corrupted token") from exc
 
 
+def decrypt_strict(ciphertext: str) -> str:
+    """Decrypt a Fernet secret without the legacy plaintext fallback."""
+    if not ciphertext:
+        raise ValueError("Encrypted secret is missing")
+    try:
+        return _get_fernet().decrypt(ciphertext.encode("utf-8")).decode("utf-8")
+    except InvalidToken as exc:
+        raise ValueError("Invalid or corrupted encrypted secret") from exc
+
+
 def generate_key() -> str:
     """One-time helper: generate a new Fernet key. Store result in ENCRYPTION_KEY."""
     return Fernet.generate_key().decode("utf-8")

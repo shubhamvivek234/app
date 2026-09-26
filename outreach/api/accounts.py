@@ -20,6 +20,7 @@ from outreach.models import (
     AccountStatus,
     DailyLimits,
     OutreachAccount,
+    ProxyConfig,
 )
 from outreach.core.crypto import encrypt_secret, decrypt_secret
 from outreach.core.proxy_manager import (
@@ -47,7 +48,11 @@ class ConnectCookieRequest(BaseModel):
     premium_product: str = Field(default="classic", description="classic, sales_navigator, or recruiter")
     user_agent: str | None = Field(default="", description="Browser user agent string")
     jsession_id: str | None = Field(default="", description="JSESSIONID cookie required for live verification")
-    country_code: str = Field(default="US", description="2-letter ISO country code for proxy matching")
+    country_code: str = Field(
+        default="US", min_length=2, max_length=2, pattern=r"^[A-Za-z]{2}$",
+        description="2-letter ISO country code for proxy matching",
+    )
+    reconnect_account_id: str | None = Field(default=None, description="Existing sender ID when renewing its session")
     workspace_id: str | None = None
 
 
@@ -73,6 +78,7 @@ def _sanitize_account(acc: dict[str, Any]) -> dict[str, Any]:
     if clean.get("proxy"):
         clean["proxy"] = dict(clean["proxy"])
         clean["proxy"].pop("password_enc", None)
+        clean["proxy"].pop("username", None)
     return clean
 
 
@@ -99,46 +105,77 @@ async def connect_via_cookie(
 ):
     """
     Connects a LinkedIn account using the li_at session cookie.
-    Reserves a 1:1 dedicated static residential proxy from an existing plan.
+    Reserves a 1:1 dedicated static residential proxy from the configured provider.
     """
     user_id = current_user.get("user_id")
     workspace_id = current_user.get("default_workspace_id") or user_id
+    country_code = req.country_code.upper()
     csrf_cookie = _clean_cookie_token(req.jsession_id, "JSESSIONID")
     if not _clean_cookie_token(req.li_at, "li_at"):
         raise HTTPException(status_code=400, detail="LinkedIn li_at session cookie is required")
     if not csrf_cookie and os.getenv("OUTREACH_MOCK_AUTH", "false").lower() not in {"true", "1"}:
         raise HTTPException(status_code=400, detail="LinkedIn JSESSIONID cookie is required")
 
-    # 1. Select and atomically reserve a dedicated proxy already in Webshare.
+    # 1. Select and atomically reserve a pre-purchased dedicated proxy.
     proxy_manager = JITProxyManager()
     if proxy_manager.is_mock and os.getenv("OUTREACH_MOCK_AUTH", "false").lower() not in {"true", "1"}:
         raise HTTPException(status_code=503, detail="A residential proxy is not configured for LinkedIn connection")
+    reconnect_target = None
+    if req.reconnect_account_id:
+        reconnect_target = await db.outreach_accounts.find_one({
+            "id": req.reconnect_account_id, "workspace_id": workspace_id,
+        })
+        if not reconnect_target:
+            raise HTTPException(status_code=404, detail="Sender account not found")
     persisted = False
     reserved_proxy_id = None
     reservation_id = str(uuid4())
     excluded_proxy_ids: set[str] = set()
+    proxy_config: ProxyConfig | None = None
     try:
-        for _ in range(100):
-            proxy_config = await proxy_manager.order_static_residential_proxy(
-                country_code=req.country_code, excluded_proxy_ids=excluded_proxy_ids,
-            )
-            if proxy_config.provider == "webshare_mock":
+        # Reverification may reuse this sender's lease, but never another
+        # sender's. When the provider changes, allocate a fresh proxy instead.
+        if reconnect_target:
+            old_proxy = reconnect_target.get("proxy") or {}
+            expected_provider = "iproyal_static" if proxy_manager.provider == "iproyal" else "webshare_plan"
+            if old_proxy.get("provider") == expected_provider and old_proxy.get("country_code") == country_code:
+                old_proxy_id = old_proxy.get("proxy_id")
+                lease = await db.outreach_proxy_leases.find_one({
+                    "_id": old_proxy_id, "workspace_id": workspace_id,
+                }) if old_proxy_id else None
+                if not lease:
+                    raise HTTPException(status_code=409, detail="Sender proxy assignment is missing. Disconnect and reconnect the sender.")
+                if expected_provider == "iproyal_static":
+                    current_proxy = await proxy_manager.order_static_residential_proxy(country_code=country_code)
+                    if current_proxy.proxy_id == old_proxy_id:
+                        proxy_config = current_proxy
+                else:
+                    proxy_config = ProxyConfig.model_validate(old_proxy)
+
+        if proxy_config is None:
+            for _ in range(100):
+                proxy_config = await proxy_manager.order_static_residential_proxy(
+                    country_code=country_code, excluded_proxy_ids=excluded_proxy_ids,
+                )
+                if proxy_config.provider == "webshare_mock":
+                    break
+                try:
+                    await db.outreach_proxy_leases.insert_one({
+                        "_id": proxy_config.proxy_id,
+                        "workspace_id": workspace_id,
+                        "user_id": user_id,
+                        "reservation_id": reservation_id,
+                        "created_at": datetime.now(timezone.utc),
+                    })
+                except DuplicateKeyError:
+                    excluded_proxy_ids.add(proxy_config.proxy_id)
+                    continue
+                reserved_proxy_id = proxy_config.proxy_id
                 break
-            try:
-                await db.outreach_proxy_leases.insert_one({
-                    "_id": proxy_config.proxy_id,
-                    "workspace_id": workspace_id,
-                    "user_id": user_id,
-                    "reservation_id": reservation_id,
-                    "created_at": datetime.now(timezone.utc),
-                })
-            except DuplicateKeyError:
-                excluded_proxy_ids.add(proxy_config.proxy_id)
-                continue
-            reserved_proxy_id = proxy_config.proxy_id
-            break
-        else:
-            raise ProxyInventoryExhaustedError("No unassigned dedicated ISP proxy is available. Add one in Webshare.")
+            else:
+                raise ProxyInventoryExhaustedError("No unassigned dedicated ISP proxy is available from the configured provider.")
+    except HTTPException:
+        raise
     except (ProxyPlanRequiredError, ProxyInventoryExhaustedError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ProxyProvisioningError as exc:
@@ -163,8 +200,8 @@ async def connect_via_cookie(
             })
 
     # 2. Validate session cookie through the proxy
-    proxy_url = proxy_manager.format_proxy_url(proxy_config)
     try:
+        proxy_url = proxy_manager.format_proxy_url(proxy_config)
         profile_data = await SessionAuthenticator.validate_session_cookie(
             li_at=req.li_at,
             jsession_id=csrf_cookie,
@@ -176,11 +213,18 @@ async def connect_via_cookie(
         await clear_reservation()
         await proxy_manager.release_proxy(proxy_config.proxy_id)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except ProxyProvisioningError as exc:
+        await clear_reservation()
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except Exception as exc:
         await clear_reservation()
         await proxy_manager.release_proxy(proxy_config.proxy_id)
         logger.exception("Could not verify LinkedIn session")
         raise HTTPException(status_code=502, detail="LinkedIn session verification failed. Please retry.") from exc
+
+    if reconnect_target and profile_data.get("linkedin_urn") != reconnect_target.get("linkedin_urn"):
+        await clear_reservation()
+        raise HTTPException(status_code=400, detail="Session belongs to a different LinkedIn account")
 
     try:
         # 3. Encrypt session tokens
@@ -201,7 +245,7 @@ async def connect_via_cookie(
             user_agent=req.user_agent or "",
             jsession_id=enc_csrf,
             status=AccountStatus.ACTIVE,
-            country_code=req.country_code,
+            country_code=country_code,
             proxy=proxy_config,
             limits=DailyLimits(),
             created_at=datetime.now(timezone.utc),
@@ -209,7 +253,7 @@ async def connect_via_cookie(
         ).model_dump()
 
         # 4. Save to MongoDB (update if already exists for this workspace, otherwise insert)
-        existing = await db.outreach_accounts.find_one({
+        existing = reconnect_target or await db.outreach_accounts.find_one({
             "workspace_id": workspace_id,
             "linkedin_urn": profile_data.get("linkedin_urn"),
         }) if profile_data.get("linkedin_urn") else None
@@ -226,7 +270,7 @@ async def connect_via_cookie(
                     "premium_product": req.premium_product or "classic",
                     "user_agent": req.user_agent or "",
                     "jsession_id": enc_csrf,
-                    "country_code": req.country_code,
+                    "country_code": country_code,
                     "status": AccountStatus.ACTIVE,
                     "proxy": proxy_config.model_dump(),
                     "updated_at": datetime.now(timezone.utc),

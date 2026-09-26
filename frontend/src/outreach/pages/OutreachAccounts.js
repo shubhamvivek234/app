@@ -8,6 +8,7 @@ export default function OutreachAccounts() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
+  const [reconnectAccount, setReconnectAccount] = useState(null);
   const [editingLimitsId, setEditingLimitsId] = useState(null);
   const [limitsForm, setLimitsForm] = useState({ connection_invites: 20, messages: 20 });
 
@@ -36,7 +37,7 @@ export default function OutreachAccounts() {
   }, []);
 
   const handleDisconnect = async (accountId) => {
-    if (!window.confirm('Are you sure you want to disconnect this account? Its proxy assignment will be cleared; your Webshare plan stays active.')) {
+    if (!window.confirm('Are you sure you want to disconnect this account? Its proxy assignment will be cleared, but your proxy provider may continue billing until you cancel or change that plan.')) {
       return;
     }
     try {
@@ -82,7 +83,7 @@ export default function OutreachAccounts() {
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-base font-bold text-gray-900">LinkedIn accounts</h2>
         <button
-          onClick={() => setModalOpen(true)}
+          onClick={() => { setReconnectAccount(null); setModalOpen(true); }}
           className="inline-flex items-center gap-1.5 rounded-lg bg-[#2e266f] hover:bg-[#251e5c] px-4 py-2 text-xs font-semibold text-white shadow-2xs transition-colors"
         >
           Connect account
@@ -102,7 +103,7 @@ export default function OutreachAccounts() {
         <div className="rounded-xl border border-gray-200/80 bg-gray-50/50 p-6 text-xs sm:text-sm text-gray-500">
           No accounts connected yet. Click{' '}
           <button
-            onClick={() => setModalOpen(true)}
+            onClick={() => { setReconnectAccount(null); setModalOpen(true); }}
             className="font-semibold text-gray-800 hover:underline"
           >
             Connect account
@@ -133,13 +134,23 @@ export default function OutreachAccounts() {
                     </div>
                   </div>
                 </div>
-                <button
-                  onClick={() => handleDisconnect(acc.id)}
-                  title="Disconnect account"
-                  className="rounded-lg p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => { setReconnectAccount(acc); setModalOpen(true); }}
+                    title="Reconnect this sender"
+                    aria-label={`Reconnect ${acc.account_name}`}
+                    className="rounded-lg p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => handleDisconnect(acc.id)}
+                    title="Disconnect account"
+                    className="rounded-lg p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
 
               {/* Proxy & Network Badge */}
@@ -220,8 +231,9 @@ export default function OutreachAccounts() {
       {/* Modal */}
       <ConnectLinkedInModal
         isOpen={modalOpen}
-        onClose={() => setModalOpen(false)}
-        onAccountConnected={() => { setModalOpen(false); fetchAccounts(); }}
+        reconnectAccount={reconnectAccount}
+        onClose={() => { setModalOpen(false); setReconnectAccount(null); }}
+        onAccountConnected={() => { setModalOpen(false); setReconnectAccount(null); fetchAccounts(); }}
       />
     </div>
   );

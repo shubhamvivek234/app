@@ -1,17 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AlertCircle, ChevronDown, ExternalLink, Loader2, LockKeyhole, X } from 'lucide-react';
 
-const PROXY_COUNTRY_CODE = 'US';
-
 const cleanToken = (value, name) => value.trim()
   .replace(new RegExp(`^${name}\\s*=`, 'i'), '')
   .replace(/^["']|["']$/g, '');
 
-export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnected }) {
+export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnected, reconnectAccount = null }) {
   const [cookieValue, setCookieValue] = useState('');
   const [liAValue, setLiAValue] = useState('');
   const [jsessionId, setJsessionId] = useState('');
   const [premiumProduct, setPremiumProduct] = useState('classic');
+  const [proxyCountry, setProxyCountry] = useState('US');
   const [userAgent, setUserAgent] = useState(() => (
     typeof navigator !== 'undefined' ? navigator.userAgent || '' : ''
   ));
@@ -26,6 +25,7 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
     setLiAValue('');
     setJsessionId('');
     setPremiumProduct('classic');
+    setProxyCountry(reconnectAccount?.country_code?.toUpperCase() || 'US');
     setUserAgent(typeof navigator !== 'undefined' ? navigator.userAgent || '' : '');
     setError(null);
     if (isOpen) {
@@ -35,7 +35,7 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
       previousFocus.current.focus();
       previousFocus.current = null;
     }
-  }, [isOpen]);
+  }, [isOpen, reconnectAccount?.id, reconnectAccount?.country_code]);
 
   if (!isOpen) return null;
 
@@ -77,6 +77,10 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
       setError('Please enter your JSESSIONID cookie.');
       return;
     }
+    if (!/^[A-Z]{2}$/.test(proxyCountry)) {
+      setError('Enter the two-letter country code of your purchased proxy.');
+      return;
+    }
 
     inFlight.current = true;
     setLoading(true);
@@ -96,7 +100,8 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
           li_a: liAValue.trim(),
           premium_product: premiumProduct,
           user_agent: userAgent.trim(),
-          country_code: PROXY_COUNTRY_CODE,
+          country_code: proxyCountry,
+          ...(reconnectAccount?.id ? { reconnect_account_id: reconnectAccount.id } : {}),
         }),
       });
       const data = await response.json().catch(() => ({}));
@@ -143,7 +148,7 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
         </button>
 
         <div className="mb-5 pr-7">
-          <h2 id="linkedin-sender-title" className="text-xl font-bold tracking-tight text-gray-900">Connect LinkedIn sender</h2>
+          <h2 id="linkedin-sender-title" className="text-xl font-bold tracking-tight text-gray-900">{reconnectAccount ? 'Reconnect LinkedIn sender' : 'Connect LinkedIn sender'}</h2>
           <p id="linkedin-sender-description" className="mt-1.5 text-sm leading-relaxed text-gray-600">
             Advanced session connection for cold outreach. This is separate from official LinkedIn OAuth connections used for supported social features.
           </p>
@@ -237,9 +242,20 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
               </div>
             </div>
 
-            <p className="rounded-lg border border-gray-200 bg-gray-50 px-3.5 py-2.5 text-xs leading-relaxed text-gray-700">
-              Proxy routing currently requests the United States (US). Other regions are not selectable until provider availability is verified.
-            </p>
+            <div>
+              <label htmlFor="linkedin-proxy-country" className="mb-1.5 block text-xs font-semibold text-gray-900">Proxy country (two-letter code)</label>
+              <input
+                id="linkedin-proxy-country"
+                type="text"
+                maxLength={2}
+                autoComplete="off"
+                value={proxyCountry}
+                onChange={(event) => setProxyCountry(event.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2))}
+                placeholder="US"
+                className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-sm uppercase text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+              />
+              <p className="mt-1 text-[11px] text-gray-500">Use the country of the purchased proxy. The server will reject a connection if no configured IP is available there.</p>
+            </div>
 
             <details className="rounded-lg border border-gray-200 px-3.5 py-2.5 text-xs text-gray-700">
               <summary className="cursor-pointer font-semibold">Connection details</summary>
@@ -276,7 +292,7 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
               className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-[#8280f6] py-2.5 text-sm font-semibold text-white hover:bg-[#7270e6] disabled:opacity-50"
             >
               {loading && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-              {loading ? 'Verifying...' : 'Verify & Connect'}
+              {loading ? 'Verifying...' : (reconnectAccount ? 'Verify & Reconnect' : 'Verify & Connect')}
             </button>
           </div>
         </form>

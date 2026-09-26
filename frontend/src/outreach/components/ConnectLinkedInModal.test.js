@@ -55,9 +55,8 @@ describe('LinkedIn sender session connection', () => {
     expect(container.textContent).toContain('dedicated residential proxy');
     expect(container.textContent).toContain('Treat session cookies like a password');
     expect(container.textContent).toContain('encrypted before storage');
-    expect(container.textContent).toContain('United States');
-    const proxyRegion = [...container.querySelectorAll('p')].find((item) => item.textContent.includes('routing currently requests the United States'));
-    expect(proxyRegion.closest('details')).toBeNull();
+    expect(container.querySelector('#linkedin-proxy-country').value).toBe('US');
+    expect(container.textContent).toContain('purchased proxy');
     expect(container.querySelectorAll('form')).toHaveLength(1);
     expect(container.querySelector('input[type="email"]')).toBeNull();
     expect(container.querySelector('input[name="password"]')).toBeNull();
@@ -117,6 +116,27 @@ describe('LinkedIn sender session connection', () => {
     expect(onAccountConnected).toHaveBeenCalledWith({ id: 'sender-1' });
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(container.querySelector('#linkedin-li-at').value).toBe('');
+  });
+
+  it('submits the purchased proxy country instead of forcing US', async () => {
+    global.fetch = jest.fn(() => Promise.resolve({ ok: true, json: async () => ({ id: 'sender-in' }) }));
+    await renderModal();
+    await enterValue('linkedin-li-at', 'li_at=AQvalid; JSESSIONID="ajax:123"');
+    await enterValue('linkedin-proxy-country', 'in');
+    await submit();
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body).country_code).toBe('IN');
+  });
+
+  it('reconnects the same sender using its existing country and account ID', async () => {
+    global.fetch = jest.fn(() => Promise.resolve({ ok: true, json: async () => ({ id: 'sender-1' }) }));
+    await renderModal({ reconnectAccount: { id: 'sender-1', country_code: 'IN' } });
+    expect(container.querySelector('#linkedin-proxy-country').value).toBe('IN');
+    expect(container.textContent).toContain('Reconnect LinkedIn sender');
+    await enterValue('linkedin-li-at', 'li_at=AQvalid; JSESSIONID="ajax:123"');
+    await submit();
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toMatchObject({
+      country_code: 'IN', reconnect_account_id: 'sender-1',
+    });
   });
 
   it('shows failed verification without marking the sender connected', async () => {

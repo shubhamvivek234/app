@@ -158,6 +158,9 @@ services:
       - "8001:8001"
     environment:
       <<: *common-env
+      OUTREACH_PROXY_PROVIDER: ${OUTREACH_PROXY_PROVIDER:-webshare}
+      IPROYAL_PROXY_URL: ${IPROYAL_PROXY_URL:-}
+      IPROYAL_PROXY_COUNTRY: ${IPROYAL_PROXY_COUNTRY:-}
     command: >
       gunicorn api.main:app
       --worker-class uvicorn.workers.UvicornWorker

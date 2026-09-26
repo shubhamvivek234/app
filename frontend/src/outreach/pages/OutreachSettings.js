@@ -499,7 +499,7 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
                 <div>
                   <h2 className="text-base font-bold text-gray-900">Billing & Subscriptions</h2>
                   <p className="text-xs text-gray-500 mt-0.5 max-w-2xl leading-relaxed">
-                    Each sender uses a dedicated static residential proxy from your Webshare plan. Webshare bills that plan separately, including when no sender is connected.
+                    Each connected sender needs a dedicated static residential proxy from your configured provider. Proxy purchases are billed separately, including when unused.
                   </p>
                 </div>
 
@@ -549,14 +549,14 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
                       {trialActive ? `4-Day Trial (${trialDaysLeft} days remaining)` : 'Standard Outbound Tier'}
                     </h3>
                     <p className="text-xs text-indigo-100 mt-1">
-                      ${currentPrice} per account every 4 weeks. Cancel anytime without lingering proxy costs.
+                      ${currentPrice} per account every 4 weeks. Proxy provider charges are separate and must be managed with that provider.
                     </p>
                   </div>
 
                   <div className="space-y-2">
                     <p className="text-xs font-semibold">How many accounts / seats?</p>
                     <p className="text-[11px] text-indigo-200">
-                      Each seat gives one LinkedIn sender an isolated residential proxy.
+                      Each connected LinkedIn sender needs its own dedicated proxy, purchased separately.
                     </p>
 
                     <div className="flex items-center gap-4 pt-1">
@@ -617,7 +617,7 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
                             'Unlimited campaigns, contacts, and messages',
                             'Every team member, free',
                             'Voice cloning studio',
-                            'Dedicated static residential proxy per sender',
+                            'Supports one separately purchased dedicated proxy per sender',
                             'Unified inbox across every account',
                             'Templates, analytics, and DAG sequences',
                           ]
@@ -640,7 +640,7 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
                       {interval.charAt(0).toUpperCase() + interval.slice(1)} billing, total ${(currentPrice * seats).toFixed(2)} every 4 weeks for {seats} {seats === 1 ? 'seat' : 'seats'}.
                     </p>
                     <p className="text-[11px] text-gray-400 pt-2 border-t border-gray-100">
-                      Zero idle costs: Deleting or disconnecting an account automatically tears down its residential proxy.
+                      Disconnecting a sender clears its proxy assignment in our app; cancel or resize the provider plan separately to change proxy charges.
                     </p>
                   </div>
                 </div>
@@ -710,7 +710,7 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
                     <div>
                       <h3 className="font-bold text-gray-900 text-sm">Cancel Subscription</h3>
                       <p className="text-xs text-gray-400 mt-0.5">
-                        Immediately releases residential proxies to prevent idle costs.
+                        Pauses senders and clears local proxy assignments. Provider subscriptions must be managed separately.
                       </p>
                     </div>
                     <button
