@@ -88,127 +88,66 @@ async def test_safety_shield_trip_and_withdraw():
     mock_db.outreach_leads.update_many.assert_called_once()
 
 
-def test_prosp_billing_tier_calculations():
-    """Verify Prosp-matched rate card calculations across tiers and intervals."""
-    # 1-5 accounts tier
-    assert calculate_price_per_seat(1, "monthly") == 79.99
-    assert calculate_price_per_seat(3, "quarterly") == 69.99
-    assert calculate_price_per_seat(5, "annual") == 61.99
-
-    # 6-30 accounts tier
-    assert calculate_price_per_seat(6, "monthly") == 59.99
-    assert calculate_price_per_seat(15, "quarterly") == 52.99
-    assert calculate_price_per_seat(30, "annual") == 45.99
-
-    # 30+ accounts tier
-    assert calculate_price_per_seat(35, "monthly") == 39.99
-    assert calculate_price_per_seat(50, "quarterly") == 34.99
-    assert calculate_price_per_seat(100, "annual") == 30.99
+def test_paid_pilot_has_one_honest_monthly_price():
+    assert calculate_price_per_seat(1, "monthly") == 59.0
+    assert calculate_price_per_seat(5, "monthly") == 59.0
+    with pytest.raises(ValueError):
+        calculate_price_per_seat(6, "monthly")
+    with pytest.raises(ValueError):
+        calculate_price_per_seat(1, "annual")
 
 
 @pytest.mark.asyncio
-async def test_billing_api_lifecycle_and_zero_cost_teardown():
-    """Verify trial activation, seat updates, and cancellation proxy teardown."""
-    mock_db = AsyncMock()
-    mock_db.outreach_subscriptions.find_one = AsyncMock(return_value=None)
-    mock_db.outreach_subscriptions.update_one = AsyncMock()
+async def test_customer_cannot_self_activate_trial_or_extra_seats():
+    from fastapi import HTTPException
+    db = AsyncMock()
+    user = {"user_id": "owner-1", "default_workspace_id": "ws-1"}
+    with pytest.raises(HTTPException) as trial:
+        await start_outreach_trial(StartTrialRequest(), current_user=user, db=db)
+    with pytest.raises(HTTPException) as seats:
+        await update_seats(UpdateSeatsRequest(seats=2), current_user=user, db=db)
+    assert trial.value.status_code == seats.value.status_code == 410
+    db.outreach_entitlements.update_one.assert_not_awaited()
 
-    user = {"user_id": "usr_billing_123"}
 
-    # Start trial
-    trial_res = await start_outreach_trial(
-        req=StartTrialRequest(seats=2, interval="monthly"),
-        current_user=user,
-        db=mock_db,
-    )
-    assert trial_res["status"] == "trial_activated"
-    assert trial_res["seats"] == 2
-    assert trial_res["price_per_seat"] == 79.99
-    assert trial_res["trial_days_remaining"] == 4
+@pytest.mark.asyncio
+async def test_plan_read_is_workspace_scoped_and_has_no_fake_checkout():
+    db = AsyncMock()
+    db.outreach_entitlements.find_one.return_value = None
+    db.outreach_access_requests.find_one.return_value = None
+    user = {"user_id": "owner-1", "default_workspace_id": "ws-1", "email": "owner@example.com"}
+    result = await get_outreach_plans(current_user=user, db=db)
+    assert result["price_usd_per_sender_month"] == 59
+    assert result["trial_available"] is False
+    assert result["checkout_available"] is False
+    assert result["access_active"] is False
+    db.outreach_entitlements.find_one.assert_awaited_with({"workspace_id": "ws-1"})
 
-    # Update seats
-    seats_res = await update_seats(
-        req=UpdateSeatsRequest(seats=10),
-        current_user=user,
-        db=mock_db,
-    )
-    assert seats_res["seats"] == 10
-    assert seats_res["price_per_seat"] == 59.99
 
-    # Cancel subscription and verify the local proxy assignment is cleared.
-    mock_account = {
-        "id": "acc_with_proxy",
-        "proxy_config": {"proxy_id": "px_test_mock_123"},
+@pytest.mark.asyncio
+async def test_cancel_schedules_paid_period_end_without_touching_sender_or_ip():
+    db = AsyncMock()
+    paid_through = datetime.now(timezone.utc) + timedelta(days=30)
+    db.outreach_entitlements.find_one.return_value = {
+        "workspace_id": "ws-1", "status": "active", "seats": 1,
+        "payment_source": "manual_verified_invoice", "paid_through": paid_through,
     }
-    mock_db.outreach_accounts.find = lambda q: AsyncMock(to_list=AsyncMock(return_value=[mock_account]))
-    mock_db.outreach_accounts.update_one = AsyncMock()
-
-    cancel_res = await cancel_subscription(current_user=user, db=mock_db)
-    assert cancel_res["status"] == "canceled"
-    assert cancel_res["cleared_proxy_assignments_count"] == 1
-    mock_db.outreach_accounts.update_one.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_cancel_pauses_campaigns_and_disables_senders_before_proxy_unassignment():
-    from unittest.mock import patch
-
-    db = AsyncMock()
-    db.outreach_accounts.find = lambda query: AsyncMock(to_list=AsyncMock(return_value=[{
-        "id": "sender_1", "workspace_id": "ws_1", "status": "active",
-        "proxy": {"proxy_id": "proxy_1"},
-    }]))
-    user = {"user_id": "owner_1", "default_workspace_id": "ws_1"}
-    with patch("outreach.api.billing.JITProxyManager") as manager:
-        manager.return_value.release_proxy = AsyncMock(return_value=True)
-        result = await cancel_subscription(current_user=user, db=db)
-
-    assert result["cleared_proxy_assignments_count"] == 1
-    db.outreach_campaigns.update_many.assert_awaited_once()
-    db.outreach_accounts.update_one.assert_awaited()
-    assert db.outreach_campaigns.update_many.await_args.args[0]["workspace_id"] == "ws_1"
-    assert db.outreach_accounts.update_many.await_args.args[1]["$set"]["status"] == "paused"
-
-
-@pytest.mark.asyncio
-async def test_cancel_preserves_proxy_reference_when_unassignment_fails():
-    from unittest.mock import patch
-
-    db = AsyncMock()
-    db.outreach_accounts.find = lambda query: AsyncMock(to_list=AsyncMock(return_value=[{
-        "id": "sender_1", "workspace_id": "ws_1", "proxy": {"proxy_id": "proxy_1"},
-    }]))
-    with patch("outreach.api.billing.JITProxyManager") as manager:
-        manager.return_value.release_proxy = AsyncMock(return_value=False)
-        result = await cancel_subscription(current_user={"user_id": "ws_1"}, db=db)
-
-    assert result["cleared_proxy_assignments_count"] == 0
-    assert result["failed_proxy_assignment_clearances"] == 1
-    assert not any("$unset" in call.args[1] for call in db.outreach_accounts.update_one.await_args_list)
-
-
-@pytest.mark.asyncio
-async def test_update_billing_email_lifecycle():
-    """Verify updating billing email persists and returns in get_outreach_plans."""
-    from outreach.api.billing import update_billing_email, UpdateBillingEmailRequest
-
-    mock_db = AsyncMock()
-    mock_db.outreach_subscriptions.update_one = AsyncMock()
-    user = {"user_id": "usr_billing_123", "email": "fallback@example.com"}
-
-    res = await update_billing_email(
-        req=UpdateBillingEmailRequest(billing_email="accounting@company.com"),
-        current_user=user,
-        db=mock_db,
+    result = await cancel_subscription(
+        current_user={"user_id": "owner-1", "default_workspace_id": "ws-1"}, db=db,
     )
-    assert res["status"] == "success"
-    assert res["billing_email"] == "accounting@company.com"
-    mock_db.outreach_subscriptions.update_one.assert_called_once()
+    assert result["status"] == "cancellation_scheduled"
+    assert result["paid_through"] == paid_through.isoformat()
+    db.outreach_accounts.update_many.assert_not_awaited()
+    db.outreach_proxy_leases.delete_one.assert_not_awaited()
 
-    # Verify invalid email raises 400
-    with pytest.raises(Exception):
-        await update_billing_email(
-            req=UpdateBillingEmailRequest(billing_email="not-an-email"),
-            current_user=user,
-            db=mock_db,
-        )
+
+@pytest.mark.asyncio
+async def test_billing_email_updates_entitlement_in_authenticated_workspace():
+    from outreach.api.billing import update_billing_email, UpdateBillingEmailRequest
+    db = AsyncMock()
+    user = {"user_id": "owner-1", "default_workspace_id": "ws-1"}
+    result = await update_billing_email(
+        UpdateBillingEmailRequest(billing_email="Accounts@Company.com"), current_user=user, db=db,
+    )
+    assert result["billing_email"] == "accounts@company.com"
+    assert db.outreach_entitlements.update_one.await_args.args[0] == {"workspace_id": "ws-1"}

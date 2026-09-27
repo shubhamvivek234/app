@@ -43,71 +43,74 @@ async def test_empty_cookie_raises_error():
 
 
 @pytest.mark.asyncio
-async def test_connect_via_cookie_endpoint_end_to_end():
-    """Verify connect_via_cookie assigns proxy, encrypts cookie, and stores sanitized account."""
-    mock_db = AsyncMock()
-    inserted_docs = []
-
-    async def fake_insert(doc):
-        inserted_docs.append(doc)
-        return AsyncMock(inserted_id="mock_id_1")
-
-    mock_db.outreach_accounts.insert_one = AsyncMock(side_effect=fake_insert)
-    mock_db.outreach_accounts.find_one = AsyncMock(return_value=None)
-
+async def test_connect_via_cookie_queues_encrypted_job_in_authenticated_workspace(monkeypatch):
+    """API never calls LinkedIn and never sends cookies through the broker."""
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+    monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", "true")
+    monkeypatch.setenv("OUTREACH_MOCK_AUTH", "false")
+    db = AsyncMock()
+    db.outreach_entitlements.find_one.return_value = {
+        "workspace_id": "ws_test", "status": "active", "seats": 1,
+        "payment_source": "manual_verified_invoice",
+        "paid_through": datetime.now(timezone.utc) + timedelta(days=30),
+    }
+    db.outreach_proxy_leases.find_one.return_value = None
     req = ConnectCookieRequest(
-        li_at="mock_li_at_sample_99",
-        li_a="mock_li_a_nav_99",
-        premium_product="sales_navigator",
-        user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-        jsession_id="ajax:12345",
-        country_code="US",
-        workspace_id="ws_test",
+        li_at="AQprivate", jsession_id="ajax:private", li_a="nav-private",
+        country_code="IN", workspace_id="other-workspace",
     )
-    user = {"user_id": "user_p2_123", "default_workspace_id": "ws_test"}
-
-    result = await connect_via_cookie(req=req, current_user=user, db=mock_db)
-
-    assert result["account_name"] != ""
-    assert result["country_code"] == "US"
-    assert result["premium_product"] == "sales_navigator"
-    assert result["user_agent"] == "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-    assert "session_cookie_enc" not in result  # Sanitized!
-    assert "li_a_enc" not in result  # Sanitized!
-    assert result["proxy"]["host"] == "127.0.0.1"
-    assert "password_enc" not in result["proxy"]  # Sanitized!
-    assert len(inserted_docs) == 1
-    assert inserted_docs[0]["session_cookie_enc"].startswith("gAAAAA")  # Fernet encrypted in DB!
-    assert inserted_docs[0]["li_a_enc"].startswith("gAAAAA")  # Fernet encrypted in DB!
-    assert inserted_docs[0]["premium_product"] == "sales_navigator"
+    with patch("outreach.api.connection_jobs.reserve_sender_proxy", new_callable=AsyncMock,
+               return_value=SimpleNamespace(proxy_id="iproyal:one")), patch(
+        "outreach.api.connection_jobs._enqueue_connection_job",
+    ) as enqueue, patch(
+        "outreach.engine.session_authenticator.SessionAuthenticator.validate_session_cookie", new_callable=AsyncMock,
+    ) as verify:
+        result = await connect_via_cookie(req, current_user={
+            "user_id": "user_p2_123", "default_workspace_id": "ws_test",
+        }, db=db)
+    assert result["status"] == "queued"
+    saved = db.outreach_connection_jobs.insert_one.await_args.args[0]
+    assert saved["workspace_id"] == "ws_test"
+    assert saved["li_at_enc"] != "AQprivate"
+    assert saved["jsession_id_enc"] != "ajax:private"
+    verify.assert_not_awaited()
+    assert "AQprivate" not in str(enqueue.call_args)
 
 
 @pytest.mark.asyncio
-async def test_connect_via_cookie_reconnect_existing():
-    """Verify connect_via_cookie updates existing account when same URN is reconnected."""
-    existing_acc = {
-        "id": "acc_existing_123",
-        "user_id": "user_p2_123",
-        "linkedin_urn": "urn:li:fsd_profile:sample_99",
-        "account_name": "Old Name",
-        "session_cookie_enc": "old_enc",
+async def test_reconnect_queues_same_sender_without_using_second_seat(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+    monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", "true")
+    monkeypatch.setenv("OUTREACH_MOCK_AUTH", "false")
+    db = AsyncMock()
+    db.outreach_entitlements.find_one.return_value = {
+        "workspace_id": "ws_test", "status": "active", "seats": 1,
+        "payment_source": "manual_verified_invoice",
+        "paid_through": datetime.now(timezone.utc) + timedelta(days=30),
     }
-    mock_db = AsyncMock()
-    mock_db.outreach_accounts.find_one = AsyncMock(side_effect=[existing_acc, {**existing_acc, "account_name": "LinkedIn Professional (ample_99)"}])
-    mock_db.outreach_accounts.update_one = AsyncMock()
-
-    req = ConnectCookieRequest(
-        li_at="mock_li_at_sample_99",
-        premium_product="sales_navigator",
-        country_code="US",
-    )
-    user = {"user_id": "user_p2_123"}
-    res = await connect_via_cookie(req=req, current_user=user, db=mock_db)
-    assert res["id"] == "acc_existing_123"
-    mock_db.outreach_accounts.update_one.assert_awaited_once()
-
-
-
+    db.outreach_accounts.find_one.return_value = {
+        "id": "sender-1", "workspace_id": "ws_test", "country_code": "IN",
+    }
+    db.outreach_sender_slots.find_one.return_value = {
+        "_id": "ws_test:1", "workspace_id": "ws_test", "sender_id": "sender-1",
+    }
+    db.outreach_proxy_leases.find_one.return_value = {
+        "_id": "iproyal:one", "workspace_id": "ws_test", "sender_id": "sender-1",
+    }
+    with patch("outreach.api.connection_jobs.reserve_sender_proxy", new_callable=AsyncMock,
+               return_value=SimpleNamespace(proxy_id="iproyal:one")), patch(
+        "outreach.api.connection_jobs._enqueue_connection_job",
+    ):
+        result = await connect_via_cookie(
+            ConnectCookieRequest(li_at="AQnew", jsession_id="ajax:new", country_code="IN",
+                                 reconnect_account_id="sender-1"),
+            current_user={"user_id": "user_p2_123", "default_workspace_id": "ws_test"}, db=db,
+        )
+    assert result["status"] == "queued"
+    assert db.outreach_connection_jobs.insert_one.await_args.args[0]["sender_id"] == "sender-1"
+    db.outreach_sender_slots.insert_one.assert_not_awaited()
 @pytest.mark.asyncio
 async def test_update_limits_and_disconnect_account():
     """Verify limit update capping and account disconnection."""
@@ -133,6 +136,8 @@ async def test_update_limits_and_disconnect_account():
     # 2. Disconnect
     del_res = await disconnect_account("acc_target_1", current_user=user, db=mock_db)
     assert del_res["status"] == "success"
-    mock_db.outreach_accounts.delete_one.assert_awaited_once_with({"id": "acc_target_1", "workspace_id": "user_p2_123"})
+    mock_db.outreach_accounts.delete_one.assert_not_awaited()
+    mock_db.outreach_proxy_leases.delete_one.assert_not_awaited()
+    assert "session_cookie_enc" in mock_db.outreach_accounts.update_one.await_args.args[1]["$unset"]
     mock_db.outreach_campaigns.update_many.assert_awaited_once()
     mock_db.outreach_tasks.update_many.assert_awaited_once()

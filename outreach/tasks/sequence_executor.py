@@ -11,6 +11,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from outreach.models import LeadExecutionState, SequenceNodeType
 from outreach.core.rate_limiter import OutboundRateLimiter
 from outreach.core.proxy_manager import JITProxyManager
+from outreach.core.paid_access import sender_is_ready
 from outreach.core.dag_compiler import contains_ai_prompt_token, interpolate_template
 from outreach.core.voice_cloner import VoiceCloner
 from outreach.engine.voyager_client import VoyagerClient
@@ -39,7 +40,13 @@ class SequenceExecutor:
             return {"status": "terminal_state", "state": lead.get("execution_state")}
 
         # 1. Fetch Campaign and verify active status
-        campaign = await db.outreach_campaigns.find_one({"id": lead["campaign_id"], "is_deleted": {"$ne": True}})
+        workspace_id = lead.get("workspace_id")
+        if not workspace_id:
+            return {"status": "paid_access_required"}
+        campaign = await db.outreach_campaigns.find_one({
+            "id": lead["campaign_id"], "workspace_id": workspace_id,
+            "is_deleted": {"$ne": True},
+        })
         if not campaign or campaign.get("status") != "active":
             return {"status": "campaign_not_active"}
 
@@ -54,13 +61,18 @@ class SequenceExecutor:
         if not assigned_account_id:
             return {"status": "no_account_assigned"}
 
-        account = await db.outreach_accounts.find_one({"id": assigned_account_id})
+        account = await db.outreach_accounts.find_one({
+            "id": assigned_account_id, "workspace_id": workspace_id,
+        })
         if not account or account.get("status") != "active":
             return {"status": "account_unavailable"}
+        if not await sender_is_ready(db, workspace_id, account):
+            return {"status": "paid_access_required"}
 
         # 4. Fetch Sequence DAG
         sequence = await db.outreach_sequences.find_one({
             "campaign_id": lead["campaign_id"],
+            "workspace_id": workspace_id,
             "is_deleted": {"$ne": True},
         })
         if not sequence or "compiled_dag" not in sequence:
@@ -77,7 +89,7 @@ class SequenceExecutor:
 
         if not curr_node_id or curr_node_id not in nodes_lookup:
             await db.outreach_leads.update_one(
-                {"id": lead_id},
+                {"id": lead_id, "workspace_id": workspace_id},
                 {"$set": {"execution_state": LeadExecutionState.FINISHED}}
             )
             return {"status": "finished", "reason": "no_more_nodes"}

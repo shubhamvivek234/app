@@ -2,9 +2,9 @@
 > Read first, write last. Keep under 80 lines and concrete.
 
 ## Current Phase
-Stage: v9.1 Prosp AI Architectural Advantages & Live Streaming Shipped
+Stage: Paid outreach pilot implementation in local review
 Branch: main
-Focus: IPRoyal one-IP pilot, then live smoke verification
+Focus: Verify managed IPRoyal sender seats and billing lifecycle before any release
 
 ## Last Session Completed
 Date: 2026-09-26
@@ -24,10 +24,18 @@ Completed:
 - Connection UI now accepts the purchased proxy country and supports sender reconnection; billing copy distinguishes app assignment from provider charges. Setup: `docs/OUTREACH_PROXY_PROVIDERS.md`. Verification: 168 outreach backend tests, 46 frontend tests, Python compile, Bandit, diff check, Compose config, and production build pass. No live IPRoyal or LinkedIn test yet because no purchased IPRoyal proxy is configured.
 
 ## Active Work
-Currently implementing: None. Earlier outreach patches and IPRoyal pilot code are committed and deployed.
+Currently implementing: Local, uncommitted paid-pilot changes; earlier IPRoyal pilot code through `15f85d6` was deployed, but these new changes are NOT deployed.
+2026-09-27 local changes:
+- $59/month/sender invite-only request flow, no trial/checkout; verified external invoice and 1–5 country-matched IPs required before an operator grants access. One requested country per workspace in this pilot.
+- Managed IPRoyal static-IP inventory, workspace-bound one-IP-per-sender leases, async encrypted connection verification, soft disconnect and same-sender reconnection; no automatic provider purchase, renewal, or payment collection.
+- Paid-term checks on campaign launch, sequence, Engage, and inbox workers; expiry pauses work, scrubs sender/pending-job secrets and releases only pending reservations, retaining connected sender IPs through provider expiry. Live actions disabled by default via `OUTREACH_LIVE_ACTIONS_ENABLED=false`.
+- Safety fixes: real IPRoyal health checks cannot be bypassed by mock Webshare config; paid connection rejects mock LinkedIn auth; unpaid draft editing remains available. Operator runbook in `docs/OUTREACH_PROXY_PROVIDERS.md`.
+- Verification: 179 outreach backend tests, 47 outreach frontend tests, production frontend build, Python compile, Bandit and diff check pass. Build has existing dependency/Tailwind/source-map warnings. Broad backend suite still fails in unrelated `tests/test_account_erasure.py` missing `query_string` test scope. No live purchased-IP/LinkedIn test.
 Next:
-- After an IPRoyal ISP static IP is purchased and approved for the intended use, configure server-side URL/country and smoke test a connected sender. Do not claim production readiness from mocked tests.
-- If rollout is approved, configure `OUTREACH_PROXY_PROVIDER=iproyal`, `IPROYAL_PROXY_URL`, and `IPROYAL_PROXY_COUNTRY` on EC2 for a purchased test IP; later switch to a funded Webshare ISP plan and reconnect each sender to migrate its proxy.
+- Obtain product/legal approval and a purchased IPRoyal static ISP IP; verify external billing workflow, configure managed inventory, and run live sender/proxy/worker smoke tests before production enablement. Do not claim production readiness from mocks.
+- Add merchant processor/webhook reconciliation and automated provider procurement only after provider/payment contracts and real API validation. Current pilot fulfillment remains manual and operator-gated.
+- Extend the pilot request schema to per-sender country before mixed-country workspaces; do not silently substitute country or reuse another customer's held IP.
+- Webshare migration needs a managed inventory importer and lease transfer; the old `OUTREACH_PROXY_PROVIDER` switch alone does not migrate this paid pilot.
 - Product/legal go-or-no-go before public rollout of session-based outreach; validate the Webshare provisioning endpoint and region availability with a real LinkedIn connection attempt before claiming live readiness.
 - Scheduled Engage scraping/AI drafting and unattended like/comment dispatch remain unimplemented; any automatic LinkedIn interaction requires separate product/legal approval.
 - Decide whether to migrate historical plaintext JSESSIONID records; newly connected/refreshed senders use encrypted storage.

@@ -30,6 +30,7 @@ class AccountStatus(str, Enum):
     WARMING = "warming"
     PAUSED = "paused"
     DISCONNECTED = "disconnected"
+    REAUTH_REQUIRED = "reauth_required"
     ERROR = "error"
 
 
@@ -56,7 +57,7 @@ class ProxyConfig(BaseModel):
 
 
 class DailyLimits(BaseModel):
-    """Configured daily caps per sender to guarantee account safety."""
+    """Configured daily caps per sender; they do not prevent platform enforcement."""
     connection_invites: int = Field(default=20, ge=0, le=100)
     messages: int = Field(default=20, ge=0, le=100)
     voice_notes: int = Field(default=20, ge=0, le=100)

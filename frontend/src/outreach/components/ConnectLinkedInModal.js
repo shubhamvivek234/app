@@ -10,7 +10,7 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
   const [liAValue, setLiAValue] = useState('');
   const [jsessionId, setJsessionId] = useState('');
   const [premiumProduct, setPremiumProduct] = useState('classic');
-  const [proxyCountry, setProxyCountry] = useState('US');
+  const [proxyCountry, setProxyCountry] = useState('');
   const [userAgent, setUserAgent] = useState(() => (
     typeof navigator !== 'undefined' ? navigator.userAgent || '' : ''
   ));
@@ -25,7 +25,7 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
     setLiAValue('');
     setJsessionId('');
     setPremiumProduct('classic');
-    setProxyCountry(reconnectAccount?.country_code?.toUpperCase() || 'US');
+    setProxyCountry(reconnectAccount?.country_code?.toUpperCase() || '');
     setUserAgent(typeof navigator !== 'undefined' ? navigator.userAgent || '' : '');
     setError(null);
     if (isOpen) {
@@ -78,7 +78,7 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
       return;
     }
     if (!/^[A-Z]{2}$/.test(proxyCountry)) {
-      setError('Enter the two-letter country code of your purchased proxy.');
+      setError('Enter the two-letter country code approved for your sender seat.');
       return;
     }
 
@@ -108,10 +108,29 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
       if (!response.ok) {
         throw new Error(typeof data?.detail === 'string' ? data.detail : 'LinkedIn session verification failed. Please try again.');
       }
-      if (!data?.id) throw new Error('LinkedIn account was not confirmed. Please try again.');
-
-      onAccountConnected?.(data);
-      closeModal(true);
+      if (!data?.job_id || data.status !== 'queued') {
+        throw new Error('LinkedIn connection was not queued. Please try again.');
+      }
+      // Secrets are no longer needed in the browser after the encrypted job is saved.
+      setCookieValue('');
+      setJsessionId('');
+      setLiAValue('');
+      for (let attempt = 0; attempt < 45; attempt += 1) {
+        if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 2000));
+        const jobResponse = await fetch(`/api/v1/outreach/accounts/connection-jobs/${encodeURIComponent(data.job_id)}`, {
+          credentials: 'include',
+          headers: { Authorization: token ? `Bearer ${token}` : '' },
+        });
+        const job = await jobResponse.json().catch(() => ({}));
+        if (!jobResponse.ok) throw new Error(job.detail || 'Could not read sender verification status.');
+        if (job.status === 'failed') throw new Error(job.error || 'LinkedIn session verification failed.');
+        if (job.status === 'completed' && job.account?.id) {
+          onAccountConnected?.(job.account);
+          closeModal(true);
+          return;
+        }
+      }
+      setError('Verification is still running. Close this dialog and check your sender account in a moment.');
     } catch (connectionError) {
       setError(connectionError.message || 'LinkedIn session verification failed. Please try again.');
     } finally {
@@ -254,7 +273,7 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
                 placeholder="US"
                 className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-sm uppercase text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
               />
-              <p className="mt-1 text-[11px] text-gray-500">Use the country of the purchased proxy. The server will reject a connection if no configured IP is available there.</p>
+              <p className="mt-1 text-[11px] text-gray-500">Use the country approved for this sender seat. We assign a dedicated IP there after payment and availability checks; the connection fails if it is not ready.</p>
             </div>
 
             <details className="rounded-lg border border-gray-200 px-3.5 py-2.5 text-xs text-gray-700">

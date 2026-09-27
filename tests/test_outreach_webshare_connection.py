@@ -85,53 +85,14 @@ async def test_dedicated_isp_plan_selects_unassigned_country_proxy(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_connect_surfaces_missing_webshare_plan_without_saving_cookies(monkeypatch):
-    monkeypatch.delenv("OUTREACH_MOCK_AUTH", raising=False)
+async def test_managed_pilot_does_not_silently_fall_back_to_webshare():
+    """Webshare inventory remains a future adapter, not a paid-pilot fallback."""
+    from outreach.core.managed_proxy import ManagedProxyUnavailable, reserve_sender_proxy
     db = MagicMock()
-    with patch("outreach.api.accounts.JITProxyManager") as manager:
-        manager.return_value.is_mock = False
-        manager.return_value.order_static_residential_proxy = AsyncMock(
-            side_effect=ProxyPlanRequiredError("Webshare has no active Dedicated Static Residential (ISP) plan.")
-        )
-        with pytest.raises(HTTPException) as error:
-            await connect_via_cookie(
-                ConnectCookieRequest(li_at="AQprivate", jsession_id="ajax:private"),
-                current_user=USER, db=db,
-            )
-    assert error.value.status_code == 503
-    assert "Dedicated Static Residential" in error.value.detail
-    assert "AQprivate" not in error.value.detail
-    db.outreach_accounts.insert_one.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_connect_retries_proxy_reservation_collision(monkeypatch):
-    monkeypatch.delenv("OUTREACH_MOCK_AUTH", raising=False)
-    db = MagicMock()
-    db.outreach_proxy_leases.insert_one = AsyncMock(side_effect=[DuplicateKeyError("taken"), None])
-    db.outreach_accounts.find_one = AsyncMock(return_value=None)
-    db.outreach_accounts.insert_one = AsyncMock()
-    first = ProxyConfig(proxy_id="webshare:42:d-1", provider="webshare_plan", host="1.2.3.4",
-                        port=8080, username="one", password_enc=encrypt("password"))
-    second = ProxyConfig(proxy_id="webshare:42:d-2", provider="webshare_plan", host="5.6.7.8",
-                         port=8080, username="two", password_enc=encrypt("password"))
-
-    with patch("outreach.api.accounts.JITProxyManager") as manager, patch(
-        "outreach.api.accounts.SessionAuthenticator.validate_session_cookie",
-        new_callable=AsyncMock,
-    ) as verify:
-        manager.return_value.is_mock = False
-        manager.return_value.order_static_residential_proxy = AsyncMock(side_effect=[first, second])
-        manager.return_value.format_proxy_url.return_value = "http://proxy.test:8080"
-        verify.return_value = {"account_name": "Test Sender", "linkedin_urn": "urn:li:person:test"}
-        result = await connect_via_cookie(
-            ConnectCookieRequest(li_at="AQprivate", jsession_id="ajax:private"),
-            current_user=USER, db=db,
-        )
-
-    assert result["proxy"]["proxy_id"] == "webshare:42:d-2"
-    assert db.outreach_proxy_leases.insert_one.await_count == 2
-    assert manager.return_value.order_static_residential_proxy.await_args_list[1].kwargs["excluded_proxy_ids"] == {
-        "webshare:42:d-1",
-    }
-    assert db.outreach_accounts.insert_one.await_count == 1
+    db.outreach_proxy_leases.find_one = AsyncMock(return_value=None)
+    cursor = MagicMock()
+    cursor.to_list = AsyncMock(return_value=[])
+    db.outreach_proxy_inventory.find.return_value = cursor
+    with pytest.raises(ManagedProxyUnavailable):
+        await reserve_sender_proxy(db, "workspace-a", "sender-a", "US")
+    assert db.outreach_proxy_inventory.find.call_args.args[0]["provider"] == "iproyal_static"

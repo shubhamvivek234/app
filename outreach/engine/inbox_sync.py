@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from outreach.core.proxy_manager import JITProxyManager
+from outreach.core.paid_access import sender_is_ready
 from outreach.core.lead_importer import normalize_linkedin_url
 from outreach.core.safety_shield import SafetyShield
 from outreach.engine.voyager_client import VoyagerClient, VoyagerRestrictionError
@@ -55,6 +56,8 @@ class InboxSynchronizer:
             return {"status": "error", "error": f"Account {account_id} not found"}
         if account.get("status") != "active":
             return {"status": "error", "error": "Sender account is not active"}
+        if not await sender_is_ready(self.db, self.workspace_id, account):
+            return {"status": "error", "error": "Paid sender access or provider IP is unavailable"}
 
         proxy_url = None
         if account.get("proxy_config"):
@@ -71,6 +74,8 @@ class InboxSynchronizer:
         conversations = []
         try:
             for start in range(0, 500, 25):
+                if not await sender_is_ready(self.db, self.workspace_id, account):
+                    return {"status": "error", "error": "Paid sender access or provider IP is unavailable"}
                 page = await client.fetch_conversations(count=25, start=start)
                 conversations.extend(page)
                 if len(page) < 25:

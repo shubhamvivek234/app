@@ -3,6 +3,13 @@ Unit tests for the LinkedIn Pre-Outreach Engage & Grow Studio,
 Writing Styles Mimicry, and Swipe Files Repurposer.
 """
 import pytest
+import os
+from cryptography.fernet import Fernet
+
+os.environ.setdefault("ENCRYPTION_KEY", Fernet.generate_key().decode())
+
+pytestmark = pytest.mark.usefixtures("outreach_paid_gate_stub")
+from utils.encryption import encrypt
 
 
 @pytest.fixture(autouse=True)
@@ -211,6 +218,7 @@ async def test_add_contacts_and_fetch_posts(db, mock_user):
         "workspace_id": "ws_test123",
         "status": "active",
         "session_cookie_enc": "mock_cookie",
+        "proxy": {"proxy_id": "mock-1", "host": "127.0.0.1", "port": 8080, "username": "mock", "password_enc": encrypt("mock-pass")},
         "jsession_id": "ajax:123",
         "counters": {},
         "limits": {"post_likes": 50, "comments": 50},
@@ -313,6 +321,7 @@ async def test_failed_like_is_not_recorded_as_success(db, mock_user):
     await db.outreach_accounts.insert_one({
         "id": "acc_1", "workspace_id": "ws_test123", "status": "active",
         "session_cookie_enc": "mock_cookie", "jsession_id": "ajax:123",
+        "proxy": {"proxy_id": "mock-2", "host": "127.0.0.1", "port": 8080, "username": "mock", "password_enc": encrypt("mock-pass")},
     })
     await db.outreach_engage_posts.insert_one(EngagePost(
         list_id="list_1", contact_id="contact_1", workspace_id="ws_test123",

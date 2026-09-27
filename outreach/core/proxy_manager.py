@@ -218,7 +218,7 @@ class JITProxyManager:
         """
         Verifies that outgoing traffic through this proxy reaches the web and masks the host IP.
         """
-        if self.is_mock or proxy.host == "127.0.0.1":
+        if self.is_mock and proxy.provider == "webshare_mock" and proxy.host == "127.0.0.1":
             return True
 
         proxy_url = self.format_proxy_url(proxy)

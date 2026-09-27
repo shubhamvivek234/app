@@ -28,18 +28,16 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
   const [activeTab, setActiveTab] = useState(initialTab);
 
   // ── Billing State ──────────────────────────────────────────────────────────
-  const [interval, setInterval] = useState('monthly'); // 'annual' | 'quarterly' | 'monthly'
   const [seats, setSeats] = useState(1);
-  const [trialLoading, setTrialLoading] = useState(false);
-  const [trialActive, setTrialActive] = useState(false);
-  const [trialDaysLeft, setTrialDaysLeft] = useState(4);
-  const [rateCards, setRateCards] = useState([]);
-  const [featuresIncluded, setFeaturesIncluded] = useState([]);
+  const [senderCountry, setSenderCountry] = useState('');
+  const [requestingAccess, setRequestingAccess] = useState(false);
+  const [accessRequest, setAccessRequest] = useState(null);
+  const [entitlement, setEntitlement] = useState(null);
+  const [accessActive, setAccessActive] = useState(false);
   const [billingEmail, setBillingEmail] = useState('');
   const [billingModalOpen, setBillingModalOpen] = useState(false);
   const [newBillingEmail, setNewBillingEmail] = useState('');
   const [savingBillingEmail, setSavingBillingEmail] = useState(false);
-  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [cancelingSubscription, setCancelingSubscription] = useState(false);
 
   // ── Members State ──────────────────────────────────────────────────────────
@@ -66,12 +64,11 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
       });
       if (res.ok) {
         const data = await res.json();
-        setRateCards(data.rate_cards || []);
-        setFeaturesIncluded(data.features_included || []);
-        setTrialActive(data.trial_active || false);
-        if (data.trial_days_remaining) setTrialDaysLeft(data.trial_days_remaining);
+        setEntitlement(data.subscription || null);
+        setAccessActive(Boolean(data.access_active));
+        setAccessRequest(data.access_request || null);
         if (data.subscription?.seats) setSeats(data.subscription.seats);
-        if (data.subscription?.interval) setInterval(data.subscription.interval);
+        if (data.access_request?.country_code) setSenderCountry(data.access_request.country_code);
         if (data.billing_email) {
           setBillingEmail(data.billing_email);
           setNewBillingEmail(data.billing_email);
@@ -116,60 +113,40 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
   }, [activeTab, fetchMembers]);
 
   // ── Billing Actions ────────────────────────────────────────────────────────
-  const getActiveTier = () => {
-    if (seats <= 5) return rateCards[0] || { annual: 61.99, quarterly: 69.99, monthly: 79.99, tier: '1-5' };
-    if (seats <= 30) return rateCards[1] || { annual: 45.99, quarterly: 52.99, monthly: 59.99, tier: '6-30' };
-    return rateCards[2] || { annual: 30.99, quarterly: 34.99, monthly: 39.99, tier: '30+' };
-  };
-
-  const activeTier = getActiveTier();
-  const currentPrice = activeTier ? activeTier[interval] : 79.99;
-
-  const handleStartTrial = async () => {
-    setTrialLoading(true);
+  const handleRequestAccess = async () => {
+    if (!/^[A-Z]{2}$/.test(senderCountry)) {
+      toast.error('Enter the two-letter country code for your sender');
+      return;
+    }
+    setRequestingAccess(true);
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch('/api/v1/outreach/billing/start-trial', {
+      const res = await fetch('/api/v1/outreach/billing/request-access', {
         method: 'POST',
         credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
         },
-        body: JSON.stringify({ seats, interval }),
+        body: JSON.stringify({ seats, country_code: senderCountry }),
       });
       if (res.ok) {
-        setTrialActive(true);
-        setTrialDaysLeft(4);
-        toast.success('Your 4-day free trial has been activated!');
+        setAccessRequest({ seats, country_code: senderCountry, status: 'pending_quote' });
+        toast.success('Request received. We will confirm availability and price before payment.');
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'Could not start trial');
+        toast.error(err.detail || 'Could not request managed access');
       }
     } catch (err) {
-      toast.error('Network error starting trial');
+      toast.error('Network error requesting access');
     } finally {
-      setTrialLoading(false);
+      setRequestingAccess(false);
     }
   };
 
   const handleUpdateSeats = async (newSeats) => {
-    if (newSeats < 1) return;
+    if (newSeats < 1 || newSeats > 5) return;
     setSeats(newSeats);
-    try {
-      const token = localStorage.getItem('token');
-      await fetch('/api/v1/outreach/billing/update-seats', {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: token ? `Bearer ${token}` : '',
-        },
-        body: JSON.stringify({ seats: newSeats }),
-      });
-    } catch (err) {
-      console.error('Failed to update seats:', err);
-    }
   };
 
   const handleSaveBillingEmail = async (e) => {
@@ -206,7 +183,7 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
   };
 
   const handleCancelSubscription = async () => {
-    if (!window.confirm('Are you sure you want to cancel your outreach subscription? All assigned residential proxies will be released immediately.')) {
+    if (!window.confirm('Schedule cancellation at the end of your paid period? Access continues until then. Sender IPs remain reserved through their already-paid provider terms.')) {
       return;
     }
     setCancelingSubscription(true);
@@ -219,9 +196,7 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
       });
       if (res.ok) {
         const data = await res.json();
-        setTrialActive(false);
-        if (data.failed_proxy_releases) toast.error(data.message || 'Subscription canceled, but proxy cleanup needs support.');
-        else toast.success(data.message || 'Subscription canceled and proxies released.');
+        toast.success(data.message || 'Cancellation scheduled for the end of the paid period.');
         fetchBilling();
       } else {
         const err = await res.json().catch(() => ({}));
@@ -333,8 +308,8 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
       a: 'No. A proxy is part of the session connection infrastructure. It does not make non-public API access authorized or prevent LinkedIn from restricting an account.',
     },
     {
-      q: 'How does the 4-day free trial work?',
-      a: 'Your trial gives you full access to all Outreach features: sequences, automated actions, voice cloning, and unified inbox. Adding a payment card charges nothing until your 4-day trial period finishes. You can cancel at any time in Billing.',
+      q: 'How does paid pilot access work?',
+      a: 'Request your sender count and country. We check IP availability and send a quote before payment. Only an independently verified paid invoice activates access; no trial or in-app card checkout is offered. Cancellation takes effect at your paid-period end.',
     },
     {
       q: 'How are personalized AI voice notes generated?',
@@ -497,234 +472,74 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
             {activeTab === 'billing' && (
               <div className="space-y-6">
                 <div>
-                  <h2 className="text-base font-bold text-gray-900">Billing & Subscriptions</h2>
-                  <p className="text-xs text-gray-500 mt-0.5 max-w-2xl leading-relaxed">
-                    Each connected sender needs a dedicated static residential proxy from your configured provider. Proxy purchases are billed separately, including when unused.
+                  <h2 className="text-base font-bold text-gray-900">Outreach billing</h2>
+                  <p className="mt-1 max-w-2xl text-xs leading-relaxed text-gray-600">
+                    Invite-only paid pilot. No free trial or in-app card collection is active. Each sender needs its own dedicated IP; availability and any country-specific quote are confirmed before payment.
                   </p>
                 </div>
 
-                {/* Interval Toggle */}
-                <div className="flex items-center gap-1.5 bg-gray-100 p-1 rounded-xl w-fit text-xs font-medium text-gray-600">
-                  <button
-                    onClick={() => setInterval('annual')}
-                    className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all ${
-                      interval === 'annual' ? 'bg-white shadow-xs text-gray-900 font-semibold' : ''
-                    }`}
-                  >
-                    <span>Annual</span>
-                    <span className="text-[10px] text-emerald-600 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded">
-                      save 23%
-                    </span>
-                  </button>
-
-                  <button
-                    onClick={() => setInterval('quarterly')}
-                    className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all ${
-                      interval === 'quarterly' ? 'bg-white shadow-xs text-gray-900 font-semibold' : ''
-                    }`}
-                  >
-                    <span>Quarterly</span>
-                    <span className="text-[10px] text-emerald-600 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded">
-                      save 13%
-                    </span>
-                  </button>
-
-                  <button
-                    onClick={() => setInterval('monthly')}
-                    className={`px-3 py-1.5 rounded-lg transition-all ${
-                      interval === 'monthly' ? 'bg-white shadow-xs text-gray-900 font-semibold' : ''
-                    }`}
-                  >
-                    Monthly
-                  </button>
+                <div className="rounded-2xl bg-indigo-600 p-7 text-white shadow-md">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-200">Founding pilot price</p>
+                  <h3 className="mt-2 text-3xl font-extrabold">$59 <span className="text-base font-medium">USD / sender / month</span></h3>
+                  <p className="mt-2 text-xs leading-relaxed text-indigo-100">
+                    One country-matched dedicated IP is managed per paid sender seat where available. Taxes and any exceptional regional costs are quoted before you pay. No annual, quarterly, or unlimited-usage promise is offered.
+                  </p>
+                  <div className="mt-5 border-t border-indigo-400/40 pt-4 text-xs">
+                    <p className="font-semibold">
+                      {accessActive ? 'Paid access active' : accessRequest ? 'Access request pending review' : 'No paid sender access yet'}
+                    </p>
+                    {entitlement?.paid_through && <p className="mt-1 text-indigo-100">Paid through {new Date(entitlement.paid_through).toLocaleDateString()} · {entitlement.seats} {entitlement.seats === 1 ? 'sender seat' : 'sender seats'}</p>}
+                    {entitlement?.cancel_at_period_end && <p className="mt-1 text-amber-100">Cancellation scheduled for the paid-period end.</p>}
+                  </div>
                 </div>
 
-                {/* Primary Plan Card */}
-                <div className="bg-indigo-600 text-white rounded-2xl p-7 shadow-md space-y-6">
-                  <div>
-                    <span className="text-[10px] font-bold tracking-widest text-indigo-200 uppercase">
-                      YOUR OUTREACH PLAN
-                    </span>
-                    <h3 className="text-2xl font-extrabold mt-1">
-                      {trialActive ? `4-Day Trial (${trialDaysLeft} days remaining)` : 'Standard Outbound Tier'}
-                    </h3>
-                    <p className="text-xs text-indigo-100 mt-1">
-                      ${currentPrice} per account every 4 weeks. Proxy provider charges are separate and must be managed with that provider.
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <p className="text-xs font-semibold">How many accounts / seats?</p>
-                    <p className="text-[11px] text-indigo-200">
-                      Each connected LinkedIn sender needs its own dedicated proxy, purchased separately.
-                    </p>
-
-                    <div className="flex items-center gap-4 pt-1">
-                      <div className="flex items-center bg-indigo-700/80 rounded-lg p-1 border border-indigo-500/50">
-                        <button
-                          onClick={() => handleUpdateSeats(Math.max(1, seats - 1))}
-                          className="w-7 h-7 flex items-center justify-center rounded hover:bg-indigo-600 transition-colors text-white"
-                        >
-                          <Minus className="w-3.5 h-3.5" />
-                        </button>
-                        <span className="w-10 text-center text-sm font-bold">{seats}</span>
-                        <button
-                          onClick={() => handleUpdateSeats(seats + 1)}
-                          className="w-7 h-7 flex items-center justify-center rounded hover:bg-indigo-600 transition-colors text-white"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                        </button>
+                <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-xs">
+                  <h3 className="text-sm font-bold text-gray-900">Request or change managed access</h3>
+                  <p className="mt-1 text-xs leading-relaxed text-gray-600">
+                    Choose the number of sender accounts and their shared proxy country. This pilot supports one country per workspace; contact support for a mixed-country team. We check IP availability, confirm the final quote, and send payment instructions. Access is activated only after payment is independently verified. If a country is unavailable, you are not charged.
+                  </p>
+                  <div className="mt-5 flex flex-wrap items-end gap-4">
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-gray-700">Sender seats (1–5)</label>
+                      <div className="flex items-center rounded-lg border border-gray-200">
+                        <button type="button" onClick={() => handleUpdateSeats(seats - 1)} disabled={seats <= 1} aria-label="Remove sender seat" className="p-2 disabled:opacity-40"><Minus className="h-4 w-4" /></button>
+                        <span className="w-9 text-center text-sm font-semibold">{seats}</span>
+                        <button type="button" onClick={() => handleUpdateSeats(seats + 1)} disabled={seats >= 5} aria-label="Add sender seat" className="p-2 disabled:opacity-40"><Plus className="h-4 w-4" /></button>
                       </div>
-
-                      <span className="text-xs font-medium text-indigo-100">
-                        ${currentPrice} / account / 4 weeks • {activeTier.label}
-                      </span>
                     </div>
-                  </div>
-
-                  <div className="pt-2 border-t border-indigo-500/40 space-y-3">
-                    <div className="flex items-center gap-3">
-                      <button
-                        onClick={handleStartTrial}
-                        disabled={trialLoading || trialActive}
-                        className="px-5 py-2.5 bg-white text-indigo-700 hover:bg-indigo-50 text-xs font-bold rounded-xl shadow-xs transition-colors disabled:opacity-75"
-                      >
-                        {trialActive
-                          ? `Trial Active (${trialDaysLeft} days left)`
-                          : `Start 4-day trial - ${interval.charAt(0).toUpperCase() + interval.slice(1)}`}
-                      </button>
-                      <button
-                        onClick={() => setPaymentModalOpen(true)}
-                        className="px-5 py-2.5 bg-indigo-500/30 hover:bg-indigo-500/50 border border-indigo-400/40 text-white text-xs font-semibold rounded-xl transition-colors inline-flex items-center gap-1.5"
-                      >
-                        <CreditCard className="w-3.5 h-3.5" /> Payment Method
-                      </button>
-                    </div>
-                    <p className="text-[11px] text-indigo-200">
-                      Adding a payment method charges nothing during your trial period.
-                    </p>
-                  </div>
-                </div>
-
-                {/* 2-Column Feature & Post-Trial Breakdown */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="bg-white rounded-2xl border border-gray-200/80 p-6 shadow-xs space-y-4">
-                    <h3 className="font-bold text-gray-900 text-sm">Everything included</h3>
-                    <ul className="space-y-2.5 text-xs text-gray-600">
-                      {(featuresIncluded.length > 0
-                        ? featuresIncluded
-                        : [
-                            'Unlimited campaigns, contacts, and messages',
-                            'Every team member, free',
-                            'Voice cloning studio',
-                            'Supports one separately purchased dedicated proxy per sender',
-                            'Unified inbox across every account',
-                            'Templates, analytics, and DAG sequences',
-                          ]
-                      ).map((feat, idx) => (
-                        <li key={idx} className="flex items-start gap-2.5">
-                          <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                          <span>{feat}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  <div className="bg-white rounded-2xl border border-gray-200/80 p-6 shadow-xs space-y-3">
-                    <h3 className="font-bold text-gray-900 text-sm">Your plan after the trial</h3>
                     <div>
-                      <span className="text-3xl font-extrabold text-gray-900">${currentPrice}</span>
-                      <span className="text-xs text-gray-500 ml-1">per account/4 weeks</span>
+                      <label htmlFor="pilot-country" className="mb-1 block text-xs font-semibold text-gray-700">Sender proxy country</label>
+                      <input id="pilot-country" value={senderCountry} onChange={(event) => setSenderCountry(event.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2))} maxLength={2} placeholder="e.g. IN" className="w-28 rounded-lg border border-gray-200 px-3 py-2 text-sm uppercase" />
                     </div>
-                    <p className="text-xs text-gray-500 leading-relaxed">
-                      {interval.charAt(0).toUpperCase() + interval.slice(1)} billing, total ${(currentPrice * seats).toFixed(2)} every 4 weeks for {seats} {seats === 1 ? 'seat' : 'seats'}.
-                    </p>
-                    <p className="text-[11px] text-gray-400 pt-2 border-t border-gray-100">
-                      Disconnecting a sender clears its proxy assignment in our app; cancel or resize the provider plan separately to change proxy charges.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Rate Card Table */}
-                <div className="bg-white rounded-2xl border border-gray-200/80 shadow-xs p-6 space-y-4">
-                  <h3 className="font-bold text-gray-900 text-sm">Volume Rate Card</h3>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs text-left">
-                      <thead>
-                        <tr className="border-b border-gray-100 text-gray-400 font-medium">
-                          <th className="pb-3 font-medium">Account Tier</th>
-                          <th className="pb-3 font-medium">Annual</th>
-                          <th className="pb-3 font-medium">Quarterly</th>
-                          <th className="pb-3 font-medium">Monthly</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100">
-                        {rateCards.map((rc) => {
-                          const isCurrentTier = activeTier.tier === rc.tier;
-                          return (
-                            <tr
-                              key={rc.tier}
-                              className={`transition-colors ${
-                                isCurrentTier ? 'bg-indigo-50/70 font-semibold' : 'hover:bg-gray-50/60'
-                              }`}
-                            >
-                              <td className="py-3 px-2 flex items-center gap-2">
-                                <span className={isCurrentTier ? 'text-indigo-900' : 'text-gray-900'}>
-                                  {rc.label}
-                                </span>
-                                {isCurrentTier && (
-                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700">
-                                    your plan
-                                  </span>
-                                )}
-                              </td>
-                              <td className="py-3 px-2 text-gray-700">${rc.annual.toFixed(2)}</td>
-                              <td className="py-3 px-2 text-gray-700">${rc.quarterly.toFixed(2)}</td>
-                              <td className="py-3 px-2 text-gray-700">${rc.monthly.toFixed(2)}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                {/* Billing Email & Subscription Settings */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="bg-white rounded-2xl border border-gray-200/80 shadow-xs p-6 flex items-center justify-between">
-                    <div>
-                      <h3 className="font-bold text-gray-900 text-sm">Billing Email</h3>
-                      <p className="text-xs text-gray-400 mt-0.5 truncate max-w-xs">
-                        {billingEmail || 'No receipt email configured'}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => setBillingModalOpen(true)}
-                      className="px-4 py-2 border border-gray-200 text-gray-700 hover:bg-gray-50 rounded-lg text-xs font-medium transition-colors"
-                    >
-                      Update Email
+                    <button type="button" onClick={handleRequestAccess} disabled={requestingAccess} className="rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50">
+                      {requestingAccess ? 'Sending request…' : accessActive ? 'Request a seat change' : 'Request managed access'}
                     </button>
                   </div>
+                  <p className="mt-3 text-xs text-gray-500">Estimate: ${(59 * seats).toFixed(2)} USD/month before taxes for {seats} {seats === 1 ? 'seat' : 'seats'}. This request does not charge you or activate a sender.</p>
+                  {accessRequest && <p className="mt-2 text-xs text-indigo-700">Latest request: {accessRequest.seats} {accessRequest.seats === 1 ? 'seat' : 'seats'} in {accessRequest.country_code} · awaiting availability and quote.</p>}
+                </div>
 
-                  <div className="bg-white rounded-2xl border border-gray-200/80 shadow-xs p-6 flex items-center justify-between">
+                <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+                  <div className="flex items-center justify-between rounded-2xl border border-gray-200 bg-white p-6 shadow-xs">
                     <div>
-                      <h3 className="font-bold text-gray-900 text-sm">Cancel Subscription</h3>
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        Pauses senders and clears local proxy assignments. Provider subscriptions must be managed separately.
-                      </p>
+                      <h3 className="text-sm font-bold text-gray-900">Billing email</h3>
+                      <p className="mt-1 max-w-xs truncate text-xs text-gray-500">{billingEmail || 'No billing email configured'}</p>
                     </div>
-                    <button
-                      onClick={handleCancelSubscription}
-                      disabled={cancelingSubscription}
-                      className="px-4 py-2 border border-red-200 text-red-600 hover:bg-red-50 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
-                    >
-                      {cancelingSubscription ? 'Canceling...' : 'Cancel Tier'}
+                    <button onClick={() => setBillingModalOpen(true)} className="rounded-lg border border-gray-200 px-4 py-2 text-xs font-medium">Update</button>
+                  </div>
+                  <div className="flex items-center justify-between rounded-2xl border border-gray-200 bg-white p-6 shadow-xs">
+                    <div>
+                      <h3 className="text-sm font-bold text-gray-900">Cancel at period end</h3>
+                      <p className="mt-1 max-w-xs text-xs text-gray-500">Service continues until paid-through. Your IP is not reassigned to another customer during its provider term.</p>
+                    </div>
+                    <button onClick={handleCancelSubscription} disabled={!accessActive || entitlement?.cancel_at_period_end || cancelingSubscription} className="rounded-lg border border-red-200 px-4 py-2 text-xs font-medium text-red-600 disabled:opacity-40">
+                      {cancelingSubscription ? 'Scheduling…' : 'Cancel'}
                     </button>
                   </div>
                 </div>
+                <p className="text-xs leading-relaxed text-gray-500">Session-based automated outreach uses unofficial LinkedIn interfaces and carries account-restriction risk. Paid access and dedicated IPs do not make it authorized by LinkedIn.</p>
               </div>
             )}
-
             {/* ── TAB 4: HELP & RESOURCES ────────────────────────────────── */}
             {activeTab === 'help' && (
               <div className="space-y-6">
@@ -939,51 +754,6 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
         </div>
       )}
 
-      {/* ── MODAL: PAYMENT METHOD ──────────────────────────────────────────── */}
-      {paymentModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-          <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-gray-100 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold text-gray-900">Payment Details</h3>
-              <button
-                onClick={() => setPaymentModalOpen(false)}
-                className="p-1 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="rounded-xl border border-gray-200 bg-gray-50/50 p-4 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-gray-600">Payment Gateway</span>
-                <span className="text-xs font-bold text-gray-900">Stripe Secure</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-gray-600">Trial Period</span>
-                <span className="text-xs font-bold text-emerald-600">4 Days Free</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-gray-600">Billed Amount Today</span>
-                <span className="text-xs font-bold text-gray-900">$0.00</span>
-              </div>
-            </div>
-
-            <p className="text-[11px] text-gray-400 leading-relaxed">
-              When starting your trial or subscription, payment authorization is handled via Stripe's encrypted payment vault. No card numbers touch our servers.
-            </p>
-
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setPaymentModalOpen(false)}
-                className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold hover:bg-indigo-700"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

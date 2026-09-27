@@ -171,6 +171,9 @@ async def send_thread_reply(
         raise HTTPException(status_code=409, detail="Sample conversations cannot be sent to LinkedIn")
     if not account or account.get("status") != "active" or not (account.get("session_cookie_enc") or account.get("encrypted_session_cookie")):
         raise HTTPException(status_code=409, detail="The assigned sender account is unavailable")
+    from outreach.core.paid_access import sender_is_ready
+    if not await sender_is_ready(db, ws_id, account):
+        raise HTTPException(status_code=402, detail="Paid sender access or provider IP is unavailable")
     if not thread.get("conversation_urn"):
         raise HTTPException(status_code=409, detail="This conversation has no verified LinkedIn thread ID. Sync it first.")
     if not req.body.strip():
@@ -250,11 +253,16 @@ async def trigger_inbox_sync(
     """
     user_id = current_user.get("user_id")
     ws_id = current_user.get("default_workspace_id") or user_id
+    from outreach.core.paid_access import get_active_entitlement, sender_is_ready
+    if not await get_active_entitlement(db, ws_id):
+        raise HTTPException(status_code=402, detail="Paid outreach access is unavailable")
     selected = account_id if isinstance(account_id, str) and account_id not in ("all", "All", "") else None
     if selected:
         account = await db.outreach_accounts.find_one({"id": selected, "workspace_id": ws_id, "status": "active"})
         if not account:
             raise HTTPException(status_code=404, detail="Active sender account not found")
+        if not await sender_is_ready(db, ws_id, account):
+            raise HTTPException(status_code=402, detail="Paid sender access or provider IP is unavailable")
     else:
         active_count = await db.outreach_accounts.count_documents({"workspace_id": ws_id, "status": "active"})
         if not active_count:

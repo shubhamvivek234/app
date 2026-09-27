@@ -13,8 +13,157 @@ from outreach.api.campaigns import (
     conditional_auto_launch_enabled,
 )
 from outreach.core.rate_limiter import OutboundRateLimiter
+from outreach.core.proxy_manager import JITProxyManager
+from outreach.engine.session_authenticator import SessionAuthenticator, InvalidSessionError
+from outreach.core.crypto import decrypt_secret
+from outreach.core.paid_access import get_active_entitlement, live_actions_enabled, sender_is_ready, _utc
+from outreach.core.managed_proxy import _proxy_from_inventory, release_sender_reservation
+from outreach.models import AccountAuthMode, AccountStatus, DailyLimits, OutreachAccount
 
 logger = logging.getLogger(__name__)
+
+
+@celery_app.task(name="celery_workers.tasks.outreach.verify_sender_connection", queue="outreach", acks_late=True)
+def verify_sender_connection(job_id: str, workspace_id: str, trace_id: str) -> dict:
+    return run_async(_verify_sender_connection(job_id, workspace_id, trace_id))
+
+
+async def _verify_sender_connection(job_id: str, workspace_id: str, trace_id: str, db=None) -> dict:
+    """Verify encrypted pending values through the sender's leased provider IP."""
+    if is_shutting_down():
+        return {"status": "shutting_down"}
+    db = db or await _inbox_db()
+    claimed = await db.outreach_connection_jobs.update_one(
+        {"id": job_id, "workspace_id": workspace_id, "status": "queued"},
+        {"$set": {"status": "running", "started_at": datetime.now(timezone.utc)}},
+    )
+    if not claimed.modified_count:
+        return {"status": "already_claimed"}
+    job = await db.outreach_connection_jobs.find_one({"id": job_id, "workspace_id": workspace_id})
+    if not job:
+        return {"status": "job_missing"}
+
+    sender_id = job["sender_id"]
+    error = "Sender verification failed. Check your session and proxy, then try again."
+    try:
+        if (not live_actions_enabled()
+                or os.getenv("OUTREACH_MOCK_AUTH", "false").lower() in {"true", "1"}
+                or not await get_active_entitlement(db, workspace_id)):
+            raise ValueError("paid_access_unavailable")
+        slot = await db.outreach_sender_slots.find_one({
+            "workspace_id": workspace_id, "sender_id": sender_id,
+        })
+        lease = await db.outreach_proxy_leases.find_one({
+            "_id": job["proxy_id"], "workspace_id": workspace_id, "sender_id": sender_id,
+        })
+        inventory = await db.outreach_proxy_inventory.find_one({"_id": job["proxy_id"]})
+        if (not slot or not lease or not inventory or inventory.get("status") != "available"
+                or inventory.get("last_workspace_id") != workspace_id):
+            raise ValueError("sender_capacity_unavailable")
+        expires_at = _utc(inventory.get("expires_at"))
+        if (inventory.get("country_code") != job["country_code"] or not expires_at
+                or expires_at <= datetime.now(timezone.utc)):
+            raise ValueError("provider_term_expired")
+        proxy = _proxy_from_inventory(inventory)
+        if not await JITProxyManager().test_proxy_health(proxy):
+            raise ValueError("proxy_health_failed")
+        profile = await SessionAuthenticator.validate_session_cookie(
+            li_at=decrypt_secret(job["li_at_enc"]),
+            jsession_id=decrypt_secret(job["jsession_id_enc"]),
+            li_a=decrypt_secret(job["li_a_enc"]) if job.get("li_a_enc") else None,
+            proxy_url=JITProxyManager.format_proxy_url(proxy),
+            user_agent=job.get("user_agent"),
+        )
+        linkedin_urn = profile.get("linkedin_urn")
+        if not linkedin_urn:
+            raise InvalidSessionError("LinkedIn identity was not returned")
+        existing = await db.outreach_accounts.find_one({
+            "id": sender_id, "workspace_id": workspace_id,
+        }) if job.get("reconnect") else None
+        if existing and existing.get("linkedin_urn") != linkedin_urn:
+            raise InvalidSessionError("Session belongs to a different sender")
+        if not existing:
+            duplicate = await db.outreach_accounts.find_one({
+                "workspace_id": workspace_id, "linkedin_urn": linkedin_urn,
+            })
+            if duplicate:
+                raise InvalidSessionError("Sender already exists; reconnect it instead")
+
+        # Payment and provider term may have changed during the network call.
+        if not await get_active_entitlement(db, workspace_id):
+            raise ValueError("paid_access_unavailable")
+        current_job = await db.outreach_connection_jobs.find_one({
+            "id": job_id, "workspace_id": workspace_id, "status": "running",
+        })
+        if not current_job:
+            raise ValueError("connection_job_expired")
+        refreshed = await db.outreach_proxy_inventory.find_one({"_id": job["proxy_id"]})
+        if not refreshed or not _utc(refreshed.get("expires_at")) or _utc(refreshed["expires_at"]) <= datetime.now(timezone.utc):
+            raise ValueError("provider_term_expired")
+
+        now = datetime.now(timezone.utc)
+        updates = {
+            "account_name": profile.get("account_name") or "LinkedIn sender",
+            "avatar_url": profile.get("avatar_url"),
+            "linkedin_urn": linkedin_urn,
+            "vanity_name": profile.get("vanity_name"),
+            "auth_mode": AccountAuthMode.COOKIE,
+            "session_cookie_enc": job["li_at_enc"],
+            "jsession_id": job["jsession_id_enc"],
+            "li_a_enc": job.get("li_a_enc") or "",
+            "premium_product": job.get("premium_product") or "classic",
+            "user_agent": job.get("user_agent") or "",
+            "country_code": job["country_code"],
+            "proxy": proxy.model_dump(), "status": AccountStatus.ACTIVE,
+            "updated_at": now,
+        }
+        if existing:
+            await db.outreach_accounts.update_one(
+                {"id": sender_id, "workspace_id": workspace_id},
+                {"$set": updates, "$unset": {"encrypted_session_cookie": "", "proxy_config": ""}},
+            )
+        else:
+            account = OutreachAccount(
+                id=sender_id, workspace_id=workspace_id, user_id=job["user_id"],
+                limits=DailyLimits(), created_at=now, **updates,
+            ).model_dump()
+            await db.outreach_accounts.insert_one(account)
+        # The paid period may end while identity verification or the DB write
+        # is in flight. Never leave a newly usable session behind in that case.
+        if not await get_active_entitlement(db, workspace_id):
+            await db.outreach_accounts.update_one(
+                {"id": sender_id, "workspace_id": workspace_id},
+                {"$set": {"status": "reauth_required", "updated_at": datetime.now(timezone.utc)},
+                 "$unset": {"session_cookie_enc": "", "encrypted_session_cookie": "", "jsession_id": "", "li_a_enc": ""}},
+            )
+            raise ValueError("paid_access_unavailable")
+        await db.outreach_connection_jobs.update_one(
+            {"id": job_id, "workspace_id": workspace_id},
+            {"$set": {"status": "completed", "account_id": sender_id, "updated_at": now},
+             "$unset": {"li_at_enc": "", "jsession_id_enc": "", "li_a_enc": ""}},
+        )
+        return {"status": "completed", "account_id": sender_id}
+    except Exception as exc:
+        # Never write exception strings: network errors may contain proxy credentials.
+        logger.error("Sender verification failed trace=%s reason=%s", trace_id, type(exc).__name__)
+        if isinstance(exc, InvalidSessionError):
+            error = "LinkedIn session was rejected or belongs to another sender. Recheck the session values."
+        elif isinstance(exc, ValueError) and str(exc) == "paid_access_unavailable":
+            error = "Paid sender access is no longer active."
+        elif isinstance(exc, ValueError) and str(exc) in {"provider_term_expired", "proxy_health_failed", "sender_capacity_unavailable"}:
+            error = "The assigned provider IP is unavailable. Contact support before retrying."
+        await db.outreach_connection_jobs.update_one(
+            {"id": job_id, "workspace_id": workspace_id},
+            {"$set": {"status": "failed", "error": error, "updated_at": datetime.now(timezone.utc)},
+             "$unset": {"li_at_enc": "", "jsession_id_enc": "", "li_a_enc": ""}},
+        )
+        if job.get("new_proxy_reservation"):
+            await release_sender_reservation(db, workspace_id, sender_id, job["proxy_id"])
+        if job.get("created_slot"):
+            await db.outreach_sender_slots.delete_one({"workspace_id": workspace_id, "sender_id": sender_id})
+        return {"status": "failed"}
+    finally:
+        await db.outreach_connection_locks.delete_one({"_id": sender_id, "job_id": job_id})
 
 
 async def _inbox_db():
@@ -38,6 +187,9 @@ async def _sync_inbox(job_id: str, workspace_id: str, user_id: str, account_id: 
     from outreach.engine.inbox_sync import InboxSynchronizer
 
     db = await _inbox_db()
+    if is_shutting_down() or not live_actions_enabled() or not await get_active_entitlement(db, workspace_id):
+        await _set_inbox_job(db, job_id, workspace_id, "failed", error="Paid outreach access is unavailable")
+        return {"status": "paid_access_required"}
     await _set_inbox_job(db, job_id, workspace_id, "running")
     try:
         syncer = InboxSynchronizer(db, workspace_id, user_id)
@@ -48,7 +200,7 @@ async def _sync_inbox(job_id: str, workspace_id: str, user_id: str, account_id: 
             await _set_inbox_job(db, job_id, workspace_id, "completed", result=result)
         return result
     except Exception as exc:
-        logger.exception("Inbox sync job %s failed", job_id)
+        logger.error("Inbox sync job %s failed (%s)", job_id, type(exc).__name__)
         await _set_inbox_job(db, job_id, workspace_id, "failed", error="LinkedIn inbox sync failed")
         raise
 
@@ -66,6 +218,9 @@ async def _send_inbox_reply(job_id: str, workspace_id: str, account_id: str, thr
     from outreach.models import MessageSenderType, OutreachInboxMessage
 
     db = await _inbox_db()
+    if is_shutting_down() or not live_actions_enabled():
+        await _set_inbox_job(db, job_id, workspace_id, "failed", error="Outreach sending is unavailable")
+        return {"status": "unavailable"}
     claim = await db.outreach_inbox_jobs.update_one(
         {"id": job_id, "workspace_id": workspace_id, "status": "queued"},
         {"$set": {"status": "running", "updated_at": datetime.now(timezone.utc)}},
@@ -77,6 +232,8 @@ async def _send_inbox_reply(job_id: str, workspace_id: str, account_id: str, thr
         account = await db.outreach_accounts.find_one({"id": account_id, "workspace_id": workspace_id, "status": "active"})
         if not thread or not account or not thread.get("conversation_urn"):
             raise ValueError("The conversation or its assigned sender is unavailable")
+        if not await sender_is_ready(db, workspace_id, account):
+            raise ValueError("Paid sender access or provider IP is unavailable")
         if thread.get("is_demo"):
             raise ValueError("Sample conversations cannot be sent to LinkedIn")
         cookie_enc = account.get("session_cookie_enc") or account.get("encrypted_session_cookie")
@@ -110,8 +267,8 @@ async def _send_inbox_reply(job_id: str, workspace_id: str, account_id: str, thr
         await _set_inbox_job(db, job_id, workspace_id, "completed", result={"message": message})
         return {"status": "sent", "message": message}
     except Exception as exc:
-        logger.exception("Inbox reply job %s failed", job_id)
-        await _set_inbox_job(db, job_id, workspace_id, "failed", error=str(exc)[:200])
+        logger.error("Inbox reply job %s failed (%s)", job_id, type(exc).__name__)
+        await _set_inbox_job(db, job_id, workspace_id, "failed", error="The reply could not be sent. Recheck the sender and try again.")
         raise
 
 _SCAN_INTERVAL_SECONDS = max(10, int(os.environ.get("OUTREACH_SCAN_INTERVAL_SECONDS", "30")))
@@ -119,6 +276,16 @@ _BATCH_SIZE = max(1, int(os.environ.get("OUTREACH_SCAN_BATCH_SIZE", "50")))
 _CLAIM_TIMEOUT_SECONDS = max(60, int(os.environ.get("OUTREACH_CLAIM_TIMEOUT_SECONDS", "600")))
 
 celery_app.conf.beat_schedule.update({
+    "expire-paid-outreach-entitlements": {
+        "task": "celery_workers.tasks.outreach.expire_entitlements",
+        "schedule": 60.0,
+        "options": {"queue": "outreach"},
+    },
+    "clean-stale-outreach-connections": {
+        "task": "celery_workers.tasks.outreach.clean_stale_connections",
+        "schedule": 300.0,
+        "options": {"queue": "outreach"},
+    },
     "run-due-linkedin-outreach-steps": {
         "task": "celery_workers.tasks.outreach.run_due_steps",
         "schedule": _SCAN_INTERVAL_SECONDS,
@@ -130,6 +297,54 @@ celery_app.conf.beat_schedule.update({
         "options": {"queue": "outreach"},
     },
 })
+
+
+@celery_app.task(name="celery_workers.tasks.outreach.expire_entitlements", queue="outreach", acks_late=True)
+def expire_entitlements() -> dict:
+    return run_async(_expire_entitlements())
+
+
+async def _expire_entitlements(db=None) -> dict:
+    from outreach.core.paid_access import expire_due_entitlements
+    if is_shutting_down():
+        return {"status": "shutting_down"}
+    db = db or await _inbox_db()
+    return {"expired": await expire_due_entitlements(db)}
+
+
+@celery_app.task(name="celery_workers.tasks.outreach.clean_stale_connections", queue="outreach", acks_late=True)
+def clean_stale_connections() -> dict:
+    return run_async(_clean_stale_connections())
+
+
+async def _clean_stale_connections(db=None) -> dict:
+    if is_shutting_down():
+        return {"status": "shutting_down"}
+    db = db or await _inbox_db()
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
+    stale = await db.outreach_connection_jobs.find({
+        "status": {"$in": ["queued", "running"]}, "created_at": {"$lt": cutoff},
+    }).to_list(length=100)
+    count = 0
+    for job in stale:
+        claimed = await db.outreach_connection_jobs.update_one(
+            {"id": job["id"], "workspace_id": job["workspace_id"],
+             "status": {"$in": ["queued", "running"]}},
+            {"$set": {"status": "failed", "error": "Verification timed out. Please retry.",
+                      "updated_at": datetime.now(timezone.utc)},
+             "$unset": {"li_at_enc": "", "jsession_id_enc": "", "li_a_enc": ""}},
+        )
+        if not claimed.modified_count:
+            continue
+        count += 1
+        if job.get("new_proxy_reservation"):
+            await release_sender_reservation(db, job["workspace_id"], job["sender_id"], job["proxy_id"])
+        if job.get("created_slot"):
+            await db.outreach_sender_slots.delete_one({
+                "workspace_id": job["workspace_id"], "sender_id": job["sender_id"],
+            })
+        await db.outreach_connection_locks.delete_one({"_id": job["sender_id"], "job_id": job["id"]})
+    return {"cleaned": count}
 
 
 @celery_app.task(name="celery_workers.tasks.outreach.run_warmup_launches", queue="outreach", acks_late=True)
@@ -168,7 +383,7 @@ async def _verify_auto_launch_senders(campaign: dict, db) -> None:
 
 
 async def _run_warmup_launches(db=None) -> dict:
-    if not conditional_auto_launch_enabled():
+    if not conditional_auto_launch_enabled() or not live_actions_enabled():
         return {"disabled": True, "checked": 0, "launched": 0}
     if is_shutting_down():
         return {"shutting_down": True, "checked": 0, "launched": 0}
@@ -274,6 +489,8 @@ async def _run_due_steps() -> dict:
     from outreach.models import LeadExecutionState
     from outreach.tasks.sequence_executor import SequenceExecutor
 
+    if is_shutting_down() or not live_actions_enabled():
+        return {"disabled": True, "claimed": 0, "completed": 0, "deferred": 0, "failed": 0}
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
     now = datetime.now(timezone.utc)
@@ -308,6 +525,8 @@ async def _run_due_steps() -> dict:
     counts = {"claimed": 0, "completed": 0, "deferred": 0, "failed": 0}
 
     for lead in candidates:
+        if is_shutting_down() or not live_actions_enabled():
+            break
         claim_filter = {
             "id": lead.get("id"),
             "campaign_id": lead.get("campaign_id"),
@@ -343,10 +562,10 @@ async def _run_due_steps() -> dict:
         try:
             result = await SequenceExecutor.execute_lead_step(lead["id"], db)
             result_status = result.get("status")
-            if result_status == "outside_working_hours":
+            if result_status in {"outside_working_hours", "paid_access_required"}:
                 await db.outreach_leads.update_one(
-                    {"id": lead["id"]},
-                    {"$set": {"next_action_due_at": now + timedelta(minutes=5)}},
+                    {"id": lead["id"], "workspace_id": lead["workspace_id"]},
+                    {"$set": {"next_action_due_at": now + timedelta(minutes=5 if result_status == "outside_working_hours" else 60)}},
                 )
                 counts["deferred"] += 1
             elif result_status == "rate_limited":
@@ -369,12 +588,12 @@ async def _run_due_steps() -> dict:
             else:
                 counts["completed"] += 1
         except Exception as exc:
-            logger.exception("Outreach step failed for lead %s", lead.get("id"))
+            logger.error("Outreach step failed for lead %s (%s)", lead.get("id"), type(exc).__name__)
             await db.outreach_leads.update_one(
                 {"id": lead.get("id")},
                 {"$set": {
                     "execution_state": LeadExecutionState.FAILED,
-                    "failure_reason": str(exc)[:500],
+                    "failure_reason": "Outreach action failed; review the sender and campaign before retrying.",
                     "updated_at": datetime.now(timezone.utc),
                 }},
             )

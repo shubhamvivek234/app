@@ -240,6 +240,7 @@ async def test_scheduler_never_launches_before_all_leads_are_ready(monkeypatch):
     from unittest.mock import patch
 
     monkeypatch.setenv("OUTREACH_CONDITIONAL_AUTO_LAUNCH_ENABLED", "true")
+    monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", "true")
     campaign = {"id": "campaign_1", "workspace_id": "workspace_1", "status": "warming_up",
                 "auto_launch_enabled": True, "auto_launch_claim_id": "claim_1"}
     db = SimpleNamespace(outreach_campaigns=SimpleNamespace(
@@ -262,6 +263,7 @@ async def test_scheduler_rechecks_sender_and_uses_shared_launch_validation(monke
     from unittest.mock import patch
 
     monkeypatch.setenv("OUTREACH_CONDITIONAL_AUTO_LAUNCH_ENABLED", "true")
+    monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", "true")
     stamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
     campaign = {
         "id": "campaign_1", "workspace_id": "workspace_1", "user_id": "owner",
@@ -295,6 +297,7 @@ async def test_scheduler_waits_outside_working_hours(monkeypatch):
     from unittest.mock import patch
 
     monkeypatch.setenv("OUTREACH_CONDITIONAL_AUTO_LAUNCH_ENABLED", "true")
+    monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", "true")
     campaign = {
         "id": "campaign_1", "workspace_id": "workspace_1", "status": "warming_up",
         "auto_launch_enabled": True, "auto_launch_list_id": "list_1",
@@ -324,6 +327,7 @@ async def test_sender_verification_error_does_not_expose_proxy_secrets(monkeypat
     from unittest.mock import patch
 
     monkeypatch.setenv("OUTREACH_CONDITIONAL_AUTO_LAUNCH_ENABLED", "true")
+    monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", "true")
     stamp = datetime.now(timezone.utc) - timedelta(days=1)
     campaign = {
         "id": "campaign_1", "workspace_id": "workspace_1", "user_id": "owner",

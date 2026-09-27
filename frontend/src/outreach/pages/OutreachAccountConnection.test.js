@@ -15,8 +15,11 @@ it('connects a verified session from the Accounts page and refreshes the sender 
   };
   global.fetch = jest.fn((url) => {
     if (url === '/api/v1/outreach/accounts/connect-cookie') {
+      return Promise.resolve({ ok: true, json: async () => ({ status: 'queued', job_id: 'job-1' }) });
+    }
+    if (url === '/api/v1/outreach/accounts/connection-jobs/job-1') {
       connected = true;
-      return Promise.resolve({ ok: true, json: async () => account });
+      return Promise.resolve({ ok: true, json: async () => ({ status: 'completed', account }) });
     }
     if (url === '/api/v1/outreach/accounts') {
       return Promise.resolve({ ok: true, json: async () => connected ? [account] : [] });
@@ -34,6 +37,11 @@ it('connects a verified session from the Accounts page and refreshes the sender 
     await act(async () => {
       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(input, 'li_at=AQvalid; JSESSIONID="ajax:123"');
       input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const country = container.querySelector('#linkedin-proxy-country');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(country, 'US');
+      country.dispatchEvent(new Event('input', { bubbles: true }));
     });
     await act(async () => container.querySelector('form').dispatchEvent(
       new Event('submit', { bubbles: true, cancelable: true })

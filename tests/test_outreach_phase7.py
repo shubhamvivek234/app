@@ -9,6 +9,8 @@ if not os.environ.get("ENCRYPTION_KEY"):
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("outreach_paid_gate_stub")
+
 
 @pytest.fixture(autouse=True)
 def sandbox_linkedin_sessions(monkeypatch):

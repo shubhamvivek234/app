@@ -16,6 +16,8 @@ if not os.environ.get("ENCRYPTION_KEY"):
     os.environ["ENCRYPTION_KEY"] = Fernet.generate_key().decode()
 
 import pytest
+
+pytestmark = pytest.mark.usefixtures("outreach_paid_gate_stub")
 from unittest.mock import AsyncMock, patch
 
 from outreach.core.dag_compiler import DAGCompiler, DAGValidationError

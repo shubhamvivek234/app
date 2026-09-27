@@ -142,6 +142,17 @@ async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
     await _safe_create_index(db.posting_sets, [("user_id", 1), ("created_at", 1)])
 
     # LinkedIn outreach analytics, swipe files, and unified inbox
+    await _safe_create_index(db.outreach_entitlements, [("workspace_id", 1)], unique=True)
+    await _safe_create_index(db.outreach_entitlements, [("status", 1), ("paid_through", 1)])
+    await _safe_create_index(db.outreach_access_requests, [("workspace_id", 1)], unique=True)
+    await _safe_create_index(db.outreach_sender_slots, [("workspace_id", 1), ("sender_id", 1)], unique=True)
+    await _safe_create_index(db.outreach_proxy_leases, [("workspace_id", 1), ("sender_id", 1)],
+                             unique=True, partialFilterExpression={"sender_id": {"$type": "string"}})
+    await _safe_create_index(db.outreach_proxy_inventory, [("provider", 1), ("country_code", 1), ("status", 1), ("expires_at", 1)])
+    await _safe_create_index(db.outreach_connection_jobs, [("workspace_id", 1), ("id", 1)], unique=True)
+    await _safe_create_index(db.outreach_connection_jobs, [("status", 1), ("created_at", 1)])
+    await _safe_create_index(db.outreach_connection_jobs, [("created_at", 1)], expireAfterSeconds=86400)
+    await _safe_create_index(db.outreach_accounts, [("workspace_id", 1), ("id", 1)], unique=True)
     await _safe_create_index(db.outreach_tasks, [("workspace_id", 1), ("id", 1)], unique=True)
     await _safe_create_index(db.outreach_tasks, [("workspace_id", 1), ("campaign_id", 1), ("task_type", 1), ("status", 1), ("updated_at", -1)])
     await _safe_create_index(db.outreach_leads, [("workspace_id", 1), ("campaign_id", 1), ("pipeline_stage", 1)])

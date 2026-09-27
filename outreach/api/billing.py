@@ -1,72 +1,33 @@
+"""Invite-only paid outreach pilot billing.
+
+There is no public checkout or trial. An operator verifies an external invoice
+and records a paid entitlement using the private operations command. Customer
+endpoints can request access or schedule cancellation, never grant access.
 """
-Phase 8: Decoupled Outbound Billing, Stripe Rate Cards & JIT Proxy Lifecycle Orchestrator.
-Matches Prosp rate cards (1-5, 6-30, >30 accounts; Annual, Quarterly, Monthly),
-4-day free trials, and enforces Zero-Cost-When-Idle proxy teardown upon subscription cancellation.
-"""
-import logging
-from typing import Any
-from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from datetime import datetime, timezone
+import re
+
+from fastapi import APIRouter, Depends, HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pydantic import BaseModel, Field
 
-from api.deps import get_current_user
+from api.deps import get_current_user, require_permission
 from db.mongo import get_db
-from outreach.core.proxy_manager import JITProxyManager
+from outreach.core.paid_access import (
+    PILOT_MAX_SENDERS, PRICE_USD_PER_SENDER_MONTH, entitlement_is_active,
+)
 
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/billing", tags=["LinkedIn Outreach Billing"])
 
-RATE_CARDS = [
-    {
-        "tier": "1-5",
-        "label": "1–5 accounts",
-        "min_seats": 1,
-        "max_seats": 5,
-        "annual": 61.99,
-        "quarterly": 69.99,
-        "monthly": 79.99,
-        "savings_annual": "save 23% • $240.79/yr back",
-        "savings_quarterly": "save 13% • $133.77/yr back",
-    },
-    {
-        "tier": "6-30",
-        "label": "6–30 accounts",
-        "min_seats": 6,
-        "max_seats": 30,
-        "annual": 45.99,
-        "quarterly": 52.99,
-        "monthly": 59.99,
-        "savings_annual": "save 23% • $168.00/yr back",
-        "savings_quarterly": "save 12% • $84.00/yr back",
-    },
-    {
-        "tier": "30+",
-        "label": "Over 30 accounts",
-        "min_seats": 31,
-        "max_seats": 1000,
-        "annual": 30.99,
-        "quarterly": 34.99,
-        "monthly": 39.99,
-        "savings_annual": "save 23% • $108.00/yr back",
-        "savings_quarterly": "save 13% • $60.00/yr back",
-    },
-]
 
-FEATURES_INCLUDED = [
-    "Unlimited campaigns, contacts, and messages",
-    "Every team member, free",
-    "Voice cloning",
-    "Unlimited LinkedIn accounts, each with a free proxy",
-    "Unified inbox across every account",
-    "Templates, analytics, API and webhooks",
-]
+def _workspace_id(user: dict) -> str:
+    return str(user.get("default_workspace_id") or user.get("user_id") or "")
 
 
 class StartTrialRequest(BaseModel):
     seats: int = Field(default=1, ge=1, le=100)
-    interval: str = Field(default="monthly", description="'annual', 'quarterly', or 'monthly'")
+    interval: str = "monthly"
 
 
 class UpdateSeatsRequest(BaseModel):
@@ -77,18 +38,15 @@ class UpdateBillingEmailRequest(BaseModel):
     billing_email: str
 
 
-def calculate_price_per_seat(seats: int, interval: str) -> float:
-    selected_tier = RATE_CARDS[0]
-    for tier in RATE_CARDS:
-        if tier["min_seats"] <= seats <= tier["max_seats"]:
-            selected_tier = tier
-            break
+class AccessRequest(BaseModel):
+    seats: int = Field(default=1, ge=1, le=PILOT_MAX_SENDERS)
+    country_code: str = Field(..., min_length=2, max_length=2, pattern=r"^[A-Za-z]{2}$")
 
-    interval_key = interval.lower()
-    if interval_key not in ("annual", "quarterly", "monthly"):
-        interval_key = "monthly"
 
-    return float(selected_tier[interval_key])
+def calculate_price_per_seat(seats: int, interval: str = "monthly") -> float:
+    if not 1 <= seats <= PILOT_MAX_SENDERS or interval != "monthly":
+        raise ValueError("Only 1–5 monthly pilot sender seats are offered")
+    return float(PRICE_USD_PER_SENDER_MONTH)
 
 
 @router.get("/plans")
@@ -96,59 +54,58 @@ async def get_outreach_plans(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """
-    Returns rate cards, included features, and active trial/subscription status.
-    """
-    user_id = current_user.get("user_id")
-    subscription = await db.outreach_subscriptions.find_one({"workspace_id": user_id})
-
-    now = datetime.now(timezone.utc)
-    trial_active = False
-    trial_days_remaining = 0
-
-    if subscription and subscription.get("trial_ends_at"):
-        trial_end = subscription["trial_ends_at"]
-        if isinstance(trial_end, str):
-            trial_end = datetime.fromisoformat(trial_end)
-        if trial_end.tzinfo is None:
-            trial_end = trial_end.replace(tzinfo=timezone.utc)
-        if trial_end > now:
-            trial_active = True
-            trial_days_remaining = max(1, (trial_end - now).days)
-
-    billing_email = (subscription or {}).get("billing_email") or current_user.get("email") or ""
-
+    workspace_id = _workspace_id(current_user)
+    entitlement = await db.outreach_entitlements.find_one({"workspace_id": workspace_id})
+    request = await db.outreach_access_requests.find_one({"workspace_id": workspace_id})
+    public_entitlement = {
+        key: entitlement.get(key) for key in (
+            "status", "seats", "paid_through", "cancel_at_period_end",
+            "price_usd_per_sender_month", "billing_email",
+        )
+    } if entitlement else {"status": "none", "seats": 0}
     return {
-        "rate_cards": RATE_CARDS,
-        "features_included": FEATURES_INCLUDED,
-        "billing_email": billing_email,
-        "subscription": subscription or {
-            "status": "none",
-            "seats": 1,
-            "interval": "monthly",
-            "trial_active": False,
-        },
-        "trial_active": trial_active,
-        "trial_days_remaining": trial_days_remaining,
+        "price_usd_per_sender_month": PRICE_USD_PER_SENDER_MONTH,
+        "currency": "USD", "interval": "monthly", "max_pilot_seats": PILOT_MAX_SENDERS,
+        "checkout_available": False, "trial_available": False,
+        "activation_mode": "managed_after_verified_payment",
+        "subscription": public_entitlement,
+        "access_active": entitlement_is_active(entitlement),
+        "access_request": {key: request.get(key) for key in ("seats", "country_code", "status")}
+        if request else None,
+        "billing_email": (entitlement or {}).get("billing_email") or current_user.get("email") or "",
     }
 
 
-@router.post("/billing-email")
+@router.post("/request-access", dependencies=[require_permission("billing:manage")])
+async def request_pilot_access(
+    req: AccessRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    workspace_id = _workspace_id(current_user)
+    now = datetime.now(timezone.utc)
+    await db.outreach_access_requests.update_one(
+        {"workspace_id": workspace_id},
+        {"$set": {"user_id": current_user.get("user_id"), "seats": req.seats,
+                  "country_code": req.country_code.upper(), "status": "pending_quote",
+                  "updated_at": now},
+         "$setOnInsert": {"created_at": now}},
+        upsert=True,
+    )
+    return {"status": "pending_quote", "message": "Request received. We will confirm country availability and cost before payment."}
+
+
+@router.post("/billing-email", dependencies=[require_permission("billing:manage")])
 async def update_billing_email(
     req: UpdateBillingEmailRequest,
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """
-    Updates the email address that receives Stripe receipts and invoices.
-    """
-    user_id = current_user.get("user_id")
     email = req.billing_email.strip().lower()
-    if not email or "@" not in email:
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
         raise HTTPException(status_code=400, detail="A valid billing email is required")
-
-    await db.outreach_subscriptions.update_one(
-        {"workspace_id": user_id},
+    await db.outreach_entitlements.update_one(
+        {"workspace_id": _workspace_id(current_user)},
         {"$set": {"billing_email": email, "updated_at": datetime.now(timezone.utc)}},
         upsert=True,
     )
@@ -161,38 +118,7 @@ async def start_outreach_trial(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """
-    Activates the 4-day free trial matching Part 3, Image 4.
-    """
-    user_id = current_user.get("user_id")
-    price_per_seat = calculate_price_per_seat(req.seats, req.interval)
-    trial_end = datetime.now(timezone.utc) + timedelta(days=4)
-
-    sub_doc = {
-        "workspace_id": user_id,
-        "seats": req.seats,
-        "interval": req.interval.lower(),
-        "price_per_seat": price_per_seat,
-        "status": "trialing",
-        "trial_started_at": datetime.now(timezone.utc),
-        "trial_ends_at": trial_end,
-        "created_at": datetime.now(timezone.utc),
-    }
-
-    await db.outreach_subscriptions.update_one(
-        {"workspace_id": user_id},
-        {"$set": sub_doc},
-        upsert=True,
-    )
-
-    return {
-        "status": "trial_activated",
-        "seats": req.seats,
-        "interval": req.interval,
-        "price_per_seat": price_per_seat,
-        "trial_ends_at": trial_end.isoformat(),
-        "trial_days_remaining": 4,
-    }
+    raise HTTPException(status_code=410, detail="The free trial is retired. Request managed pilot access instead.")
 
 
 @router.post("/update-seats")
@@ -201,78 +127,26 @@ async def update_seats(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """
-    Dynamically adjusts seat count and recalculates tier price.
-    """
-    user_id = current_user.get("user_id")
-    sub = await db.outreach_subscriptions.find_one({"workspace_id": user_id})
-    interval = sub.get("interval", "monthly") if sub else "monthly"
-
-    new_price = calculate_price_per_seat(req.seats, interval)
-    await db.outreach_subscriptions.update_one(
-        {"workspace_id": user_id},
-        {"$set": {"seats": req.seats, "price_per_seat": new_price}},
-        upsert=True,
-    )
-
-    return {"status": "success", "seats": req.seats, "price_per_seat": new_price}
+    raise HTTPException(status_code=410, detail="Seat changes require a verified invoice and operator approval.")
 
 
-@router.post("/cancel")
+@router.post("/cancel", dependencies=[require_permission("billing:manage")])
 async def cancel_subscription(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """
-    Cancels subscription and executes JIT Zero-Cost Proxy Teardown across all connected senders.
-    """
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
-    now = datetime.now(timezone.utc)
-
-    # Stop execution before removing network access from connected senders.
-    await db.outreach_campaigns.update_many(
-        {"workspace_id": workspace_id, "status": {"$in": ["active", "warming_up"]}},
-        {"$set": {"status": "paused", "auto_launch_enabled": False, "updated_at": now}},
+    workspace_id = _workspace_id(current_user)
+    entitlement = await db.outreach_entitlements.find_one({"workspace_id": workspace_id})
+    if not entitlement_is_active(entitlement):
+        raise HTTPException(status_code=409, detail="No active paid outreach period to cancel")
+    paid_through = entitlement["paid_through"]
+    if isinstance(paid_through, str):
+        paid_through = datetime.fromisoformat(paid_through.replace("Z", "+00:00"))
+    await db.outreach_entitlements.update_one(
+        {"workspace_id": workspace_id, "status": "active", "paid_through": entitlement["paid_through"]},
+        {"$set": {"cancel_at_period_end": True, "cancellation_requested_at": datetime.now(timezone.utc)}},
     )
-    await db.outreach_accounts.update_many(
-        {"workspace_id": workspace_id, "status": {"$in": ["active", "warming"]}},
-        {"$set": {"status": "paused", "updated_at": now}},
-    )
-    await db.outreach_tasks.update_many(
-        {"workspace_id": workspace_id, "status": {"$in": ["queued", "pending", "scheduled"]}},
-        {"$set": {"status": "cancelled", "cancellation_reason": "Outreach subscription canceled", "updated_at": now}},
-    )
-
-    # Update subscription
-    await db.outreach_subscriptions.update_one(
-        {"workspace_id": workspace_id},
-        {"$set": {"status": "canceled", "canceled_at": now}},
-    )
-
-    # Clear local assignments. Webshare bills its plan independently.
-    accounts = await db.outreach_accounts.find({"workspace_id": workspace_id}).to_list(1000)
-    cleared_assignments = 0
-    failed_assignment_clearances = 0
-
-    proxy_manager = JITProxyManager()
-    for acc in accounts:
-        proxy_data = acc.get("proxy") or acc.get("proxy_config")
-        proxy_id = (proxy_data or {}).get("proxy_id") if isinstance(proxy_data, dict) else getattr(proxy_data, "proxy_id", None)
-        if proxy_id:
-            if await proxy_manager.release_proxy(proxy_id):
-                await db.outreach_proxy_leases.delete_one({"_id": proxy_id, "workspace_id": workspace_id})
-                await db.outreach_accounts.update_one(
-                    {"id": acc["id"], "workspace_id": workspace_id},
-                    {"$unset": {"proxy": "", "proxy_config": ""}},
-                )
-                cleared_assignments += 1
-            else:
-                failed_assignment_clearances += 1
-
     return {
-        "status": "canceled_with_cleanup_errors" if failed_assignment_clearances else "canceled",
-        "cleared_proxy_assignments_count": cleared_assignments,
-        "failed_proxy_assignment_clearances": failed_assignment_clearances,
-        "message": ("Subscription canceled, but some proxy assignments could not be cleared. Contact support to finish cleanup."
-                    if failed_assignment_clearances else "Subscription canceled. Sender proxy assignments were cleared; manage the Webshare plan separately."),
+        "status": "cancellation_scheduled", "paid_through": paid_through.isoformat(),
+        "message": "Outreach stays available until the paid period ends. The sender IP remains reserved through its already-paid provider term. Our operator must disable provider auto-renewal separately.",
     }

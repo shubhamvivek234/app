@@ -4,6 +4,8 @@ import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+pytestmark = pytest.mark.usefixtures("outreach_paid_gate_stub")
 from cryptography.fernet import Fernet
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -254,8 +256,9 @@ async def test_inbox_sync_is_queued_and_job_status_is_workspace_scoped():
 
 
 @pytest.mark.asyncio
-async def test_inbox_worker_records_only_confirmed_reply():
+async def test_inbox_worker_records_only_confirmed_reply(monkeypatch):
     from celery_workers.tasks.outreach import _send_inbox_reply
+    monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", "true")
 
     db = MagicMock()
     db.outreach_inbox_jobs.update_one = AsyncMock(return_value=MagicMock(modified_count=1))

@@ -55,8 +55,8 @@ describe('LinkedIn sender session connection', () => {
     expect(container.textContent).toContain('dedicated residential proxy');
     expect(container.textContent).toContain('Treat session cookies like a password');
     expect(container.textContent).toContain('encrypted before storage');
-    expect(container.querySelector('#linkedin-proxy-country').value).toBe('US');
-    expect(container.textContent).toContain('purchased proxy');
+    expect(container.querySelector('#linkedin-proxy-country').value).toBe('');
+    expect(container.textContent).toContain('country approved for this sender seat');
     expect(container.querySelectorAll('form')).toHaveLength(1);
     expect(container.querySelector('input[type="email"]')).toBeNull();
     expect(container.querySelector('input[name="password"]')).toBeNull();
@@ -98,20 +98,23 @@ describe('LinkedIn sender session connection', () => {
   });
 
   it('verifies pasted session values and reports only a confirmed account', async () => {
-    global.fetch = jest.fn(() => Promise.resolve({ ok: true, json: async () => ({ id: 'sender-1' }) }));
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ job_id: 'job-1', status: 'queued' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', account: { id: 'sender-1' } }) });
     const onAccountConnected = jest.fn();
     const onClose = jest.fn();
     await renderModal({ onClose, onAccountConnected });
     await enterValue('linkedin-li-at', 'li_at=AQvalid; JSESSIONID="ajax:123"; li_a=nav-token');
+    await enterValue('linkedin-proxy-country', 'IN');
     await submit();
 
-    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
     const [url, options] = global.fetch.mock.calls[0];
     expect(url).toBe('/api/v1/outreach/accounts/connect-cookie');
     expect(options.credentials).toBe('include');
     expect(JSON.parse(options.body)).toMatchObject({
       li_at: 'AQvalid', jsession_id: 'ajax:123', li_a: 'nav-token',
-      country_code: 'US', premium_product: 'classic',
+      country_code: 'IN', premium_product: 'classic',
     });
     expect(onAccountConnected).toHaveBeenCalledWith({ id: 'sender-1' });
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -144,6 +147,7 @@ describe('LinkedIn sender session connection', () => {
     const onAccountConnected = jest.fn();
     await renderModal({ onAccountConnected });
     await enterValue('linkedin-li-at', 'li_at=AQexpired; JSESSIONID="ajax:123"');
+    await enterValue('linkedin-proxy-country', 'IN');
     await submit();
 
     expect(container.querySelector('[role="alert"]').textContent).toContain('LinkedIn session expired');
@@ -159,6 +163,7 @@ describe('LinkedIn sender session connection', () => {
     await enterValue('linkedin-jsession', 'JSESSIONID="ajax:direct"');
     await enterValue('linkedin-li-a', 'li_a=nav-direct');
     await enterValue('linkedin-user-agent', 'Test browser agent');
+    await enterValue('linkedin-proxy-country', 'IN');
     await act(async () => {
       const product = container.querySelector('#linkedin-premium-product');
       product.value = 'sales_navigator';
@@ -179,8 +184,9 @@ describe('LinkedIn sender session connection', () => {
     const onAccountConnected = jest.fn();
     await renderModal({ onAccountConnected });
     await enterValue('linkedin-li-at', 'li_at=AQvalid; JSESSIONID="ajax:123"');
+    await enterValue('linkedin-proxy-country', 'IN');
     await submit();
-    expect(container.querySelector('[role="alert"]').textContent).toContain('not confirmed');
+    expect(container.querySelector('[role="alert"]').textContent).toContain('not queued');
     expect(onAccountConnected).not.toHaveBeenCalled();
   });
 
@@ -188,6 +194,7 @@ describe('LinkedIn sender session connection', () => {
     global.fetch = jest.fn(() => Promise.reject(new Error('Connection unavailable')));
     await renderModal();
     await enterValue('linkedin-li-at', 'li_at=AQvalid; JSESSIONID="ajax:123"');
+    await enterValue('linkedin-proxy-country', 'IN');
     await submit();
     expect(container.querySelector('[role="alert"]').textContent).toContain('Connection unavailable');
     expect(container.querySelector('button[type="submit"]').disabled).toBe(false);
@@ -197,6 +204,7 @@ describe('LinkedIn sender session connection', () => {
     global.fetch = jest.fn(() => Promise.resolve({ ok: false, json: async () => null }));
     await renderModal();
     await enterValue('linkedin-li-at', 'li_at=AQexpired; JSESSIONID="ajax:123"');
+    await enterValue('linkedin-proxy-country', 'IN');
     await submit();
     expect(container.querySelector('[role="alert"]').textContent).toContain('LinkedIn session verification failed');
   });
@@ -206,6 +214,7 @@ describe('LinkedIn sender session connection', () => {
     global.fetch = jest.fn(() => new Promise((resolve) => { finishRequest = resolve; }));
     await renderModal();
     await enterValue('linkedin-li-at', 'li_at=AQvalid; JSESSIONID="ajax:123"');
+    await enterValue('linkedin-proxy-country', 'IN');
     await act(async () => {
       const form = container.querySelector('form');
       form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));

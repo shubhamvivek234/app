@@ -125,6 +125,9 @@ async def _resolve_sender_account(
                 status_code=400,
                 detail="No active LinkedIn account connected. Connect an account in Settings before engaging.",
             )
+    from outreach.core.paid_access import sender_is_ready
+    if not await sender_is_ready(db, workspace_id, account):
+        raise HTTPException(status_code=402, detail="Paid sender access or the assigned provider IP is unavailable")
     return account
 
 
@@ -143,13 +146,12 @@ async def _require_voyager_success(result: dict, expected: str, account: dict, d
 
 def _build_voyager(account: dict) -> VoyagerClient:
     """Build VoyagerClient from a resolved account document."""
-    from outreach.core.crypto import decrypt_secret
+    from outreach.core.proxy_manager import JITProxyManager
 
     proxy_cfg = account.get("proxy") or {}
-    proxy_url = None
-    if proxy_cfg.get("host"):
-        proxy_pass = decrypt_secret(proxy_cfg.get("password_enc", ""))
-        proxy_url = f"http://{proxy_cfg.get('username', '')}:{proxy_pass}@{proxy_cfg['host']}:{proxy_cfg.get('port', 8080)}"
+    if not proxy_cfg.get("host"):
+        raise RuntimeError("Sender has no assigned provider IP")
+    proxy_url = JITProxyManager.format_proxy_url(proxy_cfg)
 
     return VoyagerClient(
         session_cookie_enc=account.get("session_cookie_enc", ""),

@@ -9,6 +9,8 @@ if not os.environ.get("ENCRYPTION_KEY"):
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("outreach_paid_gate_stub")
+
 
 @pytest.fixture(autouse=True)
 def sandbox_linkedin_sessions(monkeypatch):
@@ -156,6 +158,7 @@ async def test_sequence_executor_handles_voice_note_step():
     mock_db = AsyncMock()
     mock_db.outreach_leads.find_one = AsyncMock(return_value={
         "id": "lead_voice_1",
+        "workspace_id": "ws_123",
         "campaign_id": "camp_voice_1",
         "assigned_account_id": "acc_voice_1",
         "linkedin_url": "https://linkedin.com/in/alexprospect",

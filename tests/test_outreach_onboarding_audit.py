@@ -3,6 +3,8 @@ import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+pytestmark = pytest.mark.usefixtures("outreach_paid_gate_stub")
 import httpx
 from cryptography.fernet import Fernet
 from fastapi import FastAPI, HTTPException
@@ -66,13 +68,13 @@ def test_live_voyager_cannot_treat_a_mock_cookie_as_a_real_sender(monkeypatch):
 @pytest.mark.asyncio
 async def test_retired_credential_endpoints_reject_without_parsing_password_or_allocating_proxy(monkeypatch):
     monkeypatch.delenv("OUTREACH_MOCK_AUTH", raising=False)
-    with patch("outreach.api.accounts.JITProxyManager") as proxy:
+    with patch("outreach.api.connection_jobs.reserve_sender_proxy", new_callable=AsyncMock) as proxy:
         with pytest.raises(HTTPException) as start_error:
             await login_start(current_user=USER)
         with pytest.raises(HTTPException) as verify_error:
             await login_verify_2fa(current_user=USER)
     assert start_error.value.status_code == verify_error.value.status_code == 410
-    proxy.assert_not_called()
+    proxy.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -91,74 +93,59 @@ async def test_retired_credential_http_routes_do_not_parse_request_bodies():
 
 
 @pytest.mark.asyncio
-async def test_session_connection_http_route_verifies_and_returns_no_secrets(monkeypatch):
-    monkeypatch.setenv("OUTREACH_MOCK_AUTH", "true")
-    monkeypatch.setenv("WEBSHARE_API_KEY", "mock")
+async def test_session_connection_requires_verified_paid_access(monkeypatch):
+    monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", "true")
     db = MagicMock()
-    db.outreach_accounts.find_one = AsyncMock(return_value=None)
-    db.outreach_accounts.insert_one = AsyncMock()
-    app = FastAPI()
-    app.include_router(accounts_router, prefix="/api/v1/outreach")
-    app.dependency_overrides[get_current_user] = lambda: USER
-    app.dependency_overrides[get_db] = lambda: db
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.post(
-            "/api/v1/outreach/accounts/connect-cookie",
-            json={"li_at": "mock_account", "jsession_id": "ajax:private-csrf", "country_code": "US"},
-        )
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "active"
-    assert response.json()["workspace_id"] == USER["default_workspace_id"]
-    assert all(key not in response.json() for key in ("session_cookie_enc", "li_a_enc", "jsession_id"))
-    stored = db.outreach_accounts.insert_one.call_args.args[0]
-    assert decrypt_secret(stored["session_cookie_enc"]) == "mock_account"
-    assert decrypt_secret(stored["jsession_id"]) == "ajax:private-csrf"
+    db.outreach_entitlements.find_one = AsyncMock(return_value=None)
+    with patch("outreach.api.connection_jobs.reserve_sender_proxy", new_callable=AsyncMock) as reserve:
+        with pytest.raises(HTTPException) as error:
+            await connect_via_cookie(
+                ConnectCookieRequest(li_at="AQprivate", jsession_id="ajax:private", country_code="IN"),
+                current_user=USER, db=db,
+            )
+    assert error.value.status_code == 402
+    reserve.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_cookie_connect_uses_authenticated_workspace_not_payload(monkeypatch):
-    monkeypatch.setenv("OUTREACH_MOCK_AUTH", "true")
+async def test_connection_job_status_is_workspace_scoped_and_secret_free():
+    from outreach.api.accounts import get_connection_job
     db = MagicMock()
-    db.outreach_accounts.find_one = AsyncMock(return_value=None)
-    db.outreach_accounts.insert_one = AsyncMock()
-    result = await connect_via_cookie(
-        ConnectCookieRequest(li_at="mock_workspace_a", workspace_id="workspace_b"), current_user=USER, db=db,
-    )
-    assert result["workspace_id"] == "workspace_a"
-    assert db.outreach_accounts.insert_one.call_args.args[0]["workspace_id"] == "workspace_a"
-
-
-@pytest.mark.asyncio
-async def test_cookie_connect_encrypts_csrf_cookie_at_rest(monkeypatch):
-    monkeypatch.setenv("OUTREACH_MOCK_AUTH", "true")
-    db = MagicMock()
-    db.outreach_accounts.find_one = AsyncMock(return_value=None)
-    db.outreach_accounts.insert_one = AsyncMock()
-    result = await connect_via_cookie(
-        ConnectCookieRequest(li_at="mock_workspace_a", jsession_id="ajax:private-csrf"),
-        current_user=USER, db=db,
-    )
-    stored = db.outreach_accounts.insert_one.call_args.args[0]
-    assert stored["jsession_id"] != "ajax:private-csrf"
-    assert decrypt_secret(stored["jsession_id"]) == "ajax:private-csrf"
-    assert "jsession_id" not in result
+    db.outreach_connection_jobs.find_one = AsyncMock(return_value={
+        "id": "job-1", "workspace_id": "workspace_a", "status": "completed",
+        "account_id": "sender-1", "li_at_enc": "encrypted-secret",
+    })
+    db.outreach_accounts.find_one = AsyncMock(return_value={
+        "id": "sender-1", "workspace_id": "workspace_a",
+        "session_cookie_enc": "secret", "jsession_id": "csrf",
+        "proxy": {"username": "pilot", "password_enc": "password", "host": "191.116.125.248"},
+    })
+    result = await get_connection_job("job-1", current_user=USER, db=db)
+    assert db.outreach_connection_jobs.find_one.await_args.args[0]["workspace_id"] == "workspace_a"
+    assert "li_at_enc" not in result
+    assert "session_cookie_enc" not in result["account"]
+    assert "jsession_id" not in result["account"]
+    assert "password_enc" not in result["account"]["proxy"]
 
 
 @pytest.mark.asyncio
 async def test_live_cookie_connect_rejects_missing_csrf_before_proxy_allocation(monkeypatch):
-    monkeypatch.delenv("OUTREACH_MOCK_AUTH", raising=False)
-    with patch("outreach.api.accounts.JITProxyManager") as proxy:
+    from datetime import datetime, timedelta, timezone
+    monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", "true")
+    db = MagicMock()
+    db.outreach_entitlements.find_one = AsyncMock(return_value={
+        "workspace_id": "workspace_a", "status": "active", "seats": 1,
+        "payment_source": "manual_verified_invoice",
+        "paid_through": datetime.now(timezone.utc) + timedelta(days=30),
+    })
+    with patch("outreach.api.connection_jobs.reserve_sender_proxy", new_callable=AsyncMock) as reserve:
         with pytest.raises(HTTPException) as error:
             await connect_via_cookie(
-                ConnectCookieRequest(li_at="AQsession-value", jsession_id=""),
-                current_user=USER, db=MagicMock(),
+                ConnectCookieRequest(li_at="AQsession-value", jsession_id="", country_code="IN"),
+                current_user=USER, db=db,
             )
     assert error.value.status_code == 400
-    proxy.assert_not_called()
-
-
+    reserve.assert_not_awaited()
 def test_voyager_decrypts_new_csrf_cookie_and_accepts_legacy_plaintext(monkeypatch):
     monkeypatch.setenv("OUTREACH_MOCK_AUTH", "true")
     encrypted = encrypt_secret("ajax:private-csrf")
@@ -169,19 +156,37 @@ def test_voyager_decrypts_new_csrf_cookie_and_accepts_legacy_plaintext(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_cookie_connect_releases_new_proxy_if_account_save_fails(monkeypatch):
-    monkeypatch.setenv("OUTREACH_MOCK_AUTH", "true")
-    monkeypatch.setenv("WEBSHARE_API_KEY", "mock")
+async def test_queue_failure_releases_new_reservation_and_sender_slot(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+    monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", "true")
     db = MagicMock()
-    db.outreach_accounts.find_one = AsyncMock(return_value=None)
-    db.outreach_accounts.insert_one = AsyncMock(side_effect=RuntimeError("database unavailable"))
-    with patch("outreach.api.accounts.JITProxyManager.release_proxy", new_callable=AsyncMock) as release_proxy:
-        release_proxy.return_value = True
+    db.outreach_entitlements.find_one = AsyncMock(return_value={
+        "workspace_id": "workspace_a", "status": "active", "seats": 1,
+        "payment_source": "manual_verified_invoice",
+        "paid_through": datetime.now(timezone.utc) + timedelta(days=30),
+    })
+    db.outreach_sender_slots.insert_one = AsyncMock()
+    db.outreach_sender_slots.delete_one = AsyncMock()
+    db.outreach_connection_locks.insert_one = AsyncMock()
+    db.outreach_connection_locks.delete_one = AsyncMock()
+    db.outreach_proxy_leases.find_one = AsyncMock(return_value=None)
+    db.outreach_connection_jobs.insert_one = AsyncMock()
+    db.outreach_connection_jobs.delete_one = AsyncMock()
+    with patch("outreach.api.connection_jobs.reserve_sender_proxy", new_callable=AsyncMock,
+               return_value=SimpleNamespace(proxy_id="iproyal:one")), patch(
+        "outreach.api.connection_jobs.release_sender_reservation", new_callable=AsyncMock,
+    ) as release, patch(
+        "outreach.api.connection_jobs._enqueue_connection_job", side_effect=RuntimeError("broker unavailable"),
+    ):
         with pytest.raises(RuntimeError):
-            await connect_via_cookie(ConnectCookieRequest(li_at="mock_cookie"), current_user=USER, db=db)
-        release_proxy.assert_awaited_once()
-
-
+            await connect_via_cookie(
+                ConnectCookieRequest(li_at="AQprivate", jsession_id="ajax:csrf", country_code="IN"),
+                current_user=USER, db=db,
+            )
+    release.assert_awaited_once()
+    db.outreach_sender_slots.delete_one.assert_awaited_once()
+    db.outreach_connection_locks.delete_one.assert_awaited_once()
 @pytest.mark.asyncio
 async def test_account_list_is_workspace_scoped_and_does_not_return_secrets():
     db = MagicMock()
@@ -197,26 +202,22 @@ async def test_account_list_is_workspace_scoped_and_does_not_return_secrets():
 
 
 @pytest.mark.asyncio
-async def test_disconnect_pauses_sender_before_releasing_proxy_and_keeps_retry_path():
+async def test_disconnect_pauses_sender_and_retains_paid_term_proxy():
     db = MagicMock()
     db.outreach_accounts.find_one = AsyncMock(return_value={
         "id": "account_a", "workspace_id": "workspace_a", "status": "active",
-        "proxy": {"proxy_id": "proxy_a"},
+        "proxy": {"proxy_id": "iproyal:one"},
     })
     operations = []
     db.outreach_accounts.update_one = AsyncMock(side_effect=lambda *args: operations.append("deactivate"))
     db.outreach_campaigns.update_many = AsyncMock(side_effect=lambda *args: operations.append("pause"))
     db.outreach_tasks.update_many = AsyncMock(side_effect=lambda *args: operations.append("cancel"))
-    db.outreach_accounts.delete_one = AsyncMock()
-    with patch("outreach.api.accounts.JITProxyManager") as manager:
-        manager.return_value.release_proxy = AsyncMock(side_effect=lambda *args: operations.append("release") or False)
-        with pytest.raises(HTTPException) as exc:
-            await disconnect_account("account_a", current_user=USER, db=db)
-    assert exc.value.status_code == 502
-    assert operations == ["deactivate", "pause", "cancel", "release"]
+    result = await disconnect_account("account_a", current_user=USER, db=db)
+    assert result["status"] == "success"
+    assert operations == ["deactivate", "pause", "cancel"]
+    db.outreach_proxy_leases.delete_one.assert_not_called()
     db.outreach_accounts.delete_one.assert_not_called()
-
-
+    assert "session_cookie_enc" in db.outreach_accounts.update_one.await_args.args[1]["$unset"]
 @pytest.mark.asyncio
 async def test_launch_rejects_active_campaign_before_changing_anything():
     db = MagicMock()

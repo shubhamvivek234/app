@@ -16,6 +16,7 @@ from outreach.core.dag_compiler import DAGCompiler, contains_ai_prompt_token
 from outreach.core.lead_importer import normalize_linkedin_url
 from outreach.core.crypto import decrypt_secret
 from outreach.core.rate_limiter import OutboundRateLimiter
+from outreach.core.paid_access import get_active_entitlement, sender_is_ready
 from outreach.models import (
     CampaignStatus,
     DailyLimits,
@@ -408,7 +409,6 @@ async def get_campaign(
     campaign = await db.outreach_campaigns.find_one(_campaign_filter(campaign_id, current_user))
     if not campaign:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
-
     campaign.pop("_id", None)
 
     # Lead counts
@@ -699,6 +699,8 @@ async def _launch_campaign_impl(
     campaign = await db.outreach_campaigns.find_one(campaign_filter)
     if not campaign:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+    if not await get_active_entitlement(db, _workspace_id(current_user)):
+        raise HTTPException(status_code=402, detail="A verified paid outreach period is required to launch campaigns")
     if campaign.get("status") == CampaignStatus.ACTIVE:
         raise HTTPException(status_code=409, detail="Campaign is already active")
     allowed_statuses = {CampaignStatus.DRAFT, CampaignStatus.PAUSED}
@@ -749,6 +751,8 @@ async def _launch_campaign_impl(
     mock_mode = os.getenv("OUTREACH_MOCK_AUTH", "false").lower() in {"true", "1"}
     active_sender_ids = set()
     for account in active_senders:
+        if not await sender_is_ready(db, _workspace_id(current_user), account):
+            continue
         encrypted_cookie = account.get("session_cookie_enc") or account.get("encrypted_session_cookie")
         proxy_host = (account.get("proxy") or account.get("proxy_config") or {}).get("host")
         if not encrypted_cookie or (not mock_mode and (not account.get("jsession_id") or not proxy_host or proxy_host in {"127.0.0.1", "localhost"})):

@@ -37,7 +37,7 @@ export default function OutreachAccounts() {
   }, []);
 
   const handleDisconnect = async (accountId) => {
-    if (!window.confirm('Are you sure you want to disconnect this account? Its proxy assignment will be cleared, but your proxy provider may continue billing until you cancel or change that plan.')) {
+    if (!window.confirm('Disconnect this sender and pause its campaigns? Its session is removed, but the paid-term IP stays reserved for this sender until its provider term ends.')) {
       return;
     }
     try {
@@ -48,8 +48,9 @@ export default function OutreachAccounts() {
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Could not disconnect account');
-      setAccounts((current) => current.filter((account) => account.id !== accountId));
-      toast.success('LinkedIn sender disconnected');
+      setAccounts((current) => current.map((account) => account.id === accountId
+        ? { ...account, status: 'disconnected' } : account));
+      toast.success('Sender disconnected. Its paid-term IP remains reserved.');
     } catch (err) {
       toast.error(err.message || 'Could not disconnect account');
     }
@@ -143,13 +144,13 @@ export default function OutreachAccounts() {
                   >
                     <RefreshCw className="h-4 w-4" />
                   </button>
-                  <button
+                  {acc.status !== 'disconnected' && <button
                     onClick={() => handleDisconnect(acc.id)}
                     title="Disconnect account"
                     className="rounded-lg p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
                   >
                     <Trash2 className="h-4 w-4" />
-                  </button>
+                  </button>}
                 </div>
               </div>
 

@@ -13,6 +13,7 @@ from outreach.api.engage import (
     comment_engage_post, like_engage_post,
 )
 from outreach.core.safety_shield import SafetyShield
+from outreach.core.paid_access import sender_is_ready
 from outreach.engine.voyager_client import VoyagerRestrictionError
 from outreach.models import EngagePost
 
@@ -59,7 +60,7 @@ def enrich_contacts(list_id: str, workspace_id: str, account_id: str) -> dict:
     try:
         return run_async(_enrich_contacts(list_id, workspace_id, account_id))
     except Exception as exc:
-        logger.exception("Engage enrichment failed for list %s", list_id)
+        logger.error("Engage enrichment failed for list %s (%s)", list_id, type(exc).__name__)
         run_async(_mark_job_failed(list_id, workspace_id, "enrichment_status", exc))
         raise
 
@@ -68,7 +69,7 @@ async def _mark_job_failed(list_id: str, workspace_id: str, status_field: str, e
     db = await _db()
     await db.outreach_engage_lists.update_one(
         {"id": list_id, "workspace_id": workspace_id},
-        {"$set": {status_field: "failed", "fetch_error": str(exc)[:200]}},
+        {"$set": {status_field: "failed", "fetch_error": "Sender action could not be completed. Review the account and retry."}},
     )
 
 
@@ -81,6 +82,9 @@ async def _enrich_contacts(list_id: str, workspace_id: str, account_id: str) -> 
     if not account:
         await _mark_job_failed(list_id, workspace_id, "enrichment_status", RuntimeError("Sender account is unavailable"))
         return {"status": "account_unavailable"}
+    if not await sender_is_ready(db, workspace_id, account):
+        await _mark_job_failed(list_id, workspace_id, "enrichment_status", RuntimeError("Paid sender access is unavailable"))
+        return {"status": "paid_access_required"}
     voyager = _build_voyager(account)
     await db.outreach_engage_lists.update_one(
         {"id": list_id, "workspace_id": workspace_id}, {"$set": {"enrichment_status": "running"}},
@@ -95,6 +99,9 @@ async def _enrich_contacts(list_id: str, workspace_id: str, account_id: str) -> 
         if is_shutting_down():
             stopped = True
             break
+        if not await sender_is_ready(db, workspace_id, account):
+            stopped = True
+            break
         try:
             result = await _enrich_one(contact, db, voyager, workspace_id)
             if result["status"] == "restricted":
@@ -106,7 +113,7 @@ async def _enrich_contacts(list_id: str, workspace_id: str, account_id: str) -> 
             verified += result["status"] == "verified"
             unverified += result["status"] == "unverified"
         except Exception:
-            logger.exception("Could not enrich Engage contact %s", contact.get("id"))
+            logger.error("Could not enrich Engage contact %s", contact.get("id"))
             unverified += 1
     await db.outreach_engage_lists.update_one(
         {"id": list_id, "workspace_id": workspace_id},
@@ -120,7 +127,7 @@ def fetch_posts(list_id: str, workspace_id: str, account_id: str) -> dict:
     try:
         return run_async(_fetch_posts(list_id, workspace_id, account_id))
     except Exception as exc:
-        logger.exception("Engage fetch failed for list %s", list_id)
+        logger.error("Engage fetch failed for list %s (%s)", list_id, type(exc).__name__)
         run_async(_mark_job_failed(list_id, workspace_id, "fetch_status", exc))
         raise
 
@@ -135,17 +142,24 @@ async def _fetch_posts(list_id: str, workspace_id: str, account_id: str) -> dict
     if not account:
         await db.outreach_engage_lists.update_one(query, {"$set": {"fetch_status": "failed", "fetch_error": "Sender account is unavailable."}})
         return {"status": "account_unavailable"}
+    if not await sender_is_ready(db, workspace_id, account):
+        await db.outreach_engage_lists.update_one(query, {"$set": {"fetch_status": "failed", "fetch_error": "Paid sender access or provider IP is unavailable."}})
+        return {"status": "paid_access_required"}
     voyager = _build_voyager(account)
     await db.outreach_engage_lists.update_one(query, {"$set": {"fetch_status": "running"}})
     contacts = await db.outreach_engage_contacts.find({"list_id": list_id, "workspace_id": workspace_id}).to_list(1000)
     semaphore = asyncio.Semaphore(3)
     counts = {"fetched": 0, "unverified": 0, "failed": 0}
     restricted = False
+    access_lost = False
 
     async def fetch_one(contact: dict) -> None:
-        nonlocal restricted
+        nonlocal restricted, access_lost
         async with semaphore:
-            if is_shutting_down() or restricted:
+            if is_shutting_down() or restricted or access_lost:
+                return
+            if not await sender_is_ready(db, workspace_id, account):
+                access_lost = True
                 return
             try:
                 profile_urn = contact.get("profile_urn") if contact.get("enrichment_status") == "verified" else None
@@ -159,6 +173,9 @@ async def _fetch_posts(list_id: str, workspace_id: str, account_id: str) -> dict
                     contact = {**contact, **result}
                 if not profile_urn:
                     counts["unverified"] += 1
+                    return
+                if not await sender_is_ready(db, workspace_id, account):
+                    access_lost = True
                     return
                 updates = await voyager.fetch_profile_recent_updates(profile_urn, count=3)
                 for update in updates:
@@ -187,20 +204,24 @@ async def _fetch_posts(list_id: str, workspace_id: str, account_id: str) -> dict
                 )
             except Exception as exc:
                 counts["failed"] += 1
-                logger.exception("Could not fetch Engage posts for contact %s", contact.get("id"))
+                logger.error("Could not fetch Engage posts for contact %s (%s)", contact.get("id"), type(exc).__name__)
                 if isinstance(exc, VoyagerRestrictionError):
                     restricted = True
                     await SafetyShield.trip_circuit_breaker(account_id, "Post fetch restricted by LinkedIn", db, workspace_id)
 
     for offset in range(0, len(contacts), 30):
-        if is_shutting_down() or restricted:
+        if is_shutting_down() or restricted or access_lost:
+            break
+        if not await sender_is_ready(db, workspace_id, account):
+            access_lost = True
             break
         await asyncio.gather(*(fetch_one(contact) for contact in contacts[offset:offset + 30]))
 
     pending = await db.outreach_engage_posts.count_documents({"list_id": list_id, "workspace_id": workspace_id, "status": "pending"})
     all_unusable = bool(contacts) and counts["fetched"] == 0 and counts["failed"] + counts["unverified"] == len(contacts)
-    final_status = "failed" if restricted or is_shutting_down() or all_unusable else "complete"
+    final_status = "failed" if restricted or access_lost or is_shutting_down() or all_unusable else "complete"
     error = ("Sender restricted; account paused." if restricted else
+             "Paid sender access or provider IP is unavailable." if access_lost else
              "All contacts failed or could not be verified. Check sender connection and profile URLs." if all_unusable else
              "Worker is shutting down." if is_shutting_down() else "")
     await db.outreach_engage_lists.update_one(query, {"$set": {
@@ -251,7 +272,7 @@ async def _perform_action(post_id: str, workspace_id: str, account_id: str,
     except Exception as exc:
         message = exc.detail if isinstance(exc, HTTPException) else "LinkedIn action failed. Please retry after checking the sender."
         await db.outreach_engage_posts.update_one(claim_query, {"$set": {"action_error": str(message)[:200]}})
-        logger.exception("Engage %s failed for post %s", action, post_id)
+        logger.error("Engage %s failed for post %s (%s)", action, post_id, type(exc).__name__)
         return {"status": "failed", "error": str(message)[:200]}
     finally:
         await db.outreach_engage_posts.update_one(claim_query, {"$unset": {"action_queued_at": "", "action_id": ""}})
