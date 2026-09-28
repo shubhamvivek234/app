@@ -66,6 +66,7 @@ class DailyLimits(BaseModel):
     follows: int = Field(default=20, ge=0, le=100)
     post_likes: int = Field(default=20, ge=0, le=100)
     comments: int = Field(default=20, ge=0, le=100)
+    email_sends: int = Field(default=20, ge=0, le=100)
 
 
 class DailyCounters(BaseModel):
@@ -79,6 +80,7 @@ class DailyCounters(BaseModel):
     follows: int = 0
     post_likes: int = 0
     comments: int = 0
+    email_sends: int = 0
 
 
 class OutreachAccount(BaseModel):
@@ -169,11 +171,14 @@ class SequenceNodeType(str, Enum):
     COMMENT_LAST_POST = "comment_last_post"
     REPLY_TO_COMMENT = "reply_to_comment"
     ENDORSE_SKILLS = "endorse_skills"
+    FIND_EMAIL = "find_email"
+    SEND_EMAIL = "send_email"
     # Conditions & Triggers
     IF_CONNECTED = "if_connected"
     IF_OPENED_MESSAGE = "if_opened_message"
     OPEN_PROFILE_CHECK = "open_profile_check"
     HAS_DATA_IN_COLUMN = "has_data_in_column"
+    IF_EMAIL_AVAILABLE = "if_email_available"
 
 
 class SequenceNode(BaseModel):
@@ -467,3 +472,59 @@ class SwipeFileItem(BaseModel):
     comments_count: int = 0
     is_archived: bool = False
     created_at: datetime = Field(default_factory=utc_now)
+
+
+# ── Webhooks, Public API & Third-Party Integrations ───────────────────────
+
+class WebhookEvent(str, Enum):
+    LEAD_CREATED = "lead.created"
+    LEAD_REPLIED = "lead.replied"
+    CONNECTION_ACCEPTED = "lead.connection_accepted"
+    LEAD_STAGE_CHANGED = "lead.stage_changed"
+    CAMPAIGN_PAUSED = "campaign.paused"
+
+
+class OutreachWebhook(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=generate_uuid)
+    workspace_id: str
+    target_url: str
+    secret_enc: str = ""
+    events: list[str] = Field(default_factory=lambda: [
+        WebhookEvent.LEAD_REPLIED.value,
+        WebhookEvent.CONNECTION_ACCEPTED.value,
+    ])
+    status: str = "active"  # active, degraded, disabled
+    consecutive_failures: int = 0
+    last_delivery_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class OutreachApiKey(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=generate_uuid)
+    workspace_id: str
+    name: str
+    key_hash: str
+    key_prefix: str
+    scopes: list[str] = Field(default_factory=lambda: ["leads:write", "campaigns:read"])
+    last_used_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class OutreachIntegration(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=generate_uuid)
+    workspace_id: str
+    provider: str  # slack, hubspot, google_sheets
+    status: str = "connected"  # connected, error, disabled
+    access_token_enc: str = ""
+    refresh_token_enc: str = ""
+    token_expires_at: datetime | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)

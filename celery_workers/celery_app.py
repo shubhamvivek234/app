@@ -132,6 +132,7 @@ _TASK_MODULES = (
     "celery_workers.tasks.auto_plug",
     "celery_workers.tasks.outreach",
     "celery_workers.tasks.engage",
+    "celery_workers.tasks.mailbox",
 )
 
 _SCHEDULE_MODULES = (
@@ -143,6 +144,7 @@ _SCHEDULE_MODULES = (
     "celery_workers.tasks.rss_poller",
     "celery_workers.tasks.auto_plug",
     "celery_workers.tasks.outreach",
+    "celery_workers.tasks.mailbox",
 )
 
 # ── App factory ──────────────────────────────────────────────────────────────

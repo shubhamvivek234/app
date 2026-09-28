@@ -10,7 +10,7 @@ export default function OutreachAccounts() {
   const [modalOpen, setModalOpen] = useState(false);
   const [reconnectAccount, setReconnectAccount] = useState(null);
   const [editingLimitsId, setEditingLimitsId] = useState(null);
-  const [limitsForm, setLimitsForm] = useState({ connection_invites: 20, messages: 20 });
+  const [limitsForm, setLimitsForm] = useState({ connection_invites: 20, messages: 20, email_sends: 20 });
 
   const fetchAccounts = async () => {
     setLoading(true);
@@ -173,6 +173,7 @@ export default function OutreachAccounts() {
                       setLimitsForm({
                         connection_invites: acc.limits?.connection_invites ?? 20,
                         messages: acc.limits?.messages ?? 20,
+                        email_sends: acc.limits?.email_sends ?? 20,
                       });
                     }}
                     className="text-xs font-medium text-indigo-600 hover:text-indigo-800 inline-flex items-center gap-1"
@@ -203,6 +204,17 @@ export default function OutreachAccounts() {
                         min={0}
                         value={limitsForm.messages}
                         onChange={(e) => setLimitsForm({ ...limitsForm, messages: parseInt(e.target.value) || 0 })}
+                        className="w-20 text-center rounded-lg border border-gray-300 py-1 text-xs"
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-600">Email sends/day:</span>
+                      <input
+                        type="number"
+                        max={35}
+                        min={0}
+                        value={limitsForm.email_sends}
+                        onChange={(e) => setLimitsForm({ ...limitsForm, email_sends: parseInt(e.target.value, 10) || 0 })}
                         className="w-20 text-center rounded-lg border border-gray-300 py-1 text-xs"
                       />
                     </div>

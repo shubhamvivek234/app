@@ -4,7 +4,10 @@
 ## Current Phase
 Stage: Paid outreach pilot deployed behind disabled live-action flag
 Branch: main
-Focus: Verify purchased IPRoyal sender seats, billing ops, and live smoke before enabling actions
+Focus: Verify purchased IPRoyal seats and the local mailbox pilot before enabling live actions
+
+## Coding Tool Preference
+- Use Headroom (https://github.com/headroomlabs-ai/headroom) for Codex coding sessions when supported. The documented automatic path is `headroom wrap codex` for Codex CLI; Headroom MCP tools provide on-demand compression in compatible Codex hosts. Verify the integration is active before claiming token savings.
 
 ## Last Session Completed
 Date: 2026-09-28
@@ -28,6 +31,15 @@ Completed:
 - Safety fixes: real IPRoyal health checks cannot be bypassed by mock Webshare config; paid connection rejects mock LinkedIn auth; unpaid draft editing remains available. Operator runbook in `docs/OUTREACH_PROXY_PROVIDERS.md`.
 - Verification before commit: 179 outreach backend tests, 47 outreach frontend tests, production frontend build, Python compile, Bandit, and diff check pass. Build has existing dependency/Tailwind/source-map warnings. Broad backend suite still fails in unrelated `tests/test_account_erasure.py` missing `query_string` test scope.
 - Deployment: pushed `24f52c5` to `origin/main`; EC2 backend pulled and rebuilt API, beat, MCP, worker, worker_media, worker_video. Docker reports API/MCP healthy. Internal `/health` OK and `/ready` degraded only for existing `auth_password_reset` custom-link-domain check. Public `/health` is intentionally Nginx-blocked.
+- Built a separate static `outreach-site/` for future `unravler.io`: responsive landing page, $59/sender/month pilot pricing, contact, privacy, terms, billing/cancellation, cookies, deletion, and 404 pages. Uses existing Unravler wordmark and original optimized artwork; no public trial/checkout or live-action promise.
+- Added Dripify-style interactive Features mega menu dropdown and 9 dedicated feature pages: `features.html`, `feature-sequences.html`, `feature-leads.html`, `feature-engage.html`, `feature-personalization.html`, `feature-inbox.html`, `feature-safety.html`, `feature-analytics.html`, `feature-teams.html`.
+- `outreach-site` verification: 6/6 Node tests pass including all 18 HTML pages, link checks, and compliance filters; desktop/mobile browser screenshots verified.
+
+## Current Local Work (not committed or deployed)
+- Added gated Gmail/Microsoft mailbox OAuth, encrypted tokens, reply/bounce sync, one-to-one email sending, Hunter email finding, and an admin action-review queue for uncertain sends.
+- Sequence capability catalog enables only verified runners; InMail, Follow, Comment, Reply to comment, and Endorse skills remain unavailable. Experimental public integrations remain off.
+- All new mailbox, send, sync, Hunter, and integration flags default false. Provider approval, credentials, consented live tests, and product/legal review remain required.
+- Verification: 252 outreach backend tests and 67 frontend tests pass; production build, Python compile, Bandit, Compose config, and diff check pass. Broad backend suite has 5 unrelated failures (4 sandbox DNS, 1 synthetic Starlette scope).
 
 ## Active Work
 Next:
@@ -42,6 +54,8 @@ Next:
 - Sequence pre-warming automation (`LIKE_LAST_POST`, `COMMENT_LAST_POST` in executor).
 - Content Writing Styles UI (`OutreachStyles.js`).
 - Auto-Plug scheduled first comments in post composer.
+- Before publishing `unravler.io`: acquire/configure domain and static host, review outreach legal/order terms, confirm support mailbox, add canonical/SEO metadata, and align any scheduler-customer discount with billing enforcement. Current site CTA uses mailto for manual pilot requests.
+- Before mailbox pilot: configure provider OAuth callbacks on the frontend origin, verify browser cookie forwarding, test Gmail/Microsoft with consented recipients, and confirm revocation, bounce, opt-out, seat expiry, and uncertain-send recovery live.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.

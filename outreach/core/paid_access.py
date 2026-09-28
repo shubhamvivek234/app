@@ -118,18 +118,26 @@ async def expire_due_entitlements(db, *, now: datetime | None = None, limit: int
     """Stop all active work at paid-through; retain provider IP until its term ends."""
     now = now or datetime.now(timezone.utc)
     due = await db.outreach_entitlements.find({
-        "status": "active", "paid_through": {"$lte": now},
+        "paid_through": {"$lte": now},
+        "$or": [
+            {"status": "active"},
+            {"status": "expired", "expiry_cleanup_completed_at": {"$exists": False}},
+        ],
     }).to_list(length=limit)
     expired = 0
     for doc in due:
         workspace_id = doc["workspace_id"]
-        changed = await db.outreach_entitlements.update_one(
-            {"workspace_id": workspace_id, "status": "active", "paid_through": {"$lte": now}},
-            {"$set": {"status": "expired", "expired_at": now, "updated_at": now}},
-        )
-        if not changed.modified_count:
-            continue
-        expired += 1
+        if doc.get("status") == "active":
+            changed = await db.outreach_entitlements.update_one(
+                {"workspace_id": workspace_id, "status": "active", "paid_through": {"$lte": now}},
+                {
+                    "$set": {"status": "expired", "expired_at": now, "updated_at": now},
+                    "$unset": {"expiry_cleanup_completed_at": ""},
+                },
+            )
+            if not changed.modified_count:
+                continue
+            expired += 1
         await db.outreach_campaigns.update_many(
             {"workspace_id": workspace_id, "status": {"$in": ["active", "warming_up"]}},
             {"$set": {"status": "paused", "auto_launch_enabled": False, "updated_at": now}},
@@ -142,6 +150,24 @@ async def expire_due_entitlements(db, *, now: datetime | None = None, limit: int
             {"workspace_id": workspace_id},
             {"$unset": {"session_cookie_enc": "", "encrypted_session_cookie": "", "jsession_id": "", "li_a_enc": ""}},
         )
+        # Mailbox OAuth access is tied to the same paid sender seat. Keep the
+        # mailbox record for a future reconnect, but do not retain usable
+        # credentials or an in-flight authorization after the paid term ends.
+        await db.outreach_mailboxes.update_many(
+            {"workspace_id": workspace_id},
+            {
+                "$set": {"status": "reauth_required", "updated_at": now},
+                "$unset": {"access_token_enc": "", "refresh_token_enc": ""},
+            },
+        )
+        await db.outreach_mailbox_connection_jobs.update_many(
+            {"workspace_id": workspace_id, "status": {"$in": ["pending", "queued", "running"]}},
+            {
+                "$set": {"status": "failed", "error": "Paid sender access has ended", "updated_at": now},
+                "$unset": {"authorization_code_enc": "", "code_verifier_enc": ""},
+            },
+        )
+        await db.outreach_mailbox_oauth_states.delete_many({"workspace_id": workspace_id})
         await db.outreach_tasks.update_many(
             {"workspace_id": workspace_id, "status": {"$in": ["queued", "pending", "scheduled"]}},
             {"$set": {"status": "cancelled", "cancellation_reason": "Paid outreach period ended", "updated_at": now}},
@@ -169,6 +195,13 @@ async def expire_due_entitlements(db, *, now: datetime | None = None, limit: int
                 await db.outreach_connection_locks.delete_one({
                     "_id": job["sender_id"], "job_id": job["id"],
                 })
+        # If any cleanup call above fails, the expired entitlement remains
+        # eligible for another pass. Without this marker, a crash after the
+        # status transition could strand valid OAuth credentials indefinitely.
+        await db.outreach_entitlements.update_one(
+            {"workspace_id": workspace_id, "status": "expired", "paid_through": {"$lte": now}},
+            {"$set": {"expiry_cleanup_completed_at": now}},
+        )
         # No proxy lease or paid provider term is deleted here. An operator
         # manages provider auto-renewal and expiry independently.
     return expired

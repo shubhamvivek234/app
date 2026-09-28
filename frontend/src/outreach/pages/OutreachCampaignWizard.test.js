@@ -63,6 +63,17 @@ describe('First campaign wizard', () => {
     expect([...container.querySelectorAll('button')].some((button) => button.textContent.includes('Retry'))).toBe(true);
   });
 
+  it('shows a configurable email daily limit in sender review', async () => {
+    global.fetch = jest.fn((url) => Promise.resolve({
+      ok: true,
+      json: async () => url.includes('/auto-draft')
+        ? { id: 'campaign-saved', name: 'First campaign' }
+        : url.endsWith('/accounts') ? [{ id: 'sender-a', status: 'active' }] : { leads: [], total: 0 },
+    }));
+    await act(async () => root.render(<OutreachCampaignWizard campaignId="new" initialStep={3} />));
+    expect(container.textContent).toContain('Email sends');
+  });
+
   it('does not open an editable sequence for an active campaign', async () => {
     global.fetch = jest.fn((url) => Promise.resolve({
       ok: true,
@@ -168,5 +179,25 @@ describe('First campaign wizard', () => {
     expect(armCall).toBeTruthy();
     expect(JSON.parse(armCall[1].body)).toEqual({ engage_list_id: 'list-1', warmup_hours: 24 });
     expect(global.fetch.mock.calls.some(([url]) => url === '/api/v1/outreach/campaigns/campaign-saved/launch')).toBe(false);
+  });
+
+  it('keeps the launch review open and shows the backend capability blocker', async () => {
+    global.fetch = jest.fn((url) => Promise.resolve({
+      ok: !url.endsWith('/launch'),
+      json: async () => url.includes('/auto-draft')
+        ? { id: 'campaign-saved', name: 'First campaign' }
+        : url.endsWith('/accounts')
+          ? [{ id: 'sender-a', status: 'active', account_name: 'Sam Sender' }]
+          : url.includes('/leads')
+            ? { leads: [{ id: 'lead-1' }], total: 1 }
+            : url.endsWith('/launch')
+              ? { detail: 'Send email requires a connected mailbox.' }
+              : {},
+    }));
+    await act(async () => root.render(<OutreachCampaignWizard campaignId="new" initialStep={3} />));
+    await act(async () => [...container.querySelectorAll('button')].find((button) => button.textContent.includes('Launch Campaign')).click());
+    await act(async () => [...container.querySelectorAll('button')].find((button) => button.textContent.includes('Confirm and Launch')).click());
+    expect(container.textContent).toContain('Send email requires a connected mailbox.');
+    expect(container.textContent).toContain('Review campaign launch');
   });
 });

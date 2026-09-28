@@ -17,6 +17,7 @@ from outreach.core.proxy_manager import JITProxyManager
 from outreach.engine.session_authenticator import SessionAuthenticator, InvalidSessionError
 from outreach.core.crypto import decrypt_secret
 from outreach.core.paid_access import get_active_entitlement, live_actions_enabled, sender_is_ready, _utc
+from outreach.core.sequence_capabilities import sequence_dispatch_enabled
 from outreach.core.managed_proxy import _proxy_from_inventory, release_sender_reservation
 from outreach.models import AccountAuthMode, AccountStatus, DailyLimits, OutreachAccount
 
@@ -489,7 +490,7 @@ async def _run_due_steps() -> dict:
     from outreach.models import LeadExecutionState
     from outreach.tasks.sequence_executor import SequenceExecutor
 
-    if is_shutting_down() or not live_actions_enabled():
+    if is_shutting_down() or not sequence_dispatch_enabled():
         return {"disabled": True, "claimed": 0, "completed": 0, "deferred": 0, "failed": 0}
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
@@ -525,7 +526,7 @@ async def _run_due_steps() -> dict:
     counts = {"claimed": 0, "completed": 0, "deferred": 0, "failed": 0}
 
     for lead in candidates:
-        if is_shutting_down() or not live_actions_enabled():
+        if is_shutting_down() or not sequence_dispatch_enabled():
             break
         claim_filter = {
             "id": lead.get("id"),
@@ -562,10 +563,17 @@ async def _run_due_steps() -> dict:
         try:
             result = await SequenceExecutor.execute_lead_step(lead["id"], db)
             result_status = result.get("status")
-            if result_status in {"outside_working_hours", "paid_access_required"}:
+            if result_status in {"outside_working_hours", "paid_access_required",
+                                 "mailbox_unavailable", "action_disabled"}:
+                retry_minutes = {
+                    "outside_working_hours": 5,
+                    "mailbox_unavailable": 30,
+                    "paid_access_required": 60,
+                    "action_disabled": 60,
+                }[result_status]
                 await db.outreach_leads.update_one(
                     {"id": lead["id"], "workspace_id": lead["workspace_id"]},
-                    {"$set": {"next_action_due_at": now + timedelta(minutes=5 if result_status == "outside_working_hours" else 60)}},
+                    {"$set": {"next_action_due_at": now + timedelta(minutes=retry_minutes)}},
                 )
                 counts["deferred"] += 1
             elif result_status == "rate_limited":

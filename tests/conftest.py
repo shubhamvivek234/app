@@ -11,6 +11,9 @@ import pytest
 
 @pytest.fixture
 def outreach_paid_gate_stub(monkeypatch):
+    # Legacy execution tests model a deployment explicitly enabled for live
+    # actions; production remains disabled unless the operator opts in.
+    monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", "true")
     ready = AsyncMock(return_value=True)
     entitled = AsyncMock(return_value={"workspace_id": "test", "status": "active", "seats": 1})
     for target in (
@@ -25,6 +28,7 @@ def outreach_paid_gate_stub(monkeypatch):
     for target in (
         "outreach.core.paid_access.get_active_entitlement",
         "outreach.api.campaigns.get_active_entitlement",
+        "outreach.tasks.sequence_executor.get_active_entitlement",
         "celery_workers.tasks.outreach.get_active_entitlement",
     ):
         monkeypatch.setattr(target, entitled)

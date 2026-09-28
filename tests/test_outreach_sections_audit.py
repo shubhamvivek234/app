@@ -83,6 +83,7 @@ async def test_confirmed_sequence_action_is_recorded_once_for_analytics():
         }}},
     })
     db.outreach_leads.update_one = AsyncMock()
+    db.outreach_tasks.insert_one = AsyncMock()
     db.outreach_tasks.update_one = AsyncMock()
     with patch("outreach.tasks.sequence_executor.OutboundRateLimiter.is_within_working_hours", return_value=True), \
          patch("outreach.tasks.sequence_executor.OutboundRateLimiter.check_and_increment_daily_limit", new_callable=AsyncMock, return_value=True), \
@@ -91,10 +92,12 @@ async def test_confirmed_sequence_action_is_recorded_once_for_analytics():
         result = await SequenceExecutor.execute_lead_step("lead_a", db)
 
     assert result["status"] == "success"
+    claimed = db.outreach_tasks.insert_one.await_args.args[0]
+    assert claimed["id"] == "lead_a:node_a"
+    assert claimed["status"] == "dispatching"
     event_query, event_update = db.outreach_tasks.update_one.call_args.args
-    assert event_query == {"id": "lead_a:node_a", "workspace_id": "workspace_a"}
-    assert event_update["$setOnInsert"]["task_type"] == "connection_request"
-    assert db.outreach_tasks.update_one.call_args.kwargs["upsert"] is True
+    assert event_query == {"id": "lead_a:node_a", "workspace_id": "workspace_a", "status": "dispatching"}
+    assert event_update["$set"]["status"] == "completed"
 
 
 def test_swipe_rejects_blank_copy_and_non_web_links():

@@ -16,6 +16,7 @@ from outreach.core.dag_compiler import DAGCompiler, contains_ai_prompt_token
 from outreach.core.lead_importer import normalize_linkedin_url
 from outreach.core.crypto import decrypt_secret
 from outreach.core.rate_limiter import OutboundRateLimiter
+from outreach.core.sequence_capabilities import sequence_capabilities, sequence_capability_map
 from outreach.core.paid_access import get_active_entitlement, sender_is_ready
 from outreach.models import (
     CampaignStatus,
@@ -29,6 +30,12 @@ from outreach.models import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/campaigns", tags=["LinkedIn Outreach Campaigns"])
+
+
+@router.get("/features/sequence-capabilities")
+async def get_sequence_capabilities(current_user: dict = Depends(get_current_user)):
+    """Editor capabilities; sender-specific launch checks happen on launch."""
+    return {"capabilities": sequence_capabilities()}
 
 
 async def _fetch_cursor_docs(cursor_or_coro: Any, length: int = 10000) -> list[dict[str, Any]]:
@@ -736,6 +743,18 @@ async def _launch_campaign_impl(
             updates["limits"] = limits
             campaign["limits"] = limits
 
+    seq = await db.outreach_sequences.find_one({
+        "campaign_id": campaign_id, "workspace_id": _workspace_id(current_user),
+        "is_deleted": {"$ne": True},
+    })
+    sequence_types = {node.get("type") for node in (seq or {}).get("nodes", []) if isinstance(node, dict)}
+    capability_map = sequence_capability_map()
+    # A missing saved sequence still falls back to a LinkedIn template below.
+    needs_linkedin = not sequence_types or any(
+        capability_map.get(node_type, {}).get("channel") != "email" for node_type in sequence_types
+    )
+    needs_mailbox = "send_email" in sequence_types
+
     senders = list(dict.fromkeys(campaign.get("sender_account_ids", [])))
     if not senders:
         raise HTTPException(
@@ -751,23 +770,35 @@ async def _launch_campaign_impl(
     mock_mode = os.getenv("OUTREACH_MOCK_AUTH", "false").lower() in {"true", "1"}
     active_sender_ids = set()
     for account in active_senders:
-        if not await sender_is_ready(db, _workspace_id(current_user), account):
-            continue
-        encrypted_cookie = account.get("session_cookie_enc") or account.get("encrypted_session_cookie")
-        proxy_host = (account.get("proxy") or account.get("proxy_config") or {}).get("host")
-        if not encrypted_cookie or (not mock_mode and (not account.get("jsession_id") or not proxy_host or proxy_host in {"127.0.0.1", "localhost"})):
-            continue
-        try:
-            cookie = decrypt_secret(encrypted_cookie).removeprefix("li_at=")
-        except Exception:
-            continue
-        if not cookie or (not mock_mode and cookie.startswith(("mock_", "test_"))):
-            continue
+        if needs_linkedin:
+            if not await sender_is_ready(db, _workspace_id(current_user), account):
+                continue
+            encrypted_cookie = account.get("session_cookie_enc") or account.get("encrypted_session_cookie")
+            proxy_host = (account.get("proxy") or account.get("proxy_config") or {}).get("host")
+            if not encrypted_cookie or (not mock_mode and (not account.get("jsession_id") or not proxy_host or proxy_host in {"127.0.0.1", "localhost"})):
+                continue
+            try:
+                cookie = decrypt_secret(encrypted_cookie).removeprefix("li_at=")
+            except Exception:
+                continue
+            if not cookie or (not mock_mode and cookie.startswith(("mock_", "test_"))):
+                continue
+        else:
+            slot = await db.outreach_sender_slots.find_one({
+                "workspace_id": _workspace_id(current_user), "sender_id": account.get("id"),
+            })
+            if not slot:
+                continue
+        if needs_mailbox:
+            from outreach.core.mailbox_connection import get_ready_mailbox
+
+            if not await get_ready_mailbox(db, _workspace_id(current_user), account["id"]):
+                continue
         active_sender_ids.add(account.get("id"))
     if active_sender_ids != set(senders):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="One or more selected LinkedIn sender accounts are unavailable. Re-select an active sender.",
+            detail="One or more selected sender accounts or mailboxes are unavailable. Recheck the account connection.",
         )
 
     if not OutboundRateLimiter.has_valid_working_window(campaign.get("schedule")):
@@ -783,7 +814,6 @@ async def _launch_campaign_impl(
     updates["limits"] = campaign["limits"]
 
     # 1. Ensure Sequence DAG is compiled for this campaign
-    seq = await db.outreach_sequences.find_one({"campaign_id": campaign_id, "workspace_id": _workspace_id(current_user), "is_deleted": {"$ne": True}})
     root_node_id = None
     if seq and isinstance(seq, dict) and seq.get("nodes"):
         if contains_ai_prompt_token(seq.get("nodes")):
@@ -795,18 +825,30 @@ async def _launch_campaign_impl(
             compiled = DAGCompiler.validate_and_compile(seq.get("nodes", []), seq.get("edges", []))
         except Exception as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Sequence is invalid: {exc}") from exc
+        capabilities = sequence_capability_map()
         unsupported = sorted({
             node.get("type") for node in seq.get("nodes", [])
-            if node.get("type") not in {
-                "visit_profile", "connection_request", "send_message", "like_last_post",
-                "voice_note", "if_connected",
-            }
+            if not capabilities.get(node.get("type"), {}).get("supported")
         })
         if unsupported:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"These sequence steps are not supported by the campaign runner yet: {', '.join(unsupported)}. Remove or replace them before launching.",
             )
+        disabled = sorted({
+            node.get("type") for node in seq.get("nodes", [])
+            if not capabilities[node.get("type")]["live_enabled"]
+        })
+        if disabled:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"These sequence steps are not enabled for live execution: {', '.join(disabled)}.",
+            )
+        for node in seq.get("nodes", []):
+            if node.get("type") == "send_email":
+                config = node.get("config") or {}
+                if not all(isinstance(config.get(key), str) and config[key].strip() for key in ("subject", "body")):
+                    raise HTTPException(status_code=400, detail="Email steps need a nonempty subject and body.")
         await db.outreach_sequences.update_one(
             {"campaign_id": campaign_id, "workspace_id": _workspace_id(current_user)},
             {"$set": {"compiled_dag": compiled, "is_deleted": False, "updated_at": datetime.now(timezone.utc)}}

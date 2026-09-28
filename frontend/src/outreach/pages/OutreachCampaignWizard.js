@@ -122,6 +122,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
   const [leadsModalOpen, setLeadsModalOpen] = useState(false);
   const [connectModalOpen, setConnectModalOpen] = useState(false);
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  const [launchError, setLaunchError] = useState('');
   const [timezone, setTimezone] = useState('UTC');
   const [isLaunching, setIsLaunching] = useState(false);
   const [conditionalLaunchEnabled, setConditionalLaunchEnabled] = useState(false);
@@ -150,6 +151,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
     follows: 20,
     post_likes: 20,
     comments: 20,
+    email_sends: 20,
   });
 
   const handleLimitChange = (key, delta) => {
@@ -169,6 +171,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
       follows: 20,
       post_likes: 20,
       comments: 20,
+      email_sends: 20,
     });
     showToast('Reset to safe defaults (20/day)');
   };
@@ -438,6 +441,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
   }, [currentStep]);
 
   const handleLaunch = async () => {
+    setLaunchError('');
     if (!campaignName.trim()) {
       toast.error('Add a campaign name before launching.');
       return;
@@ -495,7 +499,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
       });
       if (!res.ok) {
         const error = await res.json().catch(() => ({}));
-        throw new Error(error.detail || 'Campaign could not be launched.');
+        throw new Error(typeof error.detail === 'string' ? error.detail : 'Campaign could not be launched.');
       }
       setReviewModalOpen(false);
       showToast(autoLaunchAfterWarmup
@@ -507,7 +511,9 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
       }, 1000);
     } catch (err) {
       console.error('Launch failed:', err);
-      toast.error(err.message || 'Campaign could not be launched.');
+      const message = err.message || 'Campaign could not be launched.';
+      setLaunchError(message);
+      toast.error(message);
     } finally {
       setIsLaunching(false);
     }
@@ -1194,6 +1200,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                     { key: 'follows', label: 'Follows', def: 20, supported: false },
                     { key: 'post_likes', label: 'Post likes', def: 20 },
                     { key: 'comments', label: 'Comments', def: 20, supported: false },
+                    { key: 'email_sends', label: 'Email sends', def: 20 },
                   ].map((item) => (
                     <div key={item.key} className="flex items-center justify-between py-2.5">
                       <div>
@@ -1281,7 +1288,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
               {/* Bottom CTA Button matching media_1790103490135.png */}
               <button
                 type="button"
-                onClick={() => setReviewModalOpen(true)}
+                onClick={() => { setLaunchError(''); setReviewModalOpen(true); }}
                 className="w-full py-4 bg-[#5851ea] hover:bg-[#4a42e0] text-white font-semibold text-sm rounded-2xl flex items-center justify-center gap-2 shadow-sm transition-all active:scale-[0.99] cursor-pointer"
               >
                 <span>Review and launch →</span>
@@ -1337,6 +1344,12 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                 Linked Engage list: {engageLists.find((list) => list.id === selectedEngageListId)?.name || 'Not selected'} · {warmupHours}-hour cooldown. You can pause before activation.
               </div>}
             </div>
+
+            {launchError && (
+              <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                <span className="font-bold">Cannot launch yet: </span>{launchError}
+              </div>
+            )}
 
             <div className="flex items-center gap-3 pt-2">
               <button

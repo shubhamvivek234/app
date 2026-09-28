@@ -84,6 +84,12 @@ function isBackendFetchTarget(input) {
 }
 
 export function backendFetchUrl(url) {
+  // Mailbox OAuth uses a first-party reverse proxy so its HttpOnly browser
+  // binding cookie survives the provider's top-level callback. Do not send
+  // this path directly to the API host on a different site.
+  if (typeof url === 'string' && (url === '/api/v1/outreach/mailboxes' || url.startsWith('/api/v1/outreach/mailboxes/'))) {
+    return url;
+  }
   return typeof url === 'string' && url.startsWith('/api/') && BACKEND_URL
     ? `${BACKEND_URL}${url}`
     : url;

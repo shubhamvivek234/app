@@ -81,6 +81,20 @@ describe('OutreachSettings page', () => {
     expect(container.textContent).toContain('charlie@example.com');
   });
 
+  it('opens the sender mailbox settings from its own navigation tab', async () => {
+    global.fetch = jest.fn((url) => {
+      if (url === '/api/v1/outreach/billing/plans') return Promise.resolve(ok({}));
+      if (url === '/api/v1/outreach/accounts') return Promise.resolve(ok([{ id: 'sender-a', account_name: 'Sam' }]));
+      if (url === '/api/v1/outreach/mailboxes/hunter-key') return Promise.resolve(ok({ configured: false, enabled: false }));
+      if (url === '/api/v1/outreach/mailboxes') return Promise.resolve(ok({ mailboxes: [], connection_enabled: false, send_enabled: false, sync_enabled: false }));
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    await act(async () => root.render(<OutreachSettings initialTab="accounts" />));
+    await act(async () => [...container.querySelectorAll('button')].find((button) => button.textContent === 'Email mailboxes').click());
+    expect(container.textContent).toContain('Connect a Gmail or Microsoft mailbox');
+    expect(global.fetch.mock.calls.some(([url]) => url === '/api/v1/outreach/mailboxes')).toBe(true);
+  });
+
   it('renders FAQ and safety guidance on help tab', async () => {
     global.fetch = jest.fn((url) => {
       if (url === '/api/v1/outreach/billing/plans') return Promise.resolve(ok({}));

@@ -136,6 +136,52 @@ class VoyagerClient:
             logger.error("Voyager check_connection_status error: %s", exc)
             return False
 
+    async def check_connection_status_strict(self, profile_urn: str) -> bool | None:
+        """Return True/False only with conclusive evidence; None means unknown.
+
+        A failed request or a partial connection page cannot prove that a lead
+        is not connected. The sequence runner must never route those cases to
+        the negative branch.
+        """
+        if self.is_mock:
+            return True
+        target_urn = await self._resolve_profile_urn(profile_urn)
+        if not target_urn:
+            return None
+        target_vanity = urlparse(profile_urn).path.rstrip("/").split("/")[-1] if "/in/" in profile_urn else ""
+        try:
+            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=12.0) as client:
+                response = await client.get(
+                    f"{VOYAGER_BASE_URL}/relationships/connections?count=1000",
+                    headers=self._get_headers(),
+                )
+            if response.status_code != 200:
+                return None
+            data = response.json()
+            if not isinstance(data, dict) or not isinstance(data.get("elements"), list):
+                return None
+            elements = data["elements"]
+            identifiers = {value for value in (target_urn, profile_urn, target_vanity) if value}
+            for element in elements:
+                if not isinstance(element, dict):
+                    continue
+                mini_profile = element.get("miniProfile")
+                values = (
+                    element.get("entityUrn"), element.get("profileUrn"),
+                    element.get("memberUrn"), element.get("publicIdentifier"),
+                    mini_profile.get("entityUrn") if isinstance(mini_profile, dict) else None,
+                )
+                if identifiers.intersection(value for value in values if isinstance(value, str)):
+                    return True
+            paging = data.get("paging") or {}
+            total = paging.get("total") if isinstance(paging, dict) else None
+            if isinstance(total, int) and total <= len(elements):
+                return False
+            return None
+        except Exception as exc:
+            logger.warning("Voyager connection status uncertain (%s)", type(exc).__name__)
+            return None
+
     async def fetch_profile_info(self, vanity_name: str) -> dict[str, Any]:
         """
         Fetches real profile data (name, headline, avatar, URN) from LinkedIn Voyager.

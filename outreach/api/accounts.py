@@ -47,6 +47,7 @@ class UpdateLimitsRequest(BaseModel):
     follows: int | None = None
     post_likes: int | None = None
     comments: int | None = None
+    email_sends: int | None = None
 
 
 def _sanitize_account(acc: dict[str, Any]) -> dict[str, Any]:

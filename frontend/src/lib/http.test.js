@@ -15,6 +15,11 @@ describe('backend fetch routing', () => {
     expect(backendFetchUrl('/outreach?tab=home')).toBe('/outreach?tab=home');
   });
 
+  it('keeps mailbox OAuth requests on the first-party origin for browser-bound cookies', () => {
+    expect(backendFetchUrl('/api/v1/outreach/mailboxes')).toBe('/api/v1/outreach/mailboxes');
+    expect(backendFetchUrl('/api/v1/outreach/mailboxes/gmail/authorize')).toBe('/api/v1/outreach/mailboxes/gmail/authorize');
+  });
+
   it('sends outreach API fetches to the API host with credentials', async () => {
     const originalFetch = jest.fn(() => Promise.resolve({ ok: true }));
     window.fetch = originalFetch;

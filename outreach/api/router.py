@@ -16,6 +16,9 @@ from outreach.api.styles import router as styles_router
 from outreach.api.swipe import router as swipe_router
 from outreach.api.prompts import router as prompts_router
 from outreach.api.analytics import router as analytics_router
+from outreach.api.mailboxes import router as mailboxes_router
+from outreach.api.action_reconciliation import router as action_reconciliation_router
+from outreach.api.integrations import router as integrations_router, public_router
 from api.deps import get_current_user
 import os
 
@@ -32,6 +35,14 @@ router.include_router(styles_router)
 router.include_router(swipe_router)
 router.include_router(prompts_router)
 router.include_router(analytics_router)
+router.include_router(mailboxes_router)
+router.include_router(action_reconciliation_router)
+if os.getenv("OUTREACH_INTEGRATIONS_ENABLED", "false").strip().lower() in {"1", "true"}:
+    # The experimental public API/webhook surface is not part of the email
+    # pilot. Keep it inaccessible until its security and event delivery path
+    # have been verified end to end.
+    router.include_router(integrations_router)
+    router.include_router(public_router)
 
 
 

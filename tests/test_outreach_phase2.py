@@ -129,9 +129,10 @@ async def test_update_limits_and_disconnect_account():
     user = {"user_id": "user_p2_123"}
 
     # 1. Update limits
-    req = UpdateLimitsRequest(connection_invites=50, messages=15)  # 50 should cap at 35
+    req = UpdateLimitsRequest(connection_invites=50, messages=15, email_sends=30)  # 50 should cap at 35
     updated = await update_account_limits("acc_target_1", req=req, current_user=user, db=mock_db)
     assert updated["id"] == "acc_target_1"
+    assert mock_db.outreach_accounts.update_one.await_args.args[1]["$set"]["limits.email_sends"] == 30
 
     # 2. Disconnect
     del_res = await disconnect_account("acc_target_1", current_user=user, db=mock_db)

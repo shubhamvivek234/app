@@ -10,6 +10,20 @@ class DAGValidationError(Exception):
     pass
 
 
+_BOOLEAN_CONDITIONS = {
+    SequenceNodeType.IF_CONNECTED.value,
+    SequenceNodeType.IF_EMAIL_AVAILABLE.value,
+    SequenceNodeType.IF_OPENED_MESSAGE.value,
+    SequenceNodeType.OPEN_PROFILE_CHECK.value,
+    SequenceNodeType.HAS_DATA_IN_COLUMN.value,
+}
+_POSITIVE_LABELS = {"accepted", "replied", "connected", "true", "yes", "positive", "email available"}
+_NEGATIVE_LABELS = {
+    "not accepted", "not accepted yet", "no reply", "not connected", "rejected",
+    "declined", "unresponsive", "false", "no", "negative", "email unavailable",
+}
+
+
 def interpolate_template(template_str: str, lead: dict[str, Any]) -> str:
     """Replaces dynamic tags like {{first_name}} and {{company_name}} with lead attributes."""
     first_name = lead.get("first_name") or "there"
@@ -144,20 +158,22 @@ class DAGCompiler:
             # Map branching vs sequential flow
             branch_targets: set[str] = set()
             for edge in edges_from:
-                label = (edge.get("label") or "").strip().lower()
+                label = (edge.get("sourceHandle") or edge.get("label") or "").strip().lower()
                 target_id = edge["target"]
 
-                if label in ("accepted", "replied", "connected", "true", "yes"):
+                if label in _POSITIVE_LABELS:
                     if "positive" in branch_targets:
                         raise DAGValidationError(f"Step {n_id} has more than one positive branch.")
                     branch_targets.add("positive")
                     compiled_node["branches"]["positive"] = target_id
-                elif label in ("not accepted", "not accepted yet", "no reply", "not connected", "rejected", "declined", "unresponsive", "false", "no"):
+                elif label in _NEGATIVE_LABELS:
                     if "negative" in branch_targets:
                         raise DAGValidationError(f"Step {n_id} has more than one negative branch.")
                     branch_targets.add("negative")
                     compiled_node["branches"]["negative"] = target_id
                 else:
+                    if node_type in _BOOLEAN_CONDITIONS:
+                        raise DAGValidationError(f"Condition step {n_id} requires explicit Yes/No branch labels.")
                     if "default" in branch_targets:
                         raise DAGValidationError(f"Step {n_id} has more than one default next step.")
                     branch_targets.add("default")

@@ -20,6 +20,11 @@ const ACTION_DEFINITIONS = [
   { type: 'endorse_skills', label: 'Endorse skills', desc: 'Endorse their top skills', icon: CheckCircle2, color: 'text-indigo-600 bg-indigo-50' },
 ];
 
+const EMAIL_ACTION_DEFINITIONS = [
+  { type: 'find_email', label: 'Find email', desc: 'Look up a prospect email using your Hunter key', icon: Search, color: 'text-teal-700 bg-teal-50' },
+  { type: 'send_email', label: 'Send email', desc: 'Send through a connected sender mailbox', icon: Mail, color: 'text-teal-700 bg-teal-50' },
+];
+
 const CONDITION_DEFINITIONS = [
   {
     type: 'if_connected',
@@ -59,9 +64,17 @@ const CONDITION_DEFINITIONS = [
   },
 ];
 
-const RUNNER_SUPPORTED_TYPES = new Set([
-  'visit_profile', 'connection_request', 'send_message', 'voice_note', 'like_last_post', 'if_connected',
-]);
+const EMAIL_CONDITION_DEFINITIONS = [
+  {
+    type: 'if_email_available',
+    label: 'If email available',
+    desc: 'Branch only when a valid, unsuppressed email is known',
+    icon: GitBranch,
+    color: 'text-teal-700 bg-teal-50',
+    leftCondition: 'No',
+    rightCondition: 'Yes',
+  },
+];
 
 const VARIABLE_PILLS = [
   '{{first_name}}',
@@ -189,6 +202,9 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
   const [selectedStepId, setSelectedStepId] = useState(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteTarget, setPaletteTarget] = useState(null); // { type: 'linear' | 'branch', stepId, branchKey, index }
+  const [capabilities, setCapabilities] = useState(null);
+  const [capabilityError, setCapabilityError] = useState('');
+  const [capabilityRetryKey, setCapabilityRetryKey] = useState(0);
   const [zoomLevel, setZoomLevel] = useState(100);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
@@ -243,6 +259,39 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
   const [sequenceRetryKey, setSequenceRetryKey] = useState(0);
   const hasLoaded = useRef(false);
   const treeRef = useRef(tree);
+
+  useEffect(() => {
+    let cancelled = false;
+    setCapabilities(null);
+    setCapabilityError('');
+    const loadCapabilities = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const response = await fetch('/api/v1/outreach/campaigns/features/sequence-capabilities', {
+          credentials: 'include',
+          headers: { Authorization: token ? `Bearer ${token}` : '' },
+        });
+        if (!response.ok) throw new Error('Step availability could not be checked.');
+        const data = await response.json();
+        if (!Array.isArray(data?.capabilities)) throw new Error('Step availability could not be checked.');
+        if (!cancelled) setCapabilities(Object.fromEntries(data.capabilities
+          .filter((item) => item && typeof item.type === 'string')
+          .map((item) => [item.type, item])));
+      } catch (_) {
+        if (!cancelled) setCapabilityError('Step availability could not be checked. Retry before adding steps.');
+      }
+    };
+    loadCapabilities();
+    return () => { cancelled = true; };
+  }, [capabilityRetryKey]);
+
+  const stepCapability = (type) => capabilities?.[type] || null;
+  const stepReason = (type) => {
+    const capability = stepCapability(type);
+    if (!capability) return capabilityError || (capabilities ? 'Not available in this deployment.' : 'Step availability is still loading.');
+    if (capability.reason) return capability.reason;
+    return capability.builder_available ? '' : 'This step is not available in the campaign builder.';
+  };
 
   // Unravler AI Parity: AI Prompt Library & Preview State
   const [promptDrawerOpen, setPromptDrawerOpen] = useState(false);
@@ -578,9 +627,11 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
   };
 
   const handleAddStepFromPalette = (type) => {
-    const isCondition = CONDITION_DEFINITIONS.some((c) => c.type === type);
-    const condDef = CONDITION_DEFINITIONS.find((c) => c.type === type);
-    const actionDef = ACTION_DEFINITIONS.find((a) => a.type === type);
+    if (!stepCapability(type)?.builder_available) return;
+    const allConditions = [...CONDITION_DEFINITIONS, ...EMAIL_CONDITION_DEFINITIONS];
+    const isCondition = allConditions.some((c) => c.type === type);
+    const condDef = allConditions.find((c) => c.type === type);
+    const actionDef = [...ACTION_DEFINITIONS, ...EMAIL_ACTION_DEFINITIONS].find((a) => a.type === type);
 
     const newId = `step_${globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`}`;
     let newStep = null;
@@ -615,7 +666,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
         subtitle: actionDef.desc,
         delay_days: 0,
         config: {},
-        isActionRequired: ['voice_note', 'inmail', 'send_message', 'reply_to_comment'].includes(type),
+        isActionRequired: ['voice_note', 'inmail', 'send_message', 'send_email', 'reply_to_comment'].includes(type),
       };
 
       if (type === 'connection_request') {
@@ -687,13 +738,13 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
           subtitle: 'InMail message configured',
         })
       );
-    } else if (selectedStep.type === 'send_message') {
+    } else if (selectedStep.type === 'send_message' || selectedStep.type === 'send_email') {
       const curr = selectedStep.config?.body || '';
       setTree((prev) =>
         updateNode(prev, selectedStep.id, {
           config: { ...selectedStep.config, body: curr ? `${curr} ${variable}` : variable },
           isActionRequired: false,
-          subtitle: 'Direct message configured',
+          subtitle: selectedStep.type === 'send_email' ? 'Email body configured' : 'Direct message configured',
         })
       );
     } else if (selectedStep.type === 'connection_request') {
@@ -707,9 +758,9 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
   };
 
   const getNodeVisuals = (type) => {
-    const act = ACTION_DEFINITIONS.find((a) => a.type === type);
+    const act = [...ACTION_DEFINITIONS, ...EMAIL_ACTION_DEFINITIONS].find((a) => a.type === type);
     if (act) return { icon: act.icon, color: act.color };
-    const cond = CONDITION_DEFINITIONS.find((c) => c.type === type);
+    const cond = [...CONDITION_DEFINITIONS, ...EMAIL_CONDITION_DEFINITIONS].find((c) => c.type === type);
     if (cond) return { icon: cond.icon, color: cond.color };
     return { icon: Eye, color: 'text-indigo-600 bg-indigo-50' };
   };
@@ -1580,6 +1631,56 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
               </div>
             )}
 
+            {/* EMAIL CONFIGURATION: sending requires a connected mailbox at launch. */}
+            {selectedStep.type === 'send_email' && (
+              <div className="space-y-4 pt-2 border-t border-gray-100">
+                <p className="rounded-xl border border-teal-100 bg-teal-50 p-3 text-xs text-teal-900">
+                  Email is sent through the mailbox connected to this sender. A provider acceptance is not a delivery confirmation.
+                </p>
+                <div>
+                  <label htmlFor={`email-subject-${selectedStep.id}`} className="block text-xs font-bold text-gray-900 mb-1">Email subject</label>
+                  <input
+                    id={`email-subject-${selectedStep.id}`}
+                    type="text"
+                    value={selectedStep.config?.subject || ''}
+                    onChange={(event) => setTree((previous) => updateNode(previous, selectedStep.id, {
+                      config: { ...selectedStep.config, subject: event.target.value },
+                      isActionRequired: !event.target.value.trim() || !selectedStep.config?.body?.trim(),
+                    }))}
+                    placeholder="A quick note for {{first_name}}"
+                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-xs focus:border-teal-600 focus:ring-1 focus:ring-teal-600"
+                  />
+                </div>
+                <div>
+                  {renderEditorToolbar()}
+                  <label htmlFor={`email-body-${selectedStep.id}`} className="block text-xs font-bold text-gray-900 mb-1">Email body</label>
+                  <textarea
+                    id={`email-body-${selectedStep.id}`}
+                    rows={6}
+                    value={selectedStep.config?.body || ''}
+                    onChange={(event) => setTree((previous) => updateNode(previous, selectedStep.id, {
+                      config: { ...selectedStep.config, body: event.target.value },
+                      isActionRequired: !event.target.value.trim() || !selectedStep.config?.subject?.trim(),
+                    }))}
+                    placeholder="Hi {{first_name}}, ..."
+                    className="w-full rounded-xl border border-gray-200 p-3 text-xs focus:border-teal-600 focus:ring-1 focus:ring-teal-600 resize-none"
+                  />
+                </div>
+              </div>
+            )}
+
+            {selectedStep.type === 'find_email' && (
+              <div className="rounded-xl border border-teal-100 bg-teal-50 p-3 text-xs text-teal-900">
+                Uses the workspace Hunter key to look up a prospect email. No address found does not authorize sending; provider errors pause the lead for review.
+              </div>
+            )}
+
+            {selectedStep.type === 'if_email_available' && (
+              <div className="rounded-xl border border-teal-100 bg-teal-50 p-3 text-xs text-teal-900">
+                Yes requires a valid, unsuppressed email. Unknown lookup results pause instead of taking the No branch.
+              </div>
+            )}
+
             {/* CONNECTION REQUEST CONFIGURATION */}
             {selectedStep.type === 'connection_request' && (
               <div className="space-y-4 pt-2 border-t border-gray-100">
@@ -1958,6 +2059,14 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
           </div>
 
           <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-6 text-left">
+            {capabilityError && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                <p>{capabilityError}</p>
+                <button type="button" onClick={() => setCapabilityRetryKey((value) => value + 1)} className="mt-2 font-semibold underline">
+                  Retry availability
+                </button>
+              </div>
+            )}
             {/* LinkedIn Actions */}
             <div>
               <span className="text-[10px] font-bold tracking-wider uppercase text-gray-400 block mb-2">
@@ -1966,14 +2075,17 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
               <div className="grid grid-cols-2 gap-2">
                 {ACTION_DEFINITIONS.map((action) => {
                   const Icon = action.icon;
-                  const supported = RUNNER_SUPPORTED_TYPES.has(action.type);
+                  const capability = stepCapability(action.type);
+                  const available = Boolean(capability?.builder_available);
+                  const reason = stepReason(action.type);
                   return (
                     <button
                       key={action.type}
+                      type="button"
                       onClick={() => handleAddStepFromPalette(action.type)}
-                      disabled={!supported}
-                      title={supported ? action.desc : 'This step is not supported by the campaign runner yet.'}
-                      className={`flex flex-col items-start p-2.5 rounded-xl border border-gray-200 text-left transition-all group ${supported ? 'hover:border-indigo-500 hover:bg-indigo-50/20' : 'opacity-50 cursor-not-allowed'}`}
+                      disabled={!available}
+                      title={reason || action.desc}
+                      className={`flex flex-col items-start p-2.5 rounded-xl border border-gray-200 text-left transition-all group ${available ? 'hover:border-indigo-500 hover:bg-indigo-50/20' : 'opacity-60 cursor-not-allowed'}`}
                     >
                       <div className={`p-2 rounded-lg ${action.color} group-hover:scale-105 transition-transform`}>
                         <Icon className="h-4 w-4" />
@@ -1981,7 +2093,8 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
                       <span className="font-semibold text-gray-900 text-xs mt-2 group-hover:text-indigo-600">
                         {action.label}
                       </span>
-                      {!supported && <span className="text-[10px] text-gray-400 mt-1">Coming soon</span>}
+                      {reason && <span className="text-[10px] text-gray-500 mt-1 leading-tight">{reason}</span>}
+                      {available && !capability.live_enabled && <span className="text-[10px] font-semibold text-amber-700 mt-1">Draft only · live execution off</span>}
                     </button>
                   );
                 })}
@@ -1996,14 +2109,17 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
               <div className="grid grid-cols-2 gap-2">
                 {CONDITION_DEFINITIONS.map((cond) => {
                   const Icon = cond.icon;
-                  const supported = RUNNER_SUPPORTED_TYPES.has(cond.type);
+                  const capability = stepCapability(cond.type);
+                  const available = Boolean(capability?.builder_available);
+                  const reason = stepReason(cond.type);
                   return (
                     <button
                       key={cond.type}
+                      type="button"
                       onClick={() => handleAddStepFromPalette(cond.type)}
-                      disabled={!supported}
-                      title={supported ? cond.desc : 'This condition is not supported by the campaign runner yet.'}
-                      className={`flex flex-col items-start p-2.5 rounded-xl border border-gray-200 text-left transition-all group ${supported ? 'hover:border-amber-500 hover:bg-amber-50/20' : 'opacity-50 cursor-not-allowed'}`}
+                      disabled={!available}
+                      title={reason || cond.desc}
+                      className={`flex flex-col items-start p-2.5 rounded-xl border border-gray-200 text-left transition-all group ${available ? 'hover:border-amber-500 hover:bg-amber-50/20' : 'opacity-60 cursor-not-allowed'}`}
                     >
                       <div className={`p-2 rounded-lg ${cond.color} group-hover:scale-105 transition-transform`}>
                         <Icon className="h-4 w-4" />
@@ -2011,7 +2127,52 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
                       <span className="font-semibold text-gray-900 text-xs mt-2 group-hover:text-amber-700">
                         {cond.label}
                       </span>
-                      {!supported && <span className="text-[10px] text-gray-400 mt-1">Coming soon</span>}
+                      {reason && <span className="text-[10px] text-gray-500 mt-1 leading-tight">{reason}</span>}
+                      {available && !capability.live_enabled && <span className="text-[10px] font-semibold text-amber-700 mt-1">Draft only · live execution off</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <span className="text-[10px] font-bold tracking-wider uppercase text-gray-400 block mb-2">Email Actions ({EMAIL_ACTION_DEFINITIONS.length})</span>
+              <div className="grid grid-cols-2 gap-2">
+                {EMAIL_ACTION_DEFINITIONS.map((action) => {
+                  const Icon = action.icon;
+                  const capability = stepCapability(action.type);
+                  const available = Boolean(capability?.builder_available);
+                  const reason = stepReason(action.type);
+                  return (
+                    <button key={action.type} type="button" onClick={() => handleAddStepFromPalette(action.type)} disabled={!available}
+                      title={reason || action.desc}
+                      className={`flex flex-col items-start p-2.5 rounded-xl border border-gray-200 text-left transition-all ${available ? 'hover:border-teal-500 hover:bg-teal-50' : 'opacity-60 cursor-not-allowed'}`}>
+                      <div className={`p-2 rounded-lg ${action.color}`}><Icon className="h-4 w-4" /></div>
+                      <span className="font-semibold text-gray-900 text-xs mt-2">{action.label}</span>
+                      {reason && <span className="text-[10px] text-gray-500 mt-1 leading-tight">{reason}</span>}
+                      {available && !capability.live_enabled && <span className="text-[10px] font-semibold text-amber-700 mt-1">Draft only · live execution off</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <span className="text-[10px] font-bold tracking-wider uppercase text-gray-400 block mb-2">Email Conditions ({EMAIL_CONDITION_DEFINITIONS.length})</span>
+              <div className="grid grid-cols-2 gap-2">
+                {EMAIL_CONDITION_DEFINITIONS.map((cond) => {
+                  const Icon = cond.icon;
+                  const capability = stepCapability(cond.type);
+                  const available = Boolean(capability?.builder_available);
+                  const reason = stepReason(cond.type);
+                  return (
+                    <button key={cond.type} type="button" onClick={() => handleAddStepFromPalette(cond.type)} disabled={!available}
+                      title={reason || cond.desc}
+                      className={`flex flex-col items-start p-2.5 rounded-xl border border-gray-200 text-left transition-all ${available ? 'hover:border-teal-500 hover:bg-teal-50' : 'opacity-60 cursor-not-allowed'}`}>
+                      <div className={`p-2 rounded-lg ${cond.color}`}><Icon className="h-4 w-4" /></div>
+                      <span className="font-semibold text-gray-900 text-xs mt-2">{cond.label}</span>
+                      {reason && <span className="text-[10px] text-gray-500 mt-1 leading-tight">{reason}</span>}
+                      {available && !capability.live_enabled && <span className="text-[10px] font-semibold text-amber-700 mt-1">Draft only · live execution off</span>}
                     </button>
                   );
                 })}

@@ -233,6 +233,7 @@ async def test_launch_rejects_active_campaign_before_changing_anything():
 @pytest.mark.asyncio
 async def test_launch_rejects_sender_without_verified_session():
     db = MagicMock()
+    db.outreach_sequences.find_one = AsyncMock(return_value=None)
     db.outreach_campaigns.find_one = AsyncMock(return_value={
         "id": "campaign_a", "workspace_id": "workspace_a", "status": "draft",
         "sender_account_ids": ["account_a"],
@@ -252,6 +253,7 @@ async def test_launch_rejects_sender_without_verified_session():
 async def test_launch_rejects_legacy_mock_cookie_even_with_proxy(monkeypatch):
     monkeypatch.delenv("OUTREACH_MOCK_AUTH", raising=False)
     db = MagicMock()
+    db.outreach_sequences.find_one = AsyncMock(return_value=None)
     db.outreach_campaigns.find_one = AsyncMock(return_value={
         "id": "campaign_a", "workspace_id": "workspace_a", "status": "draft",
         "sender_account_ids": ["account_a"],

@@ -23,9 +23,14 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import OutreachAccounts from './OutreachAccounts';
+import OutreachMailboxes from './OutreachMailboxes';
+import OutreachActionReview from './OutreachActionReview';
 
 export default function OutreachSettings({ initialTab = 'accounts' }) {
-  const [activeTab, setActiveTab] = useState(initialTab);
+  const [activeTab, setActiveTab] = useState(() => (
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('mailbox_job_id')
+      ? 'mailboxes' : initialTab
+  ));
 
   // ── Billing State ──────────────────────────────────────────────────────────
   const [seats, setSeats] = useState(1);
@@ -293,6 +298,8 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
   // ── Navigation Tabs (Import from V1 permanently removed) ───────────────────
   const tabs = [
     { id: 'accounts', label: 'Accounts' },
+    { id: 'mailboxes', label: 'Email mailboxes' },
+    { id: 'action-reviews', label: 'Action reviews' },
     { id: 'members', label: 'Members' },
     { id: 'billing', label: 'Billing' },
     { id: 'help', label: 'Help & Resources' },
@@ -348,6 +355,8 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
           <div className="md:col-span-9 space-y-6">
             {/* ── TAB 1: ACCOUNTS ────────────────────────────────────────── */}
             {activeTab === 'accounts' && <OutreachAccounts />}
+            {activeTab === 'mailboxes' && <OutreachMailboxes />}
+            {activeTab === 'action-reviews' && <OutreachActionReview />}
 
             {/* ── TAB 2: MEMBERS ─────────────────────────────────────────── */}
             {activeTab === 'members' && (

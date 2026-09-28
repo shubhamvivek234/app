@@ -131,6 +131,7 @@ async def test_campaign_api_lifecycle():
         for account_id in ("acc_1", "acc_2")
     ])
     mock_db.outreach_accounts.find = lambda query: senders_cursor
+    mock_db.outreach_sequences.find_one = AsyncMock(return_value=None)
     mock_db.outreach_leads.count_documents = AsyncMock(return_value=3)
     empty_cursor = AsyncMock()
     empty_cursor.to_list = AsyncMock(return_value=[])
