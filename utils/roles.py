@@ -49,6 +49,13 @@ _ROLE_PERMISSIONS: dict[str, WorkspaceRole] = {
     # Webhooks
     "webhook:manage": WorkspaceRole.ADMIN,
 
+    # Campaigns & Outreach
+    "campaign:create": WorkspaceRole.EDITOR,
+    "campaign:update": WorkspaceRole.EDITOR,
+    "campaign:delete": WorkspaceRole.ADMIN,
+    "campaign:read": WorkspaceRole.VIEWER,
+    "outreach:manage": WorkspaceRole.ADMIN,
+
     # Media upload
     "media:read": WorkspaceRole.VIEWER,
     "media:upload": WorkspaceRole.EDITOR,
