@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from api.deps import get_current_user
+from api.deps import get_current_user, require_permission
 from db.mongo import get_db
 from outreach.core.lead_importer import LeadImporter, normalize_linkedin_url
 
@@ -112,7 +112,7 @@ class UpdateLeadStageRequest(BaseModel):
 
 # ── Endpoints ──────────────────────────────────────────────────────────────
 
-@router.post("/import-csv")
+@router.post("/import-csv", dependencies=[require_permission("lead:create")])
 async def import_leads_csv(
     req: ImportCSVRequest,
     current_user: dict = Depends(get_current_user),
@@ -168,7 +168,7 @@ async def import_leads_csv(
     return result
 
 
-@router.post("/import-search")
+@router.post("/import-search", dependencies=[require_permission("lead:create")])
 async def import_search_url(
     req: ImportSearchRequest,
     current_user: dict = Depends(get_current_user),
@@ -307,7 +307,7 @@ async def export_leads(
     })
 
 
-@router.delete("/{lead_id}")
+@router.delete("/{lead_id}", dependencies=[require_permission("lead:delete")])
 async def delete_lead(
     lead_id: str,
     current_user: dict = Depends(get_current_user),
@@ -346,7 +346,7 @@ async def delete_lead(
     return {"status": "success", "message": "Lead removed"}
 
 
-@router.post("/do-not-contact")
+@router.post("/do-not-contact", dependencies=[require_permission("lead:update")])
 async def add_do_not_contact(
     req: DoNotContactRequest,
     current_user: dict = Depends(get_current_user),
@@ -389,7 +389,7 @@ async def list_do_not_contact(
 
 
 # ── Lead Finder & Post Engagers ────────────────────────────────────────────
-@router.post("/finder/preview")
+@router.post("/finder/preview", dependencies=[require_permission("lead:create")])
 async def preview_lead_finder(
     req: LeadFinderPreviewRequest,
     current_user: dict = Depends(get_current_user),
@@ -402,7 +402,7 @@ async def preview_lead_finder(
     )
 
 
-@router.post("/finder/enroll")
+@router.post("/finder/enroll", dependencies=[require_permission("lead:create")])
 async def enroll_finder_leads(
     req: LeadFinderEnrollRequest,
     current_user: dict = Depends(get_current_user),
@@ -416,7 +416,7 @@ async def enroll_finder_leads(
     )
 
 
-@router.post("/import-post-engagers")
+@router.post("/import-post-engagers", dependencies=[require_permission("lead:create")])
 async def import_post_engagers(
     req: ImportPostEngagersRequest,
     current_user: dict = Depends(get_current_user),
@@ -435,7 +435,7 @@ async def import_post_engagers(
     )
 
 
-@router.patch("/{lead_id}/stage")
+@router.patch("/{lead_id}/stage", dependencies=[require_permission("lead:update")])
 async def update_lead_stage(
     lead_id: str,
     req: UpdateLeadStageRequest,

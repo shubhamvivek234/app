@@ -28,6 +28,7 @@ _ROLE_PERMISSIONS: dict[str, WorkspaceRole] = {
     # Social account management
     "account:connect": WorkspaceRole.ADMIN,
     "account:disconnect": WorkspaceRole.ADMIN,
+    "account:delete": WorkspaceRole.ADMIN,
     "account:read": WorkspaceRole.VIEWER,
 
     # Workspace management
@@ -49,11 +50,37 @@ _ROLE_PERMISSIONS: dict[str, WorkspaceRole] = {
     # Webhooks
     "webhook:manage": WorkspaceRole.ADMIN,
 
-    # Campaigns & Outreach
+    # Campaigns & Sequences
     "campaign:create": WorkspaceRole.EDITOR,
     "campaign:update": WorkspaceRole.EDITOR,
     "campaign:delete": WorkspaceRole.ADMIN,
     "campaign:read": WorkspaceRole.VIEWER,
+    "sequence:create": WorkspaceRole.EDITOR,
+    "sequence:update": WorkspaceRole.EDITOR,
+    "sequence:delete": WorkspaceRole.ADMIN,
+    "sequence:read": WorkspaceRole.VIEWER,
+
+    # Leads
+    "lead:create": WorkspaceRole.EDITOR,
+    "lead:update": WorkspaceRole.EDITOR,
+    "lead:delete": WorkspaceRole.EDITOR,
+    "lead:read": WorkspaceRole.VIEWER,
+
+    # Inbox
+    "inbox:read": WorkspaceRole.VIEWER,
+    "inbox:reply": WorkspaceRole.EDITOR,
+    "inbox:manage": WorkspaceRole.EDITOR,
+
+    # Engage
+    "engage:read": WorkspaceRole.VIEWER,
+    "engage:manage": WorkspaceRole.EDITOR,
+    "engage:delete": WorkspaceRole.ADMIN,
+
+    # Voice & Content
+    "voice:manage": WorkspaceRole.EDITOR,
+    "content:manage": WorkspaceRole.EDITOR,
+
+    # Outreach Engine Management
     "outreach:manage": WorkspaceRole.ADMIN,
 
     # Media upload

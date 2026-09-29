@@ -56,7 +56,7 @@ async def _email_operation(db, workspace_id: str, task: dict) -> dict | None:
         "acceptance_source": 1, "resolution": 1})
 
 
-@router.get("", dependencies=[require_permission("account:connect")])
+@router.get("", dependencies=[require_permission("outreach:manage")])
 async def list_action_reviews(
     view: Literal["pending", "resolved"] = "pending",
     skip: int = Query(0, ge=0, le=5000),
@@ -114,7 +114,7 @@ async def list_action_reviews(
     return {"items": items, "total": total, "skip": skip, "limit": limit, "view": view}
 
 
-@router.post("/{task_id}/resolve", dependencies=[require_permission("account:connect")])
+@router.post("/{task_id}/resolve", dependencies=[require_permission("outreach:manage")])
 async def resolve_uncertain_action(
     task_id: str,
     request: ResolutionRequest,

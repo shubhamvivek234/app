@@ -36,24 +36,17 @@ Completed:
 - `outreach-site` verification: 6/6 Node tests pass including all 18 HTML pages, link checks, and compliance filters; desktop/mobile browser screenshots verified.
 
 ## Latest Release and Local Work
-- Verified and wired end-to-end prospect reply & connection workflow: transactional outbox emission (`lead.replied`, `lead.connection_accepted`) across LinkedIn inbox sync and email mailbox sync, unified email reply inbox thread upsert, sequence follow-up auto-halt on reply, background periodic inbox poll beat task (every 5 min), and enriched Slack Block Kit alert cards with zero private body text leak.
-- Verification: 294 outreach backend tests, 93 frontend tests, and production build pass.
+- 2026-09-29: Completed P0 gap plan (gates, truth, RBAC, outcome provenance).
+- P0-A: Mapped `OUTREACH_LIVE_ACTIONS_ENABLED: ${OUTREACH_LIVE_ACTIONS_ENABLED:-false}` in compose files. Campaign detail displays "Not available" instead of misleading 0% rates when leads are uncontacted.
+- P0-B: Added granular outreach permissions to `WorkspaceRole` matrix and guarded all mutation endpoints across campaigns, sequences, leads, accounts, inbox, engage, billing, integrations, voice, styles, swipe, prompts with `require_permission`. Outsiders and unprivileged roles strictly 403-blocked.
+- P0-C: Outcome provenance preflight check in `_launch_campaign_impl` halts campaign launch/resume (409 Conflict) if uncertain tasks exist until manually resolved via action review.
+- Verification: 300 outreach backend tests, 63 frontend tests, and production build pass. Live actions remain disabled by default.
 
 ## Active Work
 Next:
-- Obtain product/legal approval and a purchased IPRoyal static ISP IP; verify external billing workflow, configure managed inventory, and run live sender/proxy/worker smoke tests before production enablement. Do not claim production readiness from mocks.
-- Add merchant processor/webhook reconciliation and automated provider procurement only after provider/payment contracts and real API validation. Current pilot fulfillment remains manual and operator-gated.
-- Extend the pilot request schema to per-sender country before mixed-country workspaces; do not silently substitute country or reuse another customer's held IP.
-- Webshare migration needs a managed inventory importer and lease transfer; the old `OUTREACH_PROXY_PROVIDER` switch alone does not migrate this paid pilot.
-- Product/legal go-or-no-go before public rollout of session-based outreach; validate the Webshare provisioning endpoint and region availability with a real LinkedIn connection attempt before claiming live readiness.
-- Scheduled Engage scraping/AI drafting and unattended like/comment dispatch remain unimplemented; any automatic LinkedIn interaction requires separate product/legal approval.
-- Decide whether to migrate historical plaintext JSESSIONID records; newly connected/refreshed senders use encrypted storage.
-- Live logged-in Engage smoke test after Mac unlock; review whether scheduled auto-engagement should instead be a human-approved queue.
-- Sequence pre-warming: `LIKE_LAST_POST` runner exists; `COMMENT_LAST_POST` remains unsupported.
-- Content Writing Styles UI (`OutreachStyles.js`).
-- Auto-Plug scheduled first comments in post composer.
-- Before publishing `unravler.io`: acquire/configure domain and static host, review outreach legal/order terms, confirm support mailbox, add canonical/SEO metadata, and align any scheduler-customer discount with billing enforcement. Current site CTA uses mailto for manual pilot requests.
-- Before mailbox pilot: configure provider OAuth callbacks on the frontend origin, verify browser cookie forwarding, test Gmail/Microsoft with consented recipients, and confirm revocation, bounce, opt-out, seat expiry, and uncertain-send recovery live.
+- Implement P1 from `docs/OUTREACH_DRIPIFY_VIDEO_GAP_PLAN.md`: reliable pasted-profile-URL + CSV import, honest lead deduplication, explicit manual CSV source assignment, and sequence canvas validation.
+- Obtain product/legal approval and a purchased IPRoyal static ISP IP before live pilot enablement.
+- Validate Webshare/IPRoyal provisioning live; unattended actions and live LinkedIn scraping remain disabled.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.

@@ -127,7 +127,7 @@ async def list_webhooks(
 
 
 @router.post("/webhooks", status_code=status.HTTP_201_CREATED,
-             dependencies=[require_permission("campaign:create")])
+             dependencies=[require_permission("webhook:manage")])
 async def create_webhook(
     req: CreateWebhookRequest,
     current_user: dict = Depends(get_current_user),
@@ -192,7 +192,7 @@ async def create_webhook(
 
 
 @router.post("/webhooks/{webhook_id}/rotate-secret",
-             dependencies=[require_permission("campaign:create")])
+             dependencies=[require_permission("webhook:manage")])
 async def rotate_webhook_secret(
     webhook_id: str,
     current_user: dict = Depends(get_current_user),
@@ -212,7 +212,7 @@ async def rotate_webhook_secret(
     return {"status": "rotated", "webhook_id": webhook_id, "new_secret": raw_secret}
 
 
-@router.delete("/webhooks/{webhook_id}", dependencies=[require_permission("campaign:create")])
+@router.delete("/webhooks/{webhook_id}", dependencies=[require_permission("webhook:manage")])
 async def delete_webhook(
     webhook_id: str,
     current_user: dict = Depends(get_current_user),
@@ -253,7 +253,7 @@ async def list_webhook_deliveries(
 
 
 @router.post("/deliveries/{delivery_id}/replay",
-             dependencies=[require_permission("campaign:create")])
+             dependencies=[require_permission("webhook:manage")])
 async def replay_failed_delivery(
     delivery_id: str,
     current_user: dict = Depends(get_current_user),
@@ -267,7 +267,7 @@ async def replay_failed_delivery(
         raise HTTPException(status_code=409, detail=str(exc))
 
 
-@router.post("/webhooks/{webhook_id}/test", dependencies=[require_permission("campaign:create")])
+@router.post("/webhooks/{webhook_id}/test", dependencies=[require_permission("webhook:manage")])
 async def test_webhook_ping(
     webhook_id: str,
     current_user: dict = Depends(get_current_user),
@@ -305,7 +305,7 @@ async def list_api_keys(
 
 
 @router.post("/api-keys", status_code=status.HTTP_201_CREATED,
-             dependencies=[require_permission("billing:manage")])
+             dependencies=[require_permission("api_key:manage")])
 async def create_api_key(
     req: CreateApiKeyRequest,
     current_user: dict = Depends(get_current_user),
@@ -364,7 +364,7 @@ async def create_api_key(
     }
 
 
-@router.delete("/api-keys/{key_id}", dependencies=[require_permission("billing:manage")])
+@router.delete("/api-keys/{key_id}", dependencies=[require_permission("api_key:manage")])
 async def revoke_api_key(
     key_id: str,
     current_user: dict = Depends(get_current_user),
@@ -401,7 +401,7 @@ async def get_slack_config(
     }
 
 
-@router.post("/slack", dependencies=[require_permission("campaign:create")])
+@router.post("/slack", dependencies=[require_permission("outreach:manage")])
 async def update_slack_config(
     req: SlackConfigRequest,
     current_user: dict = Depends(get_current_user),
@@ -435,7 +435,7 @@ async def update_slack_config(
     return {"status": "saved", "connected": req.enabled}
 
 
-@router.post("/slack/test", dependencies=[require_permission("campaign:create")])
+@router.post("/slack/test", dependencies=[require_permission("outreach:manage")])
 async def test_slack_notification(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
@@ -453,7 +453,7 @@ async def test_slack_notification(
     return {"success": True, "status_code": code}
 
 
-@router.delete("/slack", dependencies=[require_permission("campaign:create")])
+@router.delete("/slack", dependencies=[require_permission("outreach:manage")])
 async def delete_slack_config(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
@@ -483,7 +483,7 @@ async def get_hubspot_config(
     }
 
 
-@router.post("/hubspot", dependencies=[require_permission("campaign:create")])
+@router.post("/hubspot", dependencies=[require_permission("outreach:manage")])
 async def update_hubspot_config(
     req: HubSpotConfigRequest,
     current_user: dict = Depends(get_current_user),
@@ -515,7 +515,7 @@ async def update_hubspot_config(
     return {"status": "saved", "connected": True, "portal_id": clean_portal}
 
 
-@router.delete("/hubspot", dependencies=[require_permission("campaign:create")])
+@router.delete("/hubspot", dependencies=[require_permission("outreach:manage")])
 async def delete_hubspot_config(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
@@ -525,7 +525,7 @@ async def delete_hubspot_config(
     return {"status": "disconnected"}
 
 
-@router.post("/hubspot/sync-lead/{lead_id}", dependencies=[require_permission("campaign:create")])
+@router.post("/hubspot/sync-lead/{lead_id}", dependencies=[require_permission("lead:update")])
 async def manual_sync_lead_hubspot(
     lead_id: str,
     current_user: dict = Depends(get_current_user),
@@ -555,7 +555,7 @@ async def manual_sync_lead_hubspot(
 
 # ── Google Sheets / CSV Import Endpoints ───────────────────────────────────
 
-@router.post("/sheets/preview")
+@router.post("/sheets/preview", dependencies=[require_permission("lead:create")])
 async def preview_sheets_import(
     req: SheetsPreviewRequest,
     current_user: dict = Depends(get_current_user),
@@ -614,7 +614,7 @@ async def preview_sheets_import(
 
 
 @router.post("/sheets/import", status_code=status.HTTP_201_CREATED,
-             dependencies=[require_permission("campaign:create")])
+             dependencies=[require_permission("lead:create")])
 async def import_sheets_leads(
     req: SheetsImportRequest,
     current_user: dict = Depends(get_current_user),

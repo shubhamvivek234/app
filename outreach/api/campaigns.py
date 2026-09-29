@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from api.deps import get_current_user
+from api.deps import get_current_user, require_permission
 from db.mongo import get_db
 from outreach.core.dag_compiler import DAGCompiler, contains_ai_prompt_token
 from outreach.core.lead_importer import normalize_linkedin_url
@@ -209,7 +209,7 @@ async def get_conditional_launch_feature(current_user: dict = Depends(get_curren
     return {"enabled": conditional_auto_launch_enabled()}
 
 
-@router.post("/{campaign_id}/arm-warmup")
+@router.post("/{campaign_id}/arm-warmup", dependencies=[require_permission("campaign:update")])
 async def arm_warmup_campaign(
     campaign_id: str,
     req: ArmWarmupRequest,
@@ -309,7 +309,7 @@ async def list_campaigns(
     return campaigns
 
 
-@router.post("/auto-draft")
+@router.post("/auto-draft", dependencies=[require_permission("campaign:create")])
 async def auto_draft_campaign(
     req: AutoDraftRequest,
     current_user: dict = Depends(get_current_user),
@@ -380,7 +380,7 @@ async def auto_draft_campaign(
     return campaign_doc
 
 
-@router.post("")
+@router.post("", dependencies=[require_permission("campaign:create")])
 async def create_campaign(
     req: CreateCampaignRequest,
     current_user: dict = Depends(get_current_user),
@@ -473,7 +473,7 @@ async def get_campaign(
     return campaign
 
 
-@router.patch("/{campaign_id}")
+@router.patch("/{campaign_id}", dependencies=[require_permission("campaign:update")])
 async def update_campaign(
     campaign_id: str,
     req: UpdateCampaignRequest,
@@ -513,7 +513,7 @@ async def update_campaign(
     return updated_doc
 
 
-@router.delete("/{campaign_id}")
+@router.delete("/{campaign_id}", dependencies=[require_permission("campaign:delete")])
 async def delete_campaign(
     campaign_id: str,
     current_user: dict = Depends(get_current_user),
@@ -566,7 +566,7 @@ async def delete_campaign(
     return {"status": "deleted", "id": campaign_id, "name": campaign["name"]}
 
 
-@router.post("/{campaign_id}/restore")
+@router.post("/{campaign_id}/restore", dependencies=[require_permission("campaign:update")])
 async def restore_campaign(
     campaign_id: str,
     current_user: dict = Depends(get_current_user),
@@ -616,7 +616,7 @@ async def restore_campaign(
     return {"status": "restored", "id": campaign_id, "name": campaign["name"]}
 
 
-@router.post("/{campaign_id}/duplicate")
+@router.post("/{campaign_id}/duplicate", dependencies=[require_permission("campaign:create")])
 async def duplicate_campaign(
     campaign_id: str,
     current_user: dict = Depends(get_current_user),
@@ -680,7 +680,7 @@ async def duplicate_campaign(
     return new_campaign_doc
 
 
-@router.post("/{campaign_id}/launch")
+@router.post("/{campaign_id}/launch", dependencies=[require_permission("campaign:update")])
 async def launch_campaign(
     campaign_id: str,
     req: LaunchCampaignRequest | None = None,
@@ -720,6 +720,20 @@ async def _launch_campaign_impl(
         or campaign.get("auto_launch_claim_id") != auto_launch_claim_id
     ):
         raise HTTPException(status_code=409, detail="Warm-up activation was canceled or superseded")
+
+    if hasattr(db, "outreach_tasks") and hasattr(db.outreach_tasks, "count_documents"):
+        count_res = db.outreach_tasks.count_documents({
+            "campaign_id": campaign_id,
+            "workspace_id": _workspace_id(current_user),
+            "status": "uncertain",
+        })
+        if hasattr(count_res, "__await__"):
+            count_res = await count_res
+        if isinstance(count_res, (int, float)) and int(count_res) > 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Campaign has {int(count_res)} action(s) with uncertain provider outcomes requiring manual reconciliation before resuming.",
+            )
 
     # Apply any runtime parameters passed during launch
     updates: dict[str, Any] = {"updated_at": datetime.now(timezone.utc)}
@@ -926,6 +940,7 @@ async def _launch_campaign_impl(
 
     # 3. Mark Campaign as ACTIVE
     updates["status"] = CampaignStatus.ACTIVE
+    updates["pause_reason"] = None
     updates["auto_launch_enabled"] = False
     updates["auto_launch_claim_id"] = None
     if warmup_until:
@@ -954,7 +969,7 @@ async def _launch_campaign_impl(
     }
 
 
-@router.post("/{campaign_id}/pause")
+@router.post("/{campaign_id}/pause", dependencies=[require_permission("campaign:update")])
 async def pause_campaign(
     campaign_id: str,
     current_user: dict = Depends(get_current_user),

@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from api.deps import get_current_user
+from api.deps import get_current_user, require_permission
 from db.mongo import get_db
 from outreach.core.lead_importer import normalize_linkedin_url
 from outreach.core.rate_limiter import OutboundRateLimiter
@@ -159,7 +159,7 @@ def _build_voyager(account: dict) -> VoyagerClient:
         proxy_url=proxy_url,
     )
 
-@router.post("/lists", status_code=status.HTTP_201_CREATED)
+@router.post("/lists", status_code=status.HTTP_201_CREATED, dependencies=[require_permission("engage:manage")])
 async def create_engage_list(
     req: CreateEngageListRequest,
     current_user: dict = Depends(get_current_user),
@@ -240,7 +240,7 @@ async def list_engage_accounts(
     return accounts
 
 
-@router.patch("/lists/{list_id}/settings")
+@router.patch("/lists/{list_id}/settings", dependencies=[require_permission("engage:manage")])
 async def update_engage_list_settings(
     list_id: str,
     req: EngageListSettingsRequest,
@@ -338,7 +338,7 @@ async def list_engage_drafts(
     return {"drafts": drafts, "pending_count": pending_count}
 
 
-@router.post("/lists/{list_id}/drafts", status_code=status.HTTP_201_CREATED)
+@router.post("/lists/{list_id}/drafts", status_code=status.HTTP_201_CREATED, dependencies=[require_permission("engage:manage")])
 async def create_engage_draft(
     list_id: str,
     req: CreateEngageDraftRequest,
@@ -373,7 +373,7 @@ async def create_engage_draft(
     return doc
 
 
-@router.patch("/lists/{list_id}/drafts/{draft_id}")
+@router.patch("/lists/{list_id}/drafts/{draft_id}", dependencies=[require_permission("engage:manage")])
 async def update_engage_draft(
     list_id: str,
     draft_id: str,
@@ -406,7 +406,7 @@ async def update_engage_draft(
     return {**draft, **updates}
 
 
-@router.delete("/lists/{list_id}", status_code=status.HTTP_200_OK)
+@router.delete("/lists/{list_id}", status_code=status.HTTP_200_OK, dependencies=[require_permission("engage:delete")])
 async def delete_engage_list(
     list_id: str,
     current_user: dict = Depends(get_current_user),
@@ -425,7 +425,7 @@ async def delete_engage_list(
     return {"status": "deleted", "list_id": list_id}
 
 
-@router.post("/lists/{list_id}/contacts")
+@router.post("/lists/{list_id}/contacts", dependencies=[require_permission("engage:manage")])
 async def add_contacts_to_list(
     list_id: str,
     req: AddContactsRequest,
@@ -519,7 +519,7 @@ async def add_contacts_to_list(
             "total_contacts": new_count, "enrichment_status": "queued" if account and added_count else "waiting_for_sender" if added_count else "idle"}
 
 
-@router.delete("/lists/{list_id}/contacts/{contact_id}")
+@router.delete("/lists/{list_id}/contacts/{contact_id}", dependencies=[require_permission("engage:manage")])
 async def delete_engage_contact(
     list_id: str,
     contact_id: str,
@@ -615,7 +615,7 @@ async def export_engage_report(
     })
 
 
-@router.post("/lists/{list_id}/fetch", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/lists/{list_id}/fetch", status_code=status.HTTP_202_ACCEPTED, dependencies=[require_permission("engage:manage")])
 async def fetch_latest_posts_for_list(
     list_id: str,
     sender_account_id: str | None = None,
@@ -857,7 +857,7 @@ async def _queue_engage_action(
     return {"status": "queued", "post_id": post_id, "action": action}
 
 
-@router.post("/posts/{post_id}/like", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/posts/{post_id}/like", status_code=status.HTTP_202_ACCEPTED, dependencies=[require_permission("engage:manage")])
 async def queue_like_engage_post(
     post_id: str,
     req: LikePostRequest,
@@ -868,7 +868,7 @@ async def queue_like_engage_post(
     return await _queue_engage_action(post_id, workspace_id, req.sender_account_id, "like", None, db)
 
 
-@router.post("/posts/{post_id}/comment", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/posts/{post_id}/comment", status_code=status.HTTP_202_ACCEPTED, dependencies=[require_permission("engage:manage")])
 async def queue_comment_engage_post(
     post_id: str,
     req: CommentPostRequest,
@@ -882,7 +882,7 @@ async def queue_comment_engage_post(
                                       json.dumps({"comment_text": req.comment_text.strip(), "auto_like": req.auto_like}), db)
 
 
-@router.get("/posts/{post_id}/action")
+@router.get("/posts/{post_id}/action", dependencies=[require_permission("engage:read")])
 async def get_engage_post_action(
     post_id: str,
     current_user: dict = Depends(get_current_user),
@@ -898,7 +898,7 @@ async def get_engage_post_action(
     return post
 
 
-@router.post("/posts/{post_id}/discard")
+@router.post("/posts/{post_id}/discard", dependencies=[require_permission("engage:manage")])
 async def discard_engage_post(
     post_id: str,
     current_user: dict = Depends(get_current_user),
@@ -927,7 +927,7 @@ async def discard_engage_post(
     return {"status": "discarded", "post_id": post_id}
 
 
-@router.post("/ai-comment")
+@router.post("/ai-comment", dependencies=[require_permission("engage:manage")])
 async def generate_ai_comments(
     req: AICommentRequest,
     current_user: dict = Depends(get_current_user),

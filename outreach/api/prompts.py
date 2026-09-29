@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from api.deps import get_current_user
+from api.deps import get_current_user, require_permission
 from db.mongo import get_db
 
 logger = logging.getLogger(__name__)
@@ -127,7 +127,7 @@ async def list_prompts(
     return items
 
 
-@router.post("")
+@router.post("", dependencies=[require_permission("content:manage")])
 async def create_prompt(
     req: CreateAIPromptRequest,
     current_user: dict = Depends(get_current_user),
@@ -155,7 +155,7 @@ async def create_prompt(
     return doc
 
 
-@router.delete("/{prompt_id}")
+@router.delete("/{prompt_id}", dependencies=[require_permission("content:manage")])
 async def delete_prompt(
     prompt_id: str,
     current_user: dict = Depends(get_current_user),
@@ -178,7 +178,7 @@ async def delete_prompt(
     return {"status": "deleted", "prompt_id": prompt_id}
 
 
-@router.post("/preview")
+@router.post("/preview", dependencies=[require_permission("sequence:read")])
 async def preview_evaluated_message(
     req: PromptPreviewRequest,
     current_user: dict = Depends(get_current_user),

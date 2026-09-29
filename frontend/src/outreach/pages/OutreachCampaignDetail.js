@@ -362,8 +362,8 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
               </p>
               <p className="text-[11px] text-gray-400 mt-0.5">
                 {campaign.leads_contacted > 0
-                  ? `${Math.round((campaign.acceptances_count / campaign.leads_contacted) * 100)}%`
-                  : '0%'} acceptance
+                  ? `${Math.round((campaign.acceptances_count / campaign.leads_contacted) * 100)}% acceptance`
+                  : 'Not available'}
               </p>
             </div>
 
@@ -376,8 +376,8 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
               </p>
               <p className="text-[11px] text-gray-400 mt-0.5">
                 {campaign.leads_contacted > 0
-                  ? `${Math.round((campaign.replies_count / campaign.leads_contacted) * 100)}%`
-                  : '0%'} reply rate
+                  ? `${Math.round((campaign.replies_count / campaign.leads_contacted) * 100)}% reply rate`
+                  : 'Not available'}
               </p>
             </div>
 
@@ -410,7 +410,7 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-semibold text-gray-700">{item.label}</span>
                       <span className="text-gray-400 font-mono text-[11px]">
-                        {item.count} · {item.denominator ? Math.round((item.count / item.denominator) * 100) : 0}%
+                        {item.count} · {item.denominator ? `${Math.round((item.count / item.denominator) * 100)}%` : 'Not available'}
                       </span>
                     </div>
                     <div className="h-1.5 w-full rounded-full bg-gray-100 overflow-hidden">

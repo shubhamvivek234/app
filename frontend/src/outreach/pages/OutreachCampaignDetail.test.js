@@ -61,4 +61,16 @@ describe('Campaign detail launch flow', () => {
     expect(global.fetch.mock.calls.some(([url]) => url === '/api/v1/outreach/campaigns/campaign-a/pause')).toBe(true);
     expect(container.textContent).toContain('paused');
   });
+
+  it('displays Not available instead of misleading 0% when no leads have been contacted', async () => {
+    global.fetch = jest.fn(() => Promise.resolve({ ok: true, json: async () => ({
+      id: 'campaign-a', name: 'Fresh campaign', status: 'draft', sender_account_ids: [],
+      leads_count: 50, leads_contacted: 0, acceptances_count: 0, replies_count: 0,
+      schedule: {},
+    }) }));
+    await act(async () => root.render(<OutreachCampaignDetail campaignId="campaign-a" onBack={() => {}} />));
+    expect(container.textContent).toContain('Not available');
+    expect(container.textContent).not.toContain('0% acceptance');
+    expect(container.textContent).not.toContain('0% reply rate');
+  });
 });

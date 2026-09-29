@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from api.deps import get_current_user
+from api.deps import get_current_user, require_permission
 from db.mongo import get_db
 from outreach.models import WritingStyle
 from utils.free_llm_router import free_llm
@@ -32,7 +32,7 @@ class UpdateWritingStyleRequest(BaseModel):
     is_default: Optional[bool] = None
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED, dependencies=[require_permission("content:manage")])
 async def create_writing_style(
     req: CreateWritingStyleRequest,
     current_user: dict = Depends(get_current_user),
@@ -112,7 +112,7 @@ async def get_writing_style(
     return style
 
 
-@router.delete("/{style_id}")
+@router.delete("/{style_id}", dependencies=[require_permission("content:manage")])
 async def delete_writing_style(
     style_id: str,
     current_user: dict = Depends(get_current_user),

@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from api.deps import get_current_user
+from api.deps import get_current_user, require_permission
 from db.mongo import get_db
 from outreach.models import MessageSenderType
 from utils.free_llm_router import free_llm
@@ -141,7 +141,7 @@ async def get_thread(
     return doc
 
 
-@router.post("/{thread_id}/reply", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/{thread_id}/reply", status_code=status.HTTP_202_ACCEPTED, dependencies=[require_permission("inbox:reply")])
 async def send_thread_reply(
     thread_id: str,
     req: ReplyRequest,
@@ -200,7 +200,7 @@ async def send_thread_reply(
     return {"status": "queued", "job_id": job_id}
 
 
-@router.post("/{thread_id}/ai-reply", response_model=AIReplyResponse)
+@router.post("/{thread_id}/ai-reply", response_model=AIReplyResponse, dependencies=[require_permission("inbox:reply")])
 async def generate_ai_reply_options(
     thread_id: str,
     current_user: dict = Depends(get_current_user),
@@ -242,7 +242,7 @@ async def generate_ai_reply_options(
         raise HTTPException(status_code=503, detail="AI suggestions are unavailable. Please try again.") from exc
 
 
-@router.post("/sync", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/sync", status_code=status.HTTP_202_ACCEPTED, dependencies=[require_permission("inbox:manage")])
 async def trigger_inbox_sync(
     account_id: str | None = Query(None),
     current_user: dict = Depends(get_current_user),
@@ -301,7 +301,7 @@ async def get_inbox_job(
     return {key: value for key, value in job.items() if key not in {"_id", "user_id"}}
 
 
-@router.post("/seed-demo")
+@router.post("/seed-demo", dependencies=[require_permission("inbox:manage")])
 async def seed_demo_threads(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
@@ -394,7 +394,7 @@ async def seed_demo_threads(
     return {"status": "seeded", "count": len(demo_threads)}
 
 
-@router.patch("/{thread_id}/intent")
+@router.patch("/{thread_id}/intent", dependencies=[require_permission("inbox:manage")])
 async def update_thread_intent(
     thread_id: str,
     req: UpdateIntentRequest,
@@ -455,7 +455,7 @@ class ToggleTagRequest(BaseModel):
 
 # ── Reminders Endpoints ───────────────────────────────────────────────────
 
-@router.post("/{thread_id}/reminders")
+@router.post("/{thread_id}/reminders", dependencies=[require_permission("inbox:manage")])
 async def create_thread_reminder(
     thread_id: str,
     req: CreateReminderRequest,
@@ -524,7 +524,7 @@ async def list_thread_reminders(
     return items
 
 
-@router.delete("/reminders/{reminder_id}")
+@router.delete("/reminders/{reminder_id}", dependencies=[require_permission("inbox:manage")])
 async def delete_thread_reminder(
     reminder_id: str,
     current_user: dict = Depends(get_current_user),
@@ -630,7 +630,7 @@ async def list_snippets(
     return items
 
 
-@router.post("/snippets")
+@router.post("/snippets", dependencies=[require_permission("inbox:manage")])
 async def create_snippet(
     req: CreateSnippetRequest,
     current_user: dict = Depends(get_current_user),
@@ -658,7 +658,7 @@ async def create_snippet(
     return doc
 
 
-@router.delete("/snippets/{snippet_id}")
+@router.delete("/snippets/{snippet_id}", dependencies=[require_permission("inbox:manage")])
 async def delete_snippet(
     snippet_id: str,
     current_user: dict = Depends(get_current_user),
@@ -722,7 +722,7 @@ async def list_tags(
     return items
 
 
-@router.post("/tags")
+@router.post("/tags", dependencies=[require_permission("inbox:manage")])
 async def create_tag(
     req: CreateTagRequest,
     current_user: dict = Depends(get_current_user),
@@ -752,7 +752,7 @@ async def create_tag(
     return doc
 
 
-@router.delete("/tags/{tag_id}")
+@router.delete("/tags/{tag_id}", dependencies=[require_permission("inbox:manage")])
 async def delete_tag(
     tag_id: str,
     current_user: dict = Depends(get_current_user),
@@ -779,7 +779,7 @@ async def delete_tag(
     return {"status": "deleted", "tag_id": tag_id}
 
 
-@router.patch("/{thread_id}/tags")
+@router.patch("/{thread_id}/tags", dependencies=[require_permission("inbox:manage")])
 async def toggle_thread_tag(
     thread_id: str,
     req: ToggleTagRequest,

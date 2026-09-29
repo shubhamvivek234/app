@@ -112,7 +112,7 @@ async def update_billing_email(
     return {"status": "success", "billing_email": email}
 
 
-@router.post("/start-trial")
+@router.post("/start-trial", dependencies=[require_permission("billing:manage")])
 async def start_outreach_trial(
     req: StartTrialRequest,
     current_user: dict = Depends(get_current_user),
@@ -121,7 +121,7 @@ async def start_outreach_trial(
     raise HTTPException(status_code=410, detail="The free trial is retired. Request managed pilot access instead.")
 
 
-@router.post("/update-seats")
+@router.post("/update-seats", dependencies=[require_permission("billing:manage")])
 async def update_seats(
     req: UpdateSeatsRequest,
     current_user: dict = Depends(get_current_user),

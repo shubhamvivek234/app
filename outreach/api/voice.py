@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from api.deps import get_current_user
+from api.deps import get_current_user, require_permission
 from db.mongo import get_db
 from outreach.core.voice_cloner import VoiceCloner, VoiceCloningError
 from outreach.models import OutreachVoice
@@ -79,7 +79,7 @@ async def list_voices(
     }
 
 
-@router.post("/clone", status_code=status.HTTP_201_CREATED)
+@router.post("/clone", status_code=status.HTTP_201_CREATED, dependencies=[require_permission("voice:manage")])
 async def clone_voice(
     file: UploadFile = File(...),
     name: str = Form(...),
@@ -138,7 +138,7 @@ async def clone_voice(
     return result
 
 
-@router.post("/preview")
+@router.post("/preview", dependencies=[require_permission("voice:manage")])
 async def preview_voice_note(
     req: VoicePreviewRequest,
     current_user: dict = Depends(get_current_user),
@@ -183,7 +183,7 @@ async def preview_voice_note(
     }
 
 
-@router.post("/{voice_id}/assign")
+@router.post("/{voice_id}/assign", dependencies=[require_permission("voice:manage")])
 async def assign_voice(
     voice_id: str,
     req: AssignVoiceRequest,
@@ -205,7 +205,7 @@ async def assign_voice(
     return {"status": "success", "voice_id": voice_id, "assigned_account_ids": req.account_ids}
 
 
-@router.delete("/{voice_id}")
+@router.delete("/{voice_id}", dependencies=[require_permission("voice:manage")])
 async def delete_voice(
     voice_id: str,
     current_user: dict = Depends(get_current_user),

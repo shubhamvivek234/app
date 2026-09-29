@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from api.deps import get_current_user
+from api.deps import get_current_user, require_permission
 from db.mongo import get_db
 from outreach.core.dag_compiler import DAGCompiler, DAGValidationError
 from outreach.models import OutreachSequence, SequenceNode, SequenceEdge
@@ -132,7 +132,7 @@ async def get_sequence_templates(
     return templates
 
 
-@router.post("/templates")
+@router.post("/templates", dependencies=[require_permission("sequence:create")])
 async def save_custom_template(
     req: SaveTemplateRequest,
     current_user: dict = Depends(get_current_user),
@@ -172,7 +172,7 @@ async def save_custom_template(
     return {"status": "success", "template": doc}
 
 
-@router.delete("/templates/{template_id}")
+@router.delete("/templates/{template_id}", dependencies=[require_permission("sequence:delete")])
 async def delete_custom_template(
     template_id: str,
     current_user: dict = Depends(get_current_user),
@@ -189,7 +189,7 @@ async def delete_custom_template(
     return {"status": "success", "message": "Template deleted"}
 
 
-@router.post("/validate")
+@router.post("/validate", dependencies=[require_permission("sequence:update")])
 async def validate_sequence(req: ValidateSequenceRequest):
     """
     Validates a sequence topology before launching.
@@ -229,7 +229,7 @@ async def get_campaign_sequence(
     return seq_doc
 
 
-@router.post("")
+@router.post("", dependencies=[require_permission("sequence:update")])
 async def save_campaign_sequence(
     req: SaveSequenceRequest,
     current_user: dict = Depends(get_current_user),

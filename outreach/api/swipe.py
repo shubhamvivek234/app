@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from api.deps import get_current_user
+from api.deps import get_current_user, require_permission
 from db.mongo import get_db
 from outreach.models import SwipeFileItem
 from utils.free_llm_router import free_llm
@@ -52,7 +52,7 @@ class RepurposeSwipeRequest(BaseModel):
     writing_style_id: Optional[str] = None
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED, dependencies=[require_permission("content:manage")])
 async def create_swipe_item(
     req: CreateSwipeItemRequest,
     current_user: dict = Depends(get_current_user),
@@ -108,7 +108,7 @@ async def list_swipe_items(
     return await cursor.to_list(limit)
 
 
-@router.delete("/{item_id}")
+@router.delete("/{item_id}", dependencies=[require_permission("content:manage")])
 async def delete_swipe_item(
     item_id: str,
     current_user: dict = Depends(get_current_user),
@@ -121,7 +121,7 @@ async def delete_swipe_item(
     return {"status": "deleted", "item_id": item_id}
 
 
-@router.post("/{item_id}/repurpose")
+@router.post("/{item_id}/repurpose", dependencies=[require_permission("content:manage")])
 async def repurpose_swipe_item(
     item_id: str,
     req: RepurposeSwipeRequest,
