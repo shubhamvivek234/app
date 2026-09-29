@@ -10,6 +10,9 @@ import {
   RefreshCw,
   PhoneCall,
   TrendingUp,
+  Mail,
+  Download,
+  User,
 } from 'lucide-react';
 
 export default function OutreachAnalytics() {
@@ -19,6 +22,9 @@ export default function OutreachAnalytics() {
   const [timeframe, setTimeframe] = useState('30d');
   const [campaignId, setCampaignId] = useState('all');
   const [campaigns, setCampaigns] = useState([]);
+  const [senderAccountId, setSenderAccountId] = useState('all');
+  const [senders, setSenders] = useState([]);
+  const [exporting, setExporting] = useState(false);
   const [selectedMetric, setSelectedMetric] = useState('requests'); // 'requests' | 'messages'
   const [hoveredBar, setHoveredBar] = useState(null);
   const requestId = useRef(0);
@@ -41,6 +47,53 @@ export default function OutreachAnalytics() {
     }
   };
 
+  const fetchSenders = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/v1/outreach/accounts', {
+        credentials: 'include',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSenders(data || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch senders for analytics:', err);
+    }
+  };
+
+  const handleExportCsv = async () => {
+    try {
+      setExporting(true);
+      const token = localStorage.getItem('token');
+      const params = new URLSearchParams();
+      if (timeframe) params.append('timeframe', timeframe);
+      if (campaignId && campaignId !== 'all') params.append('campaign_id', campaignId);
+      if (senderAccountId && senderAccountId !== 'all') params.append('sender_account_id', senderAccountId);
+
+      const res = await fetch(`/api/v1/outreach/analytics/export?${params.toString()}`, {
+        credentials: 'include',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (!res.ok) throw new Error('Could not export analytics CSV');
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `outreach-analytics-${timeframe}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success('Analytics CSV exported');
+    } catch (err) {
+      toast.error(err.message || 'Could not export analytics');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const fetchAnalytics = async () => {
     const currentRequest = ++requestId.current;
     setLoading(true);
@@ -50,6 +103,7 @@ export default function OutreachAnalytics() {
       const params = new URLSearchParams();
       if (timeframe) params.append('timeframe', timeframe);
       if (campaignId && campaignId !== 'all') params.append('campaign_id', campaignId);
+      if (senderAccountId && senderAccountId !== 'all') params.append('sender_account_id', senderAccountId);
 
       const res = await fetch(`/api/v1/outreach/analytics?${params.toString()}`, {
         credentials: 'include',
@@ -71,13 +125,14 @@ export default function OutreachAnalytics() {
 
   useEffect(() => {
     fetchCampaigns();
+    fetchSenders();
   }, []);
 
   useEffect(() => {
     fetchAnalytics();
     return () => { requestId.current += 1; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeframe, campaignId]);
+  }, [timeframe, campaignId, senderAccountId]);
 
   const emptyKpis = {
     requests: { sent: 0, accepted: 0, acceptance_rate: 0 },
@@ -139,7 +194,7 @@ export default function OutreachAnalytics() {
         </div>
 
         {/* Global Filters */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-1.5 bg-white border border-gray-200/90 rounded-xl px-3 py-1.5 shadow-2xs">
             <Filter className="w-3.5 h-3.5 text-gray-400" />
             <select
@@ -151,6 +206,23 @@ export default function OutreachAnalytics() {
               {campaigns.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-1.5 bg-white border border-gray-200/90 rounded-xl px-3 py-1.5 shadow-2xs">
+            <User className="w-3.5 h-3.5 text-gray-400" />
+            <select
+              aria-label="Filter by sender"
+              value={senderAccountId}
+              onChange={(e) => setSenderAccountId(e.target.value)}
+              className="text-xs font-medium text-gray-700 bg-transparent border-0 focus:ring-0 cursor-pointer"
+            >
+              <option value="all">All senders</option>
+              {senders.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.account_name || s.name || s.id}
                 </option>
               ))}
             </select>
@@ -170,8 +242,20 @@ export default function OutreachAnalytics() {
           </div>
 
           <button
+            type="button"
+            onClick={handleExportCsv}
+            disabled={exporting}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-gray-200 text-gray-700 hover:text-gray-900 hover:bg-gray-50 shadow-2xs text-xs font-medium transition-colors disabled:opacity-50 cursor-pointer"
+            title="Export analytics CSV"
+          >
+            <Download className={`w-3.5 h-3.5 ${exporting ? 'animate-bounce' : ''}`} />
+            <span>Export CSV</span>
+          </button>
+
+          <button
+            type="button"
             onClick={fetchAnalytics}
-            className="p-2 rounded-xl bg-white border border-gray-200 text-gray-500 hover:text-gray-800 hover:bg-gray-50 shadow-2xs transition-colors"
+            className="p-2 rounded-xl bg-white border border-gray-200 text-gray-500 hover:text-gray-800 hover:bg-gray-50 shadow-2xs transition-colors cursor-pointer"
             title="Refresh analytics"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
@@ -180,7 +264,7 @@ export default function OutreachAnalytics() {
       </div>
 
       {/* KPI Cards Grid matching prosp_campaign_analytics.jpg */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         {/* Card 1: LinkedIn Requests */}
         <div
           onClick={() => setSelectedMetric('requests')}
@@ -202,10 +286,11 @@ export default function OutreachAnalytics() {
             </span>
             <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full">
               {kpis.requests?.accepted ?? 0} accepted
+              {kpis.requests?.acceptance_rate != null ? ` (${kpis.requests.acceptance_rate}%)` : ''}
             </span>
           </div>
           <p className="text-[11px] text-gray-600 mt-2">
-            Confirmed invitations sent in this period
+            {kpis.requests?.denominator ? `${kpis.requests.denominator} invitations recorded in this period` : 'Confirmed invitations sent in this period'}
           </p>
         </div>
 
@@ -230,10 +315,11 @@ export default function OutreachAnalytics() {
             </span>
             <span className="text-[11px] font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full">
               {kpis.messages?.replied ?? 0} replies
+              {kpis.messages?.reply_rate != null ? ` (${kpis.messages.reply_rate}%)` : ''}
             </span>
           </div>
           <p className="text-[11px] text-gray-600 mt-2">
-            Confirmed direct messages sent in this period
+            {kpis.messages?.denominator ? `${kpis.messages.denominator} messages recorded in this period` : 'Confirmed direct messages sent in this period'}
           </p>
         </div>
 
@@ -254,7 +340,28 @@ export default function OutreachAnalytics() {
             </span>
           </div>
           <p className="text-[11px] text-gray-600 mt-2">
-            {kpis.engagement?.profile_visits ?? 0} profile views · {kpis.engagement?.post_engagements ?? 0} post actions
+            {kpis.engagement?.profile_visits ?? 0} views · {kpis.engagement?.post_engagements ?? 0} actions
+          </p>
+        </div>
+
+        {/* Card 4: Email Delivery */}
+        <div className="rounded-2xl p-5 border bg-white border-gray-200/90 shadow-2xs">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center">
+              <Mail className="w-4 h-4" />
+            </div>
+            <span className="text-xs font-semibold text-gray-700">Email Delivery</span>
+          </div>
+          <div className="flex items-baseline justify-between">
+            <span className="text-3xl font-extrabold text-gray-900 tracking-tight">
+              {kpis.email?.delivered ?? 0}
+            </span>
+            <span className="text-[11px] font-semibold text-sky-700 bg-sky-50 px-2 py-0.5 rounded-full">
+              {kpis.email?.deliverability_rate != null ? `${kpis.email.deliverability_rate}% delivered` : 'Not available'}
+            </span>
+          </div>
+          <p className="text-[11px] text-gray-600 mt-2">
+            {kpis.email?.sent ? `${kpis.email.sent} sent · ${kpis.email.delivered} delivered` : '0 verified email delivery events'}
           </p>
         </div>
       </div>

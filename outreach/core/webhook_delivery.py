@@ -13,6 +13,7 @@ import httpx
 from outreach.core.crypto import decrypt_secret
 from outreach.core.safe_transport import SSRFSecurityError, create_safe_client
 from outreach.core.webhook_signer import build_delivery_headers
+from outreach.core.integrations_pilot import is_integrations_pilot_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,13 @@ async def dispatch_due_deliveries(
 
             payload_data = delivery.get("payload", {})
             attempt_time = datetime.now(timezone.utc)
+
+            if not is_integrations_pilot_allowed(delivery.get("workspace_id")):
+                await db.outreach_webhook_deliveries.update_one(
+                    {"id": delivery_id},
+                    {"$set": {"status": "cancelled", "last_error": "Integrations not enabled for workspace in current pilot", "resolved_at": attempt_time}},
+                )
+                continue
 
             if destination_type == "slack":
                 from outreach.core.slack_notifier import format_slack_event_card

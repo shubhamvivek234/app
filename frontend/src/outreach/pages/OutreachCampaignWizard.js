@@ -16,6 +16,7 @@ import {
   Sparkles,
   AlertCircle,
   ExternalLink,
+  RefreshCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import SequenceCanvas from '../components/sequence/SequenceCanvas';
@@ -134,6 +135,9 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
   const [enrolledLeads, setEnrolledLeads] = useState([]);
   const [loadingLeads, setLoadingLeads] = useState(false);
   const [leadsError, setLeadsError] = useState('');
+  const [preflightData, setPreflightData] = useState(null);
+  const [loadingPreflight, setLoadingPreflight] = useState(false);
+  const [preflightError, setPreflightError] = useState('');
 
   const [schedule, setSchedule] = useState(createDefaultSchedule);
   const sequenceSaveRef = React.useRef(null);
@@ -248,6 +252,34 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
       setLoadingLeads(false);
     }
   };
+
+  const fetchPreflight = React.useCallback(async (cid) => {
+    const targetCid = cid || activeCampaignId || campaignId;
+    if (!targetCid || targetCid === 'new' || targetCid === 'new_campaign') return;
+    setLoadingPreflight(true);
+    setPreflightError('');
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/v1/outreach/campaigns/${targetCid}/preflight`, {
+        credentials: 'include',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Launch checklist could not be verified.');
+      setPreflightData(data);
+    } catch (err) {
+      console.error('Failed to load campaign preflight:', err);
+      setPreflightError(err.message || 'Launch checklist could not be verified.');
+    } finally {
+      setLoadingPreflight(false);
+    }
+  }, [activeCampaignId, campaignId]);
+
+  useEffect(() => {
+    if (currentStep === 3) {
+      fetchPreflight(activeCampaignId || campaignId);
+    }
+  }, [currentStep, activeCampaignId, campaignId, fetchPreflight]);
 
   const copyToAllWeekdays = (sourceIdx) => {
     const sourceRanges = schedule[sourceIdx].ranges;
@@ -1285,10 +1317,84 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                 ) : <p className="text-xs text-amber-800">Conditional auto-launch is unavailable for this deployment. You can still launch manually after reviewing engagement.</p>}
               </div>
 
+              {/* Preflight & Launch Readiness Checklist */}
+              <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-xs space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+                  <div>
+                    <h3 className="text-base font-bold text-gray-900 tracking-tight flex items-center gap-2">
+                      <span>Launch Readiness Checklist</span>
+                      {loadingPreflight && <RefreshCw className="w-3.5 h-3.5 animate-spin text-gray-400" />}
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Automated audit of entitlement, senders, proxy, mailbox, sequence DAG, and safety constraints.
+                    </p>
+                  </div>
+                  {preflightData && (
+                    <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
+                      preflightData.can_launch
+                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        : 'bg-amber-50 text-amber-800 border border-amber-200'
+                    }`}>
+                      {preflightData.can_launch ? 'Ready to Launch' : `${preflightData.blockers?.length || 0} Blocker(s)`}
+                    </span>
+                  )}
+                </div>
+
+                {preflightError ? (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex justify-between items-center">
+                    <span>{preflightError}</span>
+                    <button type="button" onClick={() => fetchPreflight()} className="font-bold underline">Retry</button>
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {(preflightData?.checklist || []).map((item) => (
+                      <div
+                        key={item.item}
+                        className={`p-3 rounded-xl border flex items-start gap-3 transition-colors ${
+                          item.passed
+                            ? 'bg-emerald-50/30 border-emerald-100 text-gray-800'
+                            : 'bg-amber-50/50 border-amber-200 text-amber-900'
+                        }`}
+                      >
+                        {item.passed ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold">{item.label}</p>
+                          {item.reason && (
+                            <p className="text-[11px] text-amber-700 mt-0.5">{item.reason}</p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Sequence Path & Variable Summary */}
+                {preflightData?.sequence_summary && (
+                  <div className="pt-3 border-t border-gray-100 grid sm:grid-cols-2 gap-3 text-xs">
+                    <div className="p-3 bg-gray-50 rounded-xl border border-gray-100 space-y-1">
+                      <p className="text-[10px] uppercase font-bold text-gray-400">Branch Paths</p>
+                      <p className="text-gray-800 font-medium">
+                        {(preflightData.sequence_summary.branch_paths || []).join(', ') || 'Single sequence path'}
+                      </p>
+                    </div>
+                    <div className="p-3 bg-gray-50 rounded-xl border border-gray-100 space-y-1">
+                      <p className="text-[10px] uppercase font-bold text-gray-400">Detected Template Variables</p>
+                      <p className="font-mono text-gray-800 font-medium truncate">
+                        {(preflightData.sequence_summary.template_variables || []).map(v => `{{${v}}}`).join(', ') || 'No variables'}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Bottom CTA Button matching media_1790103490135.png */}
               <button
                 type="button"
-                onClick={() => { setLaunchError(''); setReviewModalOpen(true); }}
+                onClick={() => { setLaunchError(''); fetchPreflight(); setReviewModalOpen(true); }}
                 className="w-full py-4 bg-[#5851ea] hover:bg-[#4a42e0] text-white font-semibold text-sm rounded-2xl flex items-center justify-center gap-2 shadow-sm transition-all active:scale-[0.99] cursor-pointer"
               >
                 <span>Review and launch →</span>
@@ -1316,6 +1422,20 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                 <X className="w-5 h-5" />
               </button>
             </div>
+
+            {preflightData && !preflightData.can_launch && (
+              <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 space-y-1">
+                <p className="font-bold flex items-center gap-1.5">
+                  <AlertCircle className="w-4 h-4 text-amber-600" />
+                  <span>Launch Blocked: resolve issues before activating</span>
+                </p>
+                <ul className="list-disc pl-5 space-y-0.5 text-[11px]">
+                  {(preflightData.blockers || []).map((b, i) => (
+                    <li key={i}>{b}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             <div className="space-y-2.5 text-xs">
               <div className="p-3 bg-gray-50 rounded-xl flex justify-between">

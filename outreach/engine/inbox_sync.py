@@ -204,12 +204,30 @@ class InboxSynchronizer:
                             "has_replied": True,
                             "execution_state": LeadExecutionState.REPLIED,
                             "replied_at": datetime.now(timezone.utc),
+                            "pause_reason": "Lead replied to outreach",
                         }
                     },
                 )
                 newly_replied = getattr(lead_update, "modified_count", 0) == 1
                 if newly_replied:
                     new_replies_detected += 1
+                    if hasattr(self.db, "outreach_tasks") and hasattr(self.db.outreach_tasks, "update_many"):
+                        task_update_res = self.db.outreach_tasks.update_many(
+                            {
+                                "lead_id": matched_lead["id"],
+                                "workspace_id": self.workspace_id,
+                                "status": "pending",
+                            },
+                            {
+                                "$set": {
+                                    "status": "skipped",
+                                    "skip_reason": "Lead replied: follow-up touches stopped",
+                                    "resolved_at": datetime.now(timezone.utc),
+                                }
+                            },
+                        )
+                        if hasattr(task_update_res, "__await__"):
+                            await task_update_res
 
                 # Increment campaign reply KPIs if lead has campaign_id
                 if campaign_id and newly_replied:

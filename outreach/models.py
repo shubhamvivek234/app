@@ -240,6 +240,8 @@ class OutreachLead(BaseModel):
     country_code: str = ""
     pipeline_stage: str = "unassigned"  # unassigned, in_campaign, contacted, replied, call_booked
     custom_variables: dict[str, str] = Field(default_factory=dict)
+    source: str = "csv"  # csv, pasted_urls, finder, etc.
+    source_metadata: dict[str, Any] = Field(default_factory=dict)
     
     # State tracking
     current_node_id: str | None = None
@@ -251,6 +253,7 @@ class OutreachLead(BaseModel):
     accepted_at: datetime | None = None
     has_replied: bool = False
     replied_at: datetime | None = None
+    pause_reason: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
 

@@ -43,10 +43,12 @@ Completed:
 - Verification: 300 outreach backend tests, 63 frontend tests, and production build pass. Live actions remain disabled by default.
 
 ## Active Work
+- 2026-09-30: Completed P1 & P2 from gap plan (`docs/OUTREACH_DRIPIFY_VIDEO_GAP_PLAN.md`).
+- P1: Pasted URLs + CSV intake with row-level preview & deduplication; lead activity timeline & notes; pause/resume preflight guards; pause-on-reply task skipping; launch readiness checklist; LeadActivityDrawer.
+- P2: Workspace allowlists for mailbox connection/send/sync and integrations (outbox event suppression & webhook delivery cancellation); provenance-backed reporting with honest denominators, sender filters, and streaming CSV export. Fixed babel plugin dynamic span wrapping in table/select tags.
+- Verification: 319 backend tests, 73 frontend tests, Python bytecode compile, and production build pass.
 Next:
-- Implement P1 from `docs/OUTREACH_DRIPIFY_VIDEO_GAP_PLAN.md`: reliable pasted-profile-URL + CSV import, honest lead deduplication, explicit manual CSV source assignment, and sequence canvas validation.
-- Obtain product/legal approval and a purchased IPRoyal static ISP IP before live pilot enablement.
-- Validate Webshare/IPRoyal provisioning live; unattended actions and live LinkedIn scraping remain disabled.
+- Review live mailbox pilot and purchased IPRoyal seat verification before enabling live actions.
 
 ## Deploy Notes
 - Frontend: Vercel auto-deploys from `main`.

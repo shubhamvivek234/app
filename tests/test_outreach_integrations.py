@@ -19,6 +19,12 @@ def test_experimental_integrations_are_not_published_by_default():
     assert not any(path.startswith("/outreach/public") for path in paths)
 
 
+@pytest.fixture(autouse=True)
+def enable_integrations_for_tests(monkeypatch, request):
+    if request.node.name != "test_experimental_integrations_are_not_published_by_default":
+        monkeypatch.setenv("OUTREACH_INTEGRATIONS_ENABLED", "true")
+
+
 @pytest.mark.asyncio
 async def test_webhook_signing_and_dispatch():
     secret = "whsec_test_secret_123"

@@ -67,6 +67,28 @@ def email_send_enabled() -> bool:
     return _enabled("OUTREACH_EMAIL_SEND_ENABLED") and _enabled("OUTREACH_EMAIL_SYNC_ENABLED")
 
 
+def is_mailbox_pilot_allowed(workspace_id: str | None = None) -> bool:
+    """Checks whether mailbox connection is enabled globally and for this specific pilot workspace."""
+    if not mailbox_connection_enabled():
+        return False
+    allowlist = os.getenv("OUTREACH_MAILBOX_PILOT_WORKSPACES", "").strip()
+    if not allowlist or allowlist == "*":
+        return True
+    allowed_ids = {ws.strip() for ws in allowlist.split(",") if ws.strip()}
+    return bool(workspace_id and workspace_id in allowed_ids)
+
+
+def is_email_send_pilot_allowed(workspace_id: str | None = None) -> bool:
+    """Checks whether email send is enabled globally and for this specific pilot workspace."""
+    if not email_send_enabled():
+        return False
+    allowlist = os.getenv("OUTREACH_MAILBOX_PILOT_WORKSPACES", "").strip()
+    if not allowlist or allowlist == "*":
+        return True
+    allowed_ids = {ws.strip() for ws in allowlist.split(",") if ws.strip()}
+    return bool(workspace_id and workspace_id in allowed_ids)
+
+
 def _provider_config(provider: str) -> ProviderConfig:
     if provider == "gmail":
         prefix = "OUTREACH_GMAIL"
@@ -150,8 +172,8 @@ async def _expire_abandoned_connection_jobs(db, workspace_id: str, sender_accoun
 async def start_mailbox_connection(
     db, workspace_id: str, user_id: str, sender_account_id: str, provider: str,
 ) -> dict:
-    if not mailbox_connection_enabled():
-        raise HTTPException(status_code=503, detail="Mailbox connections are not enabled")
+    if not is_mailbox_pilot_allowed(workspace_id):
+        raise HTTPException(status_code=503, detail="Mailbox connections are not enabled for this workspace in the current pilot")
     try:
         config = _provider_config(provider)
     except MailboxUnavailable as exc:
@@ -433,7 +455,7 @@ async def complete_connection_job(db, workspace_id: str, job_id: str) -> dict:
 
 async def get_ready_mailbox(db, workspace_id: str, sender_account_id: str) -> dict | None:
     """Read-only readiness check safe to call from campaign launch validation."""
-    if not email_send_enabled() or not await _paid_sender(db, workspace_id, sender_account_id):
+    if not is_email_send_pilot_allowed(workspace_id) or not await _paid_sender(db, workspace_id, sender_account_id):
         return None
     mailbox = await db.outreach_mailboxes.find_one({
         "workspace_id": workspace_id, "sender_account_id": sender_account_id,

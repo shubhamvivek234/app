@@ -3,6 +3,8 @@ Phase 3 & Prosp AI Parity: Outreach Campaign & Account Analytics API.
 Powers KPI summary metric cards and daily Sent vs Accepted bar chart.
 Matches Prosp campaign analytics (prosp_campaign_analytics.jpg).
 """
+import csv
+import io
 import json
 import asyncio
 import logging
@@ -23,6 +25,7 @@ router = APIRouter(prefix="/analytics", tags=["LinkedIn Outreach Analytics"])
 @router.get("")
 async def get_outreach_analytics(
     campaign_id: str | None = None,
+    sender_account_id: str | None = None,
     timeframe: str = Query("30d", description="'7d' | '14d' | '30d'"),
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
@@ -50,21 +53,28 @@ async def get_outreach_analytics(
     if campaign_id and campaign_id != "all":
         lead_clauses.append({"campaign_id": campaign_id})
 
-    lead_query = {"$and": lead_clauses} if len(lead_clauses) > 1 else lead_clauses[0]
-
-    # Aggregate counts from leads
-    total_leads = await db.outreach_leads.count_documents(lead_query)
-    replied_leads = await db.outreach_leads.count_documents({"$and": [lead_query, {"pipeline_stage": "replied"}]})
-    booked_leads = await db.outreach_leads.count_documents({"$and": [lead_query, {"pipeline_stage": "call_booked"}]})
-    in_campaign = await db.outreach_leads.count_documents({"$and": [lead_query, {"pipeline_stage": {"$in": ["in_campaign", "contacted"]}}]})
-
     # Aggregate actual executed queue items if any
     queue_clauses: list[dict[str, Any]] = [
         scope
     ]
     if campaign_id and campaign_id != "all":
         queue_clauses.append({"campaign_id": campaign_id})
+
+    if sender_account_id and sender_account_id != "all":
+        sender = await db.outreach_accounts.find_one({"id": sender_account_id, **scope})
+        if not sender:
+            raise HTTPException(status_code=404, detail="Sender account not found")
+        lead_clauses.append({"assigned_account_id": sender_account_id})
+        queue_clauses.append({"account_id": sender_account_id})
+
+    lead_query = {"$and": lead_clauses} if len(lead_clauses) > 1 else lead_clauses[0]
     queue_query = {"$and": queue_clauses} if len(queue_clauses) > 1 else queue_clauses[0]
+
+    # Aggregate counts from leads
+    total_leads = await db.outreach_leads.count_documents(lead_query)
+    replied_leads = await db.outreach_leads.count_documents({"$and": [lead_query, {"pipeline_stage": "replied"}]})
+    booked_leads = await db.outreach_leads.count_documents({"$and": [lead_query, {"pipeline_stage": "call_booked"}]})
+    in_campaign = await db.outreach_leads.count_documents({"$and": [lead_query, {"pipeline_stage": {"$in": ["in_campaign", "contacted"]}}]})
 
     # Check for connected accounts safely
     acc_count = 0
@@ -89,6 +99,24 @@ async def get_outreach_analytics(
     messages_sent = await db.outreach_tasks.count_documents(task_filter("send_message"))
     messages_replied = await db.outreach_leads.count_documents(lead_filter({"has_replied": True, "replied_at": {"$gte": period_start}}))
 
+    # Email metrics (only confirmed sends and deliveries from recorded events)
+    email_sent = await db.outreach_tasks.count_documents(task_filter("send_email"))
+    email_delivered = 0
+    deliverability_rate = None
+    if email_sent > 0:
+        bounces = 0
+        if hasattr(db, "outreach_email_inbound_events") and hasattr(db.outreach_email_inbound_events, "count_documents"):
+            bounce_filter = {**scope, "kind": "bounce", "created_at": {"$gte": period_start}}
+            if sender_account_id and sender_account_id != "all":
+                bounce_filter["sender_account_id"] = sender_account_id
+            bounce_res = db.outreach_email_inbound_events.count_documents(bounce_filter)
+            if hasattr(bounce_res, "__await__"):
+                bounces = await bounce_res
+            elif isinstance(bounce_res, (int, float)):
+                bounces = int(bounce_res)
+        email_delivered = max(0, email_sent - bounces)
+        deliverability_rate = round(email_delivered / email_sent * 100, 1)
+
     # Engagement metrics (pre-warming visits, likes, comments)
     profile_visits = await db.outreach_tasks.count_documents(task_filter("visit_profile"))
     post_engagements = await db.outreach_tasks.count_documents(task_filter({"$in": ["like_last_post", "comment_last_post"]}))
@@ -97,6 +125,11 @@ async def get_outreach_analytics(
         if campaign_id and campaign_id != "all":
             linked_list_ids = await db.outreach_engage_lists.distinct("id", {"workspace_id": workspace_id, "campaign_id": campaign_id})
             engage_filter["list_id"] = {"$in": linked_list_ids}
+        if sender_account_id and sender_account_id != "all":
+            engage_filter["$or"] = [
+                {"liked_by_account_id": sender_account_id},
+                {"commented_by_account_id": sender_account_id},
+            ]
         post_engagements += await db.outreach_engage_posts.count_documents({**engage_filter, "liked_at": {"$gte": period_start}})
         post_engagements += await db.outreach_engage_posts.count_documents({**engage_filter, "commented_at": {"$gte": period_start}})
     total_engagement = profile_visits + post_engagements
@@ -114,11 +147,13 @@ async def get_outreach_analytics(
         day_start = day_date.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day_start + timedelta(days=1)
         day_range = {"$gte": day_start, "$lt": day_end}
-        sent, messages_day, accepted, replied = await asyncio.gather(
+        sent, messages_day, accepted, replied, visits_day, post_eng_day = await asyncio.gather(
             count_for_day(db.outreach_tasks, task_filter("connection_request", {"updated_at": day_range})),
             count_for_day(db.outreach_tasks, task_filter("send_message", {"updated_at": day_range})),
             count_for_day(db.outreach_leads, lead_filter({"is_connected": True, "accepted_at": day_range})),
             count_for_day(db.outreach_leads, lead_filter({"has_replied": True, "replied_at": day_range})),
+            count_for_day(db.outreach_tasks, task_filter("visit_profile", {"updated_at": day_range})),
+            count_for_day(db.outreach_tasks, task_filter({"$in": ["like_last_post", "comment_last_post"]}, {"updated_at": day_range})),
         )
         return {
             "date": label,
@@ -127,6 +162,8 @@ async def get_outreach_analytics(
             "messages_sent": messages_day,
             "accepted": accepted,
             "replied": replied,
+            "profile_visits": visits_day,
+            "post_engagements": post_eng_day,
         }
 
     daily_chart = await asyncio.gather(*(day_summary(d) for d in range(num_days - 1, -1, -1)))
@@ -137,12 +174,14 @@ async def get_outreach_analytics(
             "requests": {
                 "sent": requests_sent,
                 "accepted": requests_accepted,
-                "acceptance_rate": None,  # A cohort rate cannot be derived from independent period counts.
+                "acceptance_rate": round(requests_accepted / requests_sent * 100, 1) if requests_sent > 0 else None,
+                "denominator": requests_sent,
             },
             "messages": {
                 "sent": messages_sent,
                 "replied": messages_replied,
-                "reply_rate": None,
+                "reply_rate": round(messages_replied / messages_sent * 100, 1) if messages_sent > 0 else None,
+                "denominator": messages_sent,
             },
             "engagement": {
                 "total_actions": total_engagement,
@@ -150,20 +189,78 @@ async def get_outreach_analytics(
                 "post_engagements": post_engagements,
             },
             "email": {
-                "delivered": 0,
-                "deliverability_rate": 0.0,
+                "sent": email_sent,
+                "delivered": email_delivered,
+                "deliverability_rate": deliverability_rate,
+                "denominator": email_sent,
             },
             "pipeline": {
                 "total_leads": total_leads,
                 "in_campaign": in_campaign,
                 "replied": replied_leads,
                 "call_booked": booked_leads,
-            }
+            },
         },
         "daily_chart": daily_chart,
         "timeframe": timeframe,
         "campaign_id": campaign_id or "all",
+        "sender_account_id": sender_account_id or "all",
     }
+
+
+@router.get("/export")
+async def export_outreach_analytics(
+    campaign_id: str | None = None,
+    sender_account_id: str | None = None,
+    timeframe: str = Query("30d", description="'7d' | '14d' | '30d'"),
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Exports daily outreach metrics as CSV.
+    Headers: date,requests_sent,requests_accepted,messages_sent,messages_replied,profile_visits,post_engagements
+    """
+    analytics_data = await get_outreach_analytics(
+        campaign_id=campaign_id,
+        sender_account_id=sender_account_id,
+        timeframe=timeframe,
+        current_user=current_user,
+        db=db,
+    )
+    daily_chart = analytics_data.get("daily_chart", [])
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "date",
+        "requests_sent",
+        "requests_accepted",
+        "messages_sent",
+        "messages_replied",
+        "profile_visits",
+        "post_engagements",
+    ])
+    for day in daily_chart:
+        raw_date = day.get("timestamp", day.get("date"))
+        date_str = raw_date[:10] if "T" in raw_date else raw_date
+        writer.writerow([
+            date_str,
+            day.get("sent", 0),
+            day.get("accepted", 0),
+            day.get("messages_sent", 0),
+            day.get("replied", 0),
+            day.get("profile_visits", 0),
+            day.get("post_engagements", 0),
+        ])
+
+    csv_bytes = output.getvalue().encode("utf-8")
+    return StreamingResponse(
+        iter([csv_bytes]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename=outreach-analytics-{timeframe}.csv",
+        },
+    )
 
 
 @router.get("/live-feed")

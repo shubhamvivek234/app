@@ -12,7 +12,7 @@ from pydantic import ValidationError
 
 os.environ.setdefault("ENCRYPTION_KEY", Fernet.generate_key().decode())
 
-from outreach.api.analytics import get_outreach_analytics, live_activity_feed
+from outreach.api.analytics import get_outreach_analytics, live_activity_feed, export_outreach_analytics
 from outreach.api.inbox import ReplyRequest, send_thread_reply, trigger_inbox_sync, get_inbox_job, list_inbox_threads
 from outreach.api.swipe import CreateSwipeItemRequest, RepurposeSwipeRequest, list_swipe_items, repurpose_swipe_item
 from outreach.engine.inbox_sync import InboxSynchronizer
@@ -285,3 +285,111 @@ async def test_inbox_worker_records_only_confirmed_reply(monkeypatch):
         result = await _send_inbox_reply("job_b", "workspace_a", "account_a", "thread_a", "Hello")
         assert result["status"] == "sent"
         assert db.outreach_inbox_threads.update_one.call_args.args[1]["$push"]["messages"]["body"] == "Hello"
+
+
+@pytest.mark.asyncio
+async def test_analytics_sender_filtering_and_not_found():
+    db = MagicMock()
+    # 404 on nonexistent sender
+    db.outreach_accounts.find_one = AsyncMock(return_value=None)
+    with pytest.raises(HTTPException) as exc:
+        await get_outreach_analytics(
+            campaign_id="all",
+            sender_account_id="nonexistent_acc",
+            timeframe="7d",
+            current_user=USER,
+            db=db,
+        )
+    assert exc.value.status_code == 404
+
+    # Existing sender applies filter to tasks and leads
+    db.outreach_accounts.find_one = AsyncMock(return_value={"id": "acc_1", "status": "active"})
+    db.outreach_leads.count_documents = AsyncMock(return_value=2)
+    db.outreach_tasks.count_documents = AsyncMock(return_value=1)
+    db.outreach_engage_posts.count_documents = AsyncMock(return_value=0)
+    db.outreach_accounts.count_documents = AsyncMock(return_value=1)
+
+    result = await get_outreach_analytics(
+        campaign_id="all",
+        sender_account_id="acc_1",
+        timeframe="7d",
+        current_user=USER,
+        db=db,
+    )
+    assert result["sender_account_id"] == "acc_1"
+    task_queries = [call.args[0] for call in db.outreach_tasks.count_documents.call_args_list]
+    # Check that account_id filter was added to queue queries
+    assert any({"account_id": "acc_1"} in query["$and"][0]["$and"] for query in task_queries)
+
+
+@pytest.mark.asyncio
+async def test_analytics_rate_denominators_and_provenance():
+    db = MagicMock()
+    db.outreach_accounts.count_documents = AsyncMock(return_value=1)
+    db.outreach_leads.count_documents = AsyncMock(side_effect=[
+        10,  # total_leads
+        2,   # replied_leads
+        1,   # booked_leads
+        7,   # in_campaign
+        4,   # requests_accepted (period)
+        2,   # messages_replied (period)
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, # daily chart leads
+    ])
+    # outreach_tasks: 10 requests sent, 5 messages sent, 0 email sent, 2 profile visits, 1 like
+    db.outreach_tasks.count_documents = AsyncMock(side_effect=[
+        10,  # requests_sent
+        5,   # messages_sent
+        0,   # email_sent
+        2,   # profile_visits
+        1,   # post_engagements
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, # daily chart tasks
+    ])
+    db.outreach_engage_posts.count_documents = AsyncMock(return_value=0)
+
+    result = await get_outreach_analytics(campaign_id="all", timeframe="7d", current_user=USER, db=db)
+
+    # Acceptance rate = 4 / 10 = 40.0%
+    assert result["kpis"]["requests"]["sent"] == 10
+    assert result["kpis"]["requests"]["accepted"] == 4
+    assert result["kpis"]["requests"]["acceptance_rate"] == 40.0
+    assert result["kpis"]["requests"]["denominator"] == 10
+
+    # Reply rate = 2 / 5 = 40.0%
+    assert result["kpis"]["messages"]["sent"] == 5
+    assert result["kpis"]["messages"]["replied"] == 2
+    assert result["kpis"]["messages"]["reply_rate"] == 40.0
+    assert result["kpis"]["messages"]["denominator"] == 5
+
+    # Email with 0 sent has deliverability_rate = None
+    assert result["kpis"]["email"]["sent"] == 0
+    assert result["kpis"]["email"]["deliverability_rate"] is None
+    assert result["kpis"]["email"]["denominator"] == 0
+
+
+@pytest.mark.asyncio
+async def test_analytics_export_csv_streaming():
+    db = MagicMock()
+    db.outreach_accounts.count_documents = AsyncMock(return_value=1)
+    db.outreach_leads.count_documents = AsyncMock(return_value=0)
+    db.outreach_tasks.count_documents = AsyncMock(return_value=0)
+    db.outreach_engage_posts.count_documents = AsyncMock(return_value=0)
+
+    response = await export_outreach_analytics(
+        campaign_id="all",
+        sender_account_id=None,
+        timeframe="7d",
+        current_user=USER,
+        db=db,
+    )
+    assert response.media_type == "text/csv"
+    assert "attachment; filename=outreach-analytics-7d.csv" in response.headers["Content-Disposition"]
+
+    content = b""
+    async for chunk in response.body_iterator:
+        content += chunk
+    csv_text = content.decode("utf-8")
+
+    lines = [line.strip() for line in csv_text.strip().split("\n") if line.strip()]
+    assert lines[0] == "date,requests_sent,requests_accepted,messages_sent,messages_replied,profile_visits,post_engagements"
+    assert len(lines) == 8  # 1 header + 7 days
+

@@ -37,6 +37,7 @@ from outreach.core.crm_sync import (
 from outreach.core.webhook_delivery import replay_delivery
 from outreach.core.webhook_dispatcher import dispatch_webhook
 from outreach.models import LeadExecutionState, OutreachApiKey, OutreachWebhook
+from outreach.core.integrations_pilot import is_integrations_pilot_allowed
 from utils.ssrf_guard import is_safe_url
 
 logger = logging.getLogger(__name__)
@@ -53,7 +54,13 @@ def _workspace_id(user: dict) -> str:
     workspace_id = user.get("default_workspace_id")
     if not workspace_id:
         raise HTTPException(status_code=403, detail="An active workspace is required")
-    return str(workspace_id)
+    ws_str = str(workspace_id)
+    if not is_integrations_pilot_allowed(ws_str):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Integrations are not enabled for this workspace in the current pilot",
+        )
+    return ws_str
 
 
 # ── DTOs ───────────────────────────────────────────────────────────────────
@@ -756,7 +763,13 @@ async def authenticate_api_key(
     key_doc = await db.outreach_api_keys.find_one({"key_hash": key_hash})
     if not key_doc or key_doc.get("revoked_at"):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or revoked API key")
-    return key_doc["workspace_id"]
+    ws_id = key_doc["workspace_id"]
+    if not is_integrations_pilot_allowed(ws_id):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Integrations are not enabled for this workspace in the current pilot",
+        )
+    return ws_id
 
 
 def require_api_key_scope(required_scope: str) -> Callable:
@@ -807,6 +820,11 @@ def require_api_key_scope(required_scope: str) -> Callable:
             )
 
         workspace_id = key_doc["workspace_id"]
+        if not is_integrations_pilot_allowed(workspace_id):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Integrations are not enabled for this workspace in the current pilot",
+            )
 
         # Simple 60 requests/minute sliding window rate limiting
         now_ts = now.timestamp()

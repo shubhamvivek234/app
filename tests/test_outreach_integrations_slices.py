@@ -25,6 +25,11 @@ from outreach.core.webhook_delivery import dispatch_due_deliveries
 pytestmark = pytest.mark.usefixtures("outreach_paid_gate_stub")
 
 
+@pytest.fixture(autouse=True)
+def enable_integrations_for_tests(monkeypatch):
+    monkeypatch.setenv("OUTREACH_INTEGRATIONS_ENABLED", "true")
+
+
 # ── Slice 3: Slack Pilot Tests ─────────────────────────────────────────────
 
 def test_slack_webhook_url_validation_valid():

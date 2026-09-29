@@ -18,6 +18,7 @@ from outreach.api.campaigns import (
     restore_campaign,
     list_campaigns,
     duplicate_campaign,
+    get_campaign_preflight,
 )
 
 
@@ -132,6 +133,7 @@ class MockDB:
         self.outreach_accounts = MockCollection()
         self.outreach_sequences = MockCollection()
         self.outreach_tasks = MockCollection()
+        self.outreach_entitlements = MockCollection()
 
 
 @pytest.mark.asyncio
@@ -402,3 +404,52 @@ async def test_auto_draft_rejects_unknown_custom_id():
     with pytest.raises(HTTPException) as exc:
         await auto_draft_campaign(req=req, current_user=user, db=db)
     assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_campaign_preflight_checklist_and_blockers():
+    user = {"user_id": "usr_test", "default_workspace_id": "ws_1"}
+    db = MockDB()
+
+    # 1. New draft campaign with no leads, no senders, no sequence
+    camp = OutreachCampaign(
+        id="camp_preflight_1",
+        workspace_id="ws_1",
+        user_id="usr_test",
+        name="Empty Draft",
+        status=CampaignStatus.DRAFT,
+    ).model_dump()
+    await db.outreach_campaigns.insert_one(camp)
+
+    preflight = await get_campaign_preflight("camp_preflight_1", current_user=user, db=db)
+    assert preflight["can_launch"] is False
+    assert len(preflight["blockers"]) > 0
+    # Should flag entitlement, senders, sequence, and leads
+    checklist_map = {item["id"]: item for item in preflight["checklist"]}
+    assert checklist_map["leads"]["passed"] is False
+    assert checklist_map["senders"]["passed"] is False
+    assert checklist_map["sequence"]["passed"] is False
+
+    # 2. Add sequence with template variables
+    seq = {
+        "id": "seq_1",
+        "campaign_id": "camp_preflight_1",
+        "workspace_id": "ws_1",
+        "nodes": [
+            {
+                "id": "n1",
+                "type": "connection_request",
+                "title": "Send Invite",
+                "config": {"message": "Hi {{first_name}}, love your work at {{company_name}}!"},
+            }
+        ],
+        "edges": [],
+    }
+    await db.outreach_sequences.insert_one(seq)
+
+    # Re-check preflight summary extracts variables
+    preflight2 = await get_campaign_preflight("camp_preflight_1", current_user=user, db=db)
+    assert "first_name" in preflight2["summary"]["variables_detected"]
+    assert "company_name" in preflight2["summary"]["variables_detected"]
+    assert preflight2["checklist"][1]["passed"] is True  # sequence passed
+

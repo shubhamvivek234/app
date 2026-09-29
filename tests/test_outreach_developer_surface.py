@@ -34,6 +34,11 @@ from outreach.api.integrations import (
 from outreach.models import LeadExecutionState
 
 
+@pytest.fixture(autouse=True)
+def enable_integrations_for_tests(monkeypatch):
+    monkeypatch.setenv("OUTREACH_INTEGRATIONS_ENABLED", "true")
+
+
 # ── 1. API Key Scopes & Authentication Tests ─────────────────────────────────
 
 @pytest.mark.asyncio

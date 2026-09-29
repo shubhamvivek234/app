@@ -680,6 +680,237 @@ async def duplicate_campaign(
     return new_campaign_doc
 
 
+@router.get("/{campaign_id}/preflight")
+async def get_campaign_preflight(
+    campaign_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Launch checklist preflight API.
+    Audits entitlement, sender readiness, proxy health, mailbox connection,
+    sequence capabilities, template variables, schedule, and action provenance.
+    """
+    workspace_id = _workspace_id(current_user)
+    campaign = await db.outreach_campaigns.find_one(_campaign_filter(campaign_id, current_user))
+    if not campaign:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+
+    checklist = []
+    blockers = []
+
+    # 1. Entitlement check
+    has_paid = bool(await get_active_entitlement(db, workspace_id))
+    checklist.append({
+        "id": "entitlement",
+        "name": "Paid Pilot Entitlement",
+        "passed": has_paid,
+        "message": "Workspace has an active paid pilot period" if has_paid else "A verified paid outreach period is required to launch campaigns",
+    })
+    if not has_paid:
+        blockers.append("A verified paid outreach period is required to launch campaigns")
+
+    # 2. Sequence & Capabilities check
+    seq = await db.outreach_sequences.find_one({
+        "campaign_id": campaign_id, "workspace_id": workspace_id, "is_deleted": {"$ne": True},
+    })
+    nodes = (seq or {}).get("nodes", [])
+    edges = (seq or {}).get("edges", [])
+    seq_passed = False
+    seq_msg = ""
+    capabilities = sequence_capability_map()
+    sequence_types = {node.get("type") for node in nodes if isinstance(node, dict)}
+    needs_mailbox = "send_email" in sequence_types
+
+    if not seq or not nodes:
+        seq_msg = "Campaign has no configured sequence steps"
+        blockers.append(seq_msg)
+    elif contains_ai_prompt_token(nodes):
+        seq_msg = "Sequence contains unresolved AI prompt tokens (preview only)"
+        blockers.append(seq_msg)
+    else:
+        unsupported = sorted({
+            node.get("type") for node in nodes
+            if not capabilities.get(node.get("type"), {}).get("supported")
+        })
+        if unsupported:
+            seq_msg = f"Sequence steps not supported by runner: {', '.join(unsupported)}"
+            blockers.append(seq_msg)
+        else:
+            try:
+                DAGCompiler.validate_and_compile(nodes, edges)
+                seq_passed = True
+                seq_msg = f"Sequence compiled successfully ({len(nodes)} steps)"
+            except Exception as exc:
+                seq_msg = f"Sequence DAG structure is invalid: {exc}"
+                blockers.append(seq_msg)
+
+    checklist.append({
+        "id": "sequence",
+        "name": "Sequence Capabilities & DAG",
+        "passed": seq_passed,
+        "message": seq_msg,
+    })
+
+    # 3. Senders check
+    senders = list(dict.fromkeys(campaign.get("sender_account_ids", [])))
+    active_senders = await _fetch_cursor_docs(db.outreach_accounts.find({
+        "id": {"$in": senders},
+        "status": "active",
+        "workspace_id": workspace_id,
+    }), length=100) if senders else []
+    senders_passed = len(senders) > 0 and len(active_senders) == len(senders)
+    if not senders:
+        senders_msg = "At least one LinkedIn sender account must be assigned"
+        blockers.append(senders_msg)
+    elif len(active_senders) < len(senders):
+        senders_msg = f"{len(senders) - len(active_senders)} assigned sender account(s) are inactive or disconnected"
+        blockers.append(senders_msg)
+    else:
+        senders_msg = f"{len(active_senders)} active sender account(s) assigned"
+    checklist.append({
+        "id": "senders",
+        "name": "Assigned Sender Accounts",
+        "passed": senders_passed,
+        "message": senders_msg,
+    })
+
+    # 4. Proxy check for senders
+    proxy_passed = True
+    proxy_msg = "All assigned senders have verified proxies"
+    mock_mode = os.getenv("OUTREACH_MOCK_AUTH", "false").lower() in {"true", "1"}
+    if not senders:
+        proxy_passed = False
+        proxy_msg = "No senders to verify proxy health"
+    else:
+        for account in active_senders:
+            proxy_config = account.get("proxy") or account.get("proxy_config") or {}
+            host = proxy_config.get("host")
+            if not host or (not mock_mode and host in {"127.0.0.1", "localhost"}):
+                proxy_passed = False
+                proxy_msg = f"Sender '{account.get('account_name', account.get('id'))}' lacks a dedicated proxy"
+                blockers.append(proxy_msg)
+                break
+    checklist.append({
+        "id": "proxies",
+        "name": "Sender Proxy Health",
+        "passed": proxy_passed,
+        "message": proxy_msg,
+    })
+
+    # 5. Mailbox check if sequence uses email
+    mailbox_passed = True
+    if needs_mailbox:
+        from outreach.core.mailbox_connection import get_ready_mailbox, is_email_send_pilot_allowed
+        if not is_email_send_pilot_allowed(workspace_id):
+            mailbox_passed = False
+            mailbox_msg = "Email sequence steps are not enabled for this workspace in the current pilot"
+            blockers.append(mailbox_msg)
+        else:
+            for account in active_senders:
+                if not await get_ready_mailbox(db, workspace_id, account.get("id")):
+                    mailbox_passed = False
+                    break
+            mailbox_msg = "Connected mailboxes verified for all senders" if mailbox_passed else "Sequence has email steps but one or more senders lack a verified mailbox"
+            if not mailbox_passed:
+                blockers.append(mailbox_msg)
+    else:
+        mailbox_msg = "Not required (no email steps in sequence)"
+    checklist.append({
+        "id": "mailboxes",
+        "name": "Email Mailbox Readiness",
+        "passed": mailbox_passed,
+        "message": mailbox_msg,
+    })
+
+    # 6. Leads enrolled check
+    leads_count_res = db.outreach_leads.count_documents({
+        "campaign_id": campaign_id,
+        "workspace_id": workspace_id,
+    })
+    if hasattr(leads_count_res, "__await__"):
+        leads_count_res = await leads_count_res
+    leads_count = int(leads_count_res) if isinstance(leads_count_res, (int, float)) else 0
+    leads_passed = leads_count > 0
+    leads_msg = f"{leads_count} prospect(s) enrolled in campaign" if leads_passed else "Enroll at least one prospect before launching"
+    if not leads_passed:
+        blockers.append(leads_msg)
+    checklist.append({
+        "id": "leads",
+        "name": "Enrolled Prospects",
+        "passed": leads_passed,
+        "message": leads_msg,
+    })
+
+    # 7. Schedule check
+    schedule_passed = OutboundRateLimiter.has_valid_working_window(campaign.get("schedule"))
+    sched = campaign.get("schedule") or {}
+    schedule_msg = f"Active window: {sched.get('start_time', '09:00')}–{sched.get('end_time', '17:00')} ({sched.get('timezone', 'UTC')})" if schedule_passed else "Configure a valid working-hours schedule window"
+    if not schedule_passed:
+        blockers.append(schedule_msg)
+    checklist.append({
+        "id": "schedule",
+        "name": "Working Schedule Window",
+        "passed": schedule_passed,
+        "message": schedule_msg,
+    })
+
+    # 8. Action Provenance Check (uncertain tasks)
+    uncertain_count = 0
+    if hasattr(db, "outreach_tasks") and hasattr(db.outreach_tasks, "count_documents"):
+        count_res = db.outreach_tasks.count_documents({
+            "campaign_id": campaign_id,
+            "workspace_id": workspace_id,
+            "status": "uncertain",
+        })
+        if hasattr(count_res, "__await__"):
+            count_res = await count_res
+        uncertain_count = int(count_res) if isinstance(count_res, (int, float)) else 0
+    provenance_passed = uncertain_count == 0
+    provenance_msg = "All external action outcomes are reconciled" if provenance_passed else f"{uncertain_count} action(s) have uncertain outcomes requiring Action Review"
+    if not provenance_passed:
+        blockers.append(provenance_msg)
+    checklist.append({
+        "id": "provenance",
+        "name": "Action Outcome Provenance",
+        "passed": provenance_passed,
+        "message": provenance_msg,
+    })
+
+    # Extract template variables and branch paths from sequence nodes and edges
+    import re
+    variables_detected: set[str] = set()
+    for node in nodes:
+        cfg = node.get("config", {}) if isinstance(node, dict) else {}
+        for val in cfg.values():
+            if isinstance(val, str):
+                variables_detected.update(re.findall(r"\{\{([a-zA-Z0-9_]+)\}\}", val))
+
+    branch_paths = []
+    for edge in edges:
+        if isinstance(edge, dict):
+            lbl = edge.get("label") or "next"
+            branch_paths.append(f"{edge.get('source')} → {edge.get('target')} ({lbl})")
+
+    can_launch = len(blockers) == 0
+
+    return {
+        "campaign_id": campaign_id,
+        "status": campaign.get("status"),
+        "can_launch": can_launch,
+        "blockers": blockers,
+        "checklist": checklist,
+        "summary": {
+            "leads_count": leads_count,
+            "senders_count": len(senders),
+            "nodes_count": len(nodes),
+            "branch_paths": branch_paths,
+            "variables_detected": sorted(variables_detected),
+            "uncertain_tasks_count": uncertain_count,
+        },
+    }
+
+
 @router.post("/{campaign_id}/launch", dependencies=[require_permission("campaign:update")])
 async def launch_campaign(
     campaign_id: str,

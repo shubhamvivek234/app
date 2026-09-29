@@ -350,6 +350,8 @@ async def test_inbox_synchronization_and_campaign_kpi_impact():
         _, update_doc = lead_updates[0]
         assert update_doc["$set"]["has_replied"] is True
         assert update_doc["$set"]["execution_state"] in (LeadExecutionState.REPLIED, "replied")
+        assert update_doc["$set"]["pause_reason"] == "Lead replied to outreach"
+        mock_db.outreach_tasks.update_many.assert_awaited_once()
 
         # Verify campaign KPIs incremented
         assert len(campaign_kpi_increments) > 0

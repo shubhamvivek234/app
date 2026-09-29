@@ -13,6 +13,7 @@ from outreach.core.event_definitions import (
     WebhookEvent,
     create_event_envelope,
 )
+from outreach.core.integrations_pilot import is_integrations_pilot_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,13 @@ async def scan_and_fanout_outbox(
             break
 
         workspace_id = event["workspace_id"]
+        if not is_integrations_pilot_allowed(workspace_id):
+            await db.outreach_event_outbox.update_one(
+                {"_id": event["_id"]},
+                {"$set": {"status": "suppressed", "suppressed_reason": "Integrations not enabled for workspace in current pilot", "resolved_at": now}},
+            )
+            continue
+
         event_type = event["type"]
 
         # Query all active webhook endpoints subscribed to this event in the workspace

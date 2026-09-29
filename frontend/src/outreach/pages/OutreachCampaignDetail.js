@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import ImportLeadsModal from '../components/ImportLeadsModal';
+import LeadActivityDrawer from '../components/LeadActivityDrawer';
 
 const WEEKDAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -54,6 +55,7 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
   const [leadsError, setLeadsError] = useState('');
   const [leadsSearch, setLeadsSearch] = useState('');
   const [leadsModalOpen, setLeadsModalOpen] = useState(false);
+  const [selectedLeadId, setSelectedLeadId] = useState(null);
   const [sequence, setSequence] = useState(null);
   const [sequenceLoading, setSequenceLoading] = useState(false);
   const [sequenceError, setSequenceError] = useState('');
@@ -576,26 +578,63 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
                   <tr>
                     <th className="py-3 px-5">NAME</th>
                     <th className="py-3 px-5">STATUS</th>
+                    <th className="py-3 px-5">SEQUENCE STEP</th>
                     <th className="py-3 px-5">COMPANY</th>
-                    <th className="py-3 px-5">JOB TITLE</th>
                     <th className="py-3 px-5">LAST ACTIVITY</th>
+                    <th className="py-3 px-5 text-right">ACTION</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {leads.map((l) => (
-                    <tr key={l.id} className="hover:bg-gray-50/60 transition-colors">
+                    <tr
+                      key={l.id}
+                      onClick={() => setSelectedLeadId(l.id)}
+                      className="hover:bg-gray-50/80 transition-colors cursor-pointer"
+                    >
                       <td className="py-3.5 px-5 font-bold text-gray-900">
                         {l.first_name} {l.last_name}
                       </td>
                       <td className="py-3.5 px-5">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gray-100 text-gray-600 uppercase tracking-wider">
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${
+                            l.execution_state === 'replied'
+                              ? 'bg-emerald-50 text-emerald-700'
+                              : l.execution_state === 'paused'
+                              ? 'bg-amber-50 text-amber-800'
+                              : l.execution_state === 'accepted'
+                              ? 'bg-indigo-50 text-indigo-700'
+                              : 'bg-gray-100 text-gray-600'
+                          }`}
+                        >
                           {l.execution_state || 'queued'}
                         </span>
+                        {l.pause_reason && (
+                          <span
+                            className="block text-[10px] text-amber-700 font-medium truncate max-w-[150px] mt-0.5"
+                            title={l.pause_reason}
+                          >
+                            {l.pause_reason}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-5 text-gray-600 font-mono text-[11px]">
+                        {l.current_node_id || 'Not started'}
                       </td>
                       <td className="py-3.5 px-5 text-gray-600">{l.company_name || '—'}</td>
-                      <td className="py-3.5 px-5 text-gray-600">{l.job_title || '—'}</td>
                       <td className="py-3.5 px-5 text-gray-400 font-mono text-[11px]">
                         {l.updated_at ? new Date(l.updated_at).toLocaleDateString() : '—'}
+                      </td>
+                      <td className="py-3.5 px-5 text-right">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedLeadId(l.id);
+                          }}
+                          className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 hover:underline"
+                        >
+                          Timeline →
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -781,6 +820,14 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
           fetchLeads();
           fetchCampaign();
         }}
+      />
+
+      {/* Lead Activity & Journey Drawer */}
+      <LeadActivityDrawer
+        leadId={selectedLeadId}
+        isOpen={!!selectedLeadId}
+        onClose={() => setSelectedLeadId(null)}
+        onLeadUpdated={() => fetchLeads(leadsSearch)}
       />
     </div>
   );

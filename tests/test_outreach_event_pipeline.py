@@ -39,6 +39,11 @@ from outreach.core.webhook_signer import (
 import ipaddress
 
 
+@pytest.fixture(autouse=True)
+def enable_integrations_for_tests(monkeypatch):
+    monkeypatch.setenv("OUTREACH_INTEGRATIONS_ENABLED", "true")
+
+
 # ── 1. Event Definitions & Envelope Tests ───────────────────────────────────
 
 def test_frozen_event_catalog():

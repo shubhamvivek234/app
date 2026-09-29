@@ -1721,7 +1721,13 @@ const babelMetadataPlugin = ({ types: t }) => {
           if (hasProp(openingElement, "data-ve-dynamic") || hasProp(openingElement, "x-excluded")) {
             return;
           }
-          wrapDynamicExpressionChildren(jsxPath, t);
+          const invalidSpanParents = new Set([
+            "select", "option", "optgroup",
+            "table", "tbody", "thead", "tfoot", "tr", "colgroup", "col"
+          ]);
+          if (!invalidSpanParents.has(elementName)) {
+            wrapDynamicExpressionChildren(jsxPath, t);
+          }
           return;
         }
 

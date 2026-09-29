@@ -19,12 +19,16 @@ from outreach.api.leads import (
     delete_lead,
     export_leads,
     import_leads_csv,
+    import_leads_urls,
+    preview_leads_intake,
     update_lead_stage,
     ImportCSVRequest,
+    ImportURLsRequest,
+    LeadPreviewRequest,
     UpdateLeadStageRequest,
     router,
 )
-from outreach.core.lead_importer import LeadImporter, normalize_linkedin_url
+from outreach.core.lead_importer import LeadImporter, normalize_linkedin_url, extract_vanity_name
 
 
 USER = {"user_id": "u1", "default_workspace_id": "ws1"}
@@ -205,3 +209,347 @@ async def test_delete_does_not_remove_in_flight_lead():
         await delete_lead("lead1", current_user=USER, db=db)
     assert exc.value.status_code == 409
     assert db.outreach_leads.delete_one.await_args.args[0]["execution_claimed_at"] == {"$exists": False}
+
+
+def test_parse_pasted_urls_variants():
+    raw_text = (
+        "https://www.linkedin.com/in/billgates, Bill Gates, Breakthrough Energy, Founder\n"
+        "https://linkedin.com/in/satyanadella\tSatya\tNadella\tMicrosoft\n"
+        "https://linkedin.com/in/sundarpichai Sundar Pichai\n"
+        "https://linkedin.com/in/bare-profile\n"
+        "https://invalid-domain.com/in/nobody\n"
+    )
+    parsed = LeadImporter.parse_pasted_urls(raw_text, default_first_name="Leader", default_company_name="Tech")
+    assert len(parsed) == 5
+
+    # Row 1: Bill Gates
+    assert parsed[0]["linkedin_url"] == "https://www.linkedin.com/in/billgates"
+    assert parsed[0]["vanity_name"] == "billgates"
+    assert parsed[0]["first_name"] == "Bill"
+    assert parsed[0]["last_name"] == "Gates"
+    assert parsed[0]["company_name"] == "Breakthrough Energy"
+    assert parsed[0]["job_title"] == "Founder"
+    assert parsed[0]["source"] == "pasted_urls"
+
+    # Row 2: Satya Nadella (tab-delimited)
+    assert parsed[1]["linkedin_url"] == "https://linkedin.com/in/satyanadella"
+    assert parsed[1]["vanity_name"] == "satyanadella"
+    assert parsed[1]["first_name"] == "Satya"
+    assert parsed[1]["last_name"] == "Nadella"
+    assert parsed[1]["company_name"] == "Microsoft"
+
+    # Row 3: Sundar Pichai (space-separated)
+    assert parsed[2]["linkedin_url"] == "https://linkedin.com/in/sundarpichai"
+    assert parsed[2]["first_name"] == "Sundar"
+    assert parsed[2]["last_name"] == "Pichai"
+    assert parsed[2]["company_name"] == "Tech"
+
+    # Row 4: Bare profile falling back to user-supplied defaults
+    assert parsed[3]["linkedin_url"] == "https://linkedin.com/in/bare-profile"
+    assert parsed[3]["first_name"] == "Leader"
+    assert parsed[3]["company_name"] == "Tech"
+
+    # Row 5: Invalid domain
+    assert parsed[4]["linkedin_url"] == ""
+    assert parsed[4]["raw_url"] == "https://invalid-domain.com/in/nobody"
+
+
+@pytest.mark.asyncio
+async def test_preview_leads_row_level_errors_and_counts():
+    db = SimpleNamespace(
+        outreach_leads=SimpleNamespace(
+            find=AsyncMock(side_effect=[
+                # existing in campaign
+                [{"linkedin_url": "https://linkedin.com/in/in-campaign"}],
+                # contacted in workspace
+                [{"linkedin_url": "https://linkedin.com/in/contacted-before"}],
+            ]),
+        ),
+        outreach_do_not_contact=SimpleNamespace(
+            find=AsyncMock(return_value=[{"linkedin_url": "https://linkedin.com/in/dnc-user"}]),
+        ),
+    )
+
+    candidates = [
+        {"linkedin_url": "https://linkedin.com/in/valid-lead", "first_name": "Valid", "last_name": "User"},
+        {"linkedin_url": "https://linkedin.com/in/valid-lead", "first_name": "Valid", "last_name": "User"}, # dupe in batch
+        {"linkedin_url": "https://linkedin.com/in/in-campaign", "first_name": "Camp", "last_name": "User"}, # dupe in campaign
+        {"linkedin_url": "https://linkedin.com/in/contacted-before", "first_name": "Prior", "last_name": "User"}, # contacted
+        {"linkedin_url": "https://linkedin.com/in/dnc-user", "first_name": "Blocked", "last_name": "User"}, # dnc
+        {"raw_url": "https://not-linkedin.com/bad", "linkedin_url": "", "first_name": "Bad", "last_name": "URL"}, # invalid url
+        {"linkedin_url": "https://linkedin.com/in/no-name", "first_name": "", "last_name": ""}, # missing name
+    ]
+
+    preview = await LeadImporter.preview_leads(
+        leads=candidates,
+        campaign_id="camp1",
+        workspace_id="ws1",
+        db=db,
+        skip_already_contacted=True,
+        skip_do_not_contact=True,
+        require_name=True,
+    )
+
+    assert preview["total_submitted"] == 7
+    assert preview["valid_count"] == 1
+    assert preview["duplicate_count"] == 2  # 1 batch dupe + 1 campaign dupe
+    assert preview["contacted_count"] == 1
+    assert preview["dnc_count"] == 1
+    assert preview["invalid_count"] == 2  # 1 invalid url + 1 missing name
+
+    rows = preview["rows"]
+    assert rows[0]["status"] == "valid"
+    assert rows[1]["rejection_code"] == "duplicate_batch"
+    assert rows[2]["rejection_code"] == "duplicate_campaign"
+    assert rows[3]["rejection_code"] == "duplicate_contacted"
+    assert rows[4]["rejection_code"] == "do_not_contact"
+    assert rows[5]["rejection_code"] == "invalid_url"
+    assert "Invalid LinkedIn profile URL" in rows[5]["error_reason"]
+    assert rows[6]["rejection_code"] == "missing_name"
+    assert "First name is required" in rows[6]["error_reason"]
+
+
+@pytest.mark.asyncio
+async def test_http_preview_and_import_urls():
+    db = SimpleNamespace(
+        outreach_campaigns=SimpleNamespace(
+            find_one=AsyncMock(return_value={"id": "camp1", "status": "draft"}),
+            update_one=AsyncMock(),
+        ),
+        outreach_leads=SimpleNamespace(
+            find=AsyncMock(return_value=[]),
+            insert_many=AsyncMock(),
+            count_documents=AsyncMock(return_value=0),
+        ),
+        outreach_do_not_contact=SimpleNamespace(find=AsyncMock(return_value=[])),
+    )
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1/outreach")
+    app.dependency_overrides[get_current_user] = lambda: USER
+    app.dependency_overrides[get_db] = lambda: db
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        # 1. Test preview endpoint
+        preview_res = await client.post("/api/v1/outreach/leads/preview", json={
+            "campaign_id": "camp1",
+            "source_type": "pasted_urls",
+            "raw_text": "https://linkedin.com/in/alex, Alex, Smith\nhttps://linkedin.com/in/alex, Alex, Smith",
+            "require_name": True,
+        })
+        assert preview_res.status_code == 200
+        preview_data = preview_res.json()
+        assert preview_data["total_submitted"] == 2
+        assert preview_data["valid_count"] == 1
+        assert preview_data["duplicate_count"] == 1
+
+        # 2. Test import-urls endpoint
+        import_res = await client.post("/api/v1/outreach/leads/import-urls", json={
+            "campaign_id": "camp1",
+            "urls_text": "https://linkedin.com/in/alex, Alex, Smith",
+            "require_name": True,
+            "consent_basis": "user_provided",
+        })
+        assert import_res.status_code == 200
+        import_data = import_res.json()
+        assert import_data["imported_count"] == 1
+        assert import_data["duplicates_count"] == 0
+
+        # Verify inserted lead has source and source_metadata
+        inserted = db.outreach_leads.insert_many.await_args.args[0]
+        assert inserted[0]["source"] == "pasted_urls"
+        assert inserted[0]["source_metadata"]["consent_basis"] == "user_provided"
+        assert inserted[0]["first_name"] == "Alex"
+
+
+@pytest.mark.asyncio
+async def test_lead_activity_and_notes():
+    now_iso = "2026-09-30T10:00:00Z"
+    lead_doc = {
+        "id": "lead_act_1",
+        "workspace_id": "ws1",
+        "user_id": "u1",
+        "campaign_id": "camp_act_1",
+        "assigned_account_id": "acc_1",
+        "linkedin_url": "https://www.linkedin.com/in/activity-target",
+        "first_name": "Active",
+        "last_name": "Lead",
+        "execution_state": "in_progress",
+        "pipeline_stage": "in_campaign",
+        "current_node_id": "node_followup_1",
+        "next_action_due_at": now_iso,
+        "source": "pasted_urls",
+        "created_at": "2026-09-29T10:00:00Z",
+    }
+
+    inserted_notes = []
+
+    class MockNotesCol:
+        async def find(self, query=None, *args, **kwargs):
+            return [
+                {
+                    "id": "note_1",
+                    "lead_id": "lead_act_1",
+                    "workspace_id": "ws1",
+                    "note": "Initial qualification call scheduled",
+                    "author": "Alice",
+                    "created_at": "2026-09-29T12:00:00Z",
+                }
+            ]
+
+        async def insert_one(self, doc):
+            inserted_notes.append(doc)
+            return True
+
+    class MockTasksCol:
+        async def find(self, query=None, *args, **kwargs):
+            return [
+                {
+                    "id": "task_1",
+                    "task_type": "send_invite",
+                    "status": "completed",
+                    "node_id": "node_invite",
+                    "attempt_id": "att_1",
+                    "resolved_at": "2026-09-29T11:00:00Z",
+                }
+            ]
+
+    class MockThreadsCol:
+        async def find_one(self, query=None, *args, **kwargs):
+            return {
+                "lead_id": "lead_act_1",
+                "workspace_id": "ws1",
+                "messages": [
+                    {
+                        "id": "msg_1",
+                        "sender_type": "lead",
+                        "sender_name": "Active Lead",
+                        "body": "Sounds interesting, let's chat!",
+                        "timestamp": "2026-09-29T14:00:00Z",
+                    }
+                ],
+            }
+
+    db = SimpleNamespace(
+        outreach_leads=SimpleNamespace(
+            find_one=AsyncMock(return_value=lead_doc),
+        ),
+        outreach_accounts=SimpleNamespace(
+            find_one=AsyncMock(return_value={"id": "acc_1", "account_name": "Sarah Connor"}),
+        ),
+        outreach_campaigns=SimpleNamespace(
+            find_one=AsyncMock(return_value={"id": "camp_act_1", "name": "Enterprise Outreach"}),
+        ),
+        outreach_tasks=MockTasksCol(),
+        outreach_inbox_threads=MockThreadsCol(),
+        outreach_lead_notes=MockNotesCol(),
+    )
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1/outreach")
+    app.dependency_overrides[get_current_user] = lambda: USER
+    app.dependency_overrides[get_db] = lambda: db
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        # 1. GET /activity
+        res = await client.get("/api/v1/outreach/leads/lead_act_1/activity")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["lead"]["id"] == "lead_act_1"
+        assert data["lead"]["assigned_sender_name"] == "Sarah Connor"
+        assert data["lead"]["campaign_name"] == "Enterprise Outreach"
+        assert data["lead"]["current_node_id"] == "node_followup_1"
+        assert data["total_activities"] >= 3  # task, message, note, lifecycle
+        kinds = [a["kind"] for a in data["activities"]]
+        assert "task" in kinds
+        assert "message" in kinds
+        assert "note" in kinds
+        assert "lifecycle" in kinds
+
+        # 2. POST /notes
+        note_res = await client.post(
+            "/api/v1/outreach/leads/lead_act_1/notes",
+            json={"note": "Lead replied via email asking for slide deck."},
+        )
+        assert note_res.status_code == 200
+        assert len(inserted_notes) == 1
+        assert inserted_notes[0]["note"] == "Lead replied via email asking for slide deck."
+
+
+@pytest.mark.asyncio
+async def test_lead_pause_and_resume_preflight():
+    lead_doc = {
+        "id": "lead_ctrl_1",
+        "workspace_id": "ws1",
+        "user_id": "u1",
+        "linkedin_url": "https://www.linkedin.com/in/controllable",
+        "execution_state": "queued",
+        "assigned_account_id": "acc_sender_1",
+    }
+
+    db_leads = SimpleNamespace(
+        find_one=AsyncMock(return_value=dict(lead_doc)),
+        update_one=AsyncMock(),
+    )
+    db_tasks = SimpleNamespace(
+        update_many=AsyncMock(),
+        count_documents=AsyncMock(return_value=0),
+    )
+    db_dnc = SimpleNamespace(
+        find_one=AsyncMock(return_value=None),
+    )
+    db_accounts = SimpleNamespace(
+        find_one=AsyncMock(return_value={"id": "acc_sender_1", "status": "active"}),
+    )
+
+    db = SimpleNamespace(
+        outreach_leads=db_leads,
+        outreach_tasks=db_tasks,
+        outreach_do_not_contact=db_dnc,
+        outreach_accounts=db_accounts,
+    )
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1/outreach")
+    app.dependency_overrides[get_current_user] = lambda: USER
+    app.dependency_overrides[get_db] = lambda: db
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        # 1. Pause lead
+        pause_res = await client.post(
+            "/api/v1/outreach/leads/lead_ctrl_1/pause",
+            json={"reason": "Manual operator pause before demo"},
+        )
+        assert pause_res.status_code == 200
+        assert pause_res.json()["status"] == "paused"
+        assert pause_res.json()["pause_reason"] == "Manual operator pause before demo"
+        assert db_tasks.update_many.await_count == 1
+
+        # 2. Resume lead - DNC blocks
+        db_dnc.find_one.return_value = {"linkedin_url": "https://www.linkedin.com/in/controllable"}
+        resume_dnc_res = await client.post("/api/v1/outreach/leads/lead_ctrl_1/resume")
+        assert resume_dnc_res.status_code == 409
+        assert "exclusion list" in resume_dnc_res.json()["detail"]
+        db_dnc.find_one.return_value = None
+
+        # 3. Resume lead - Uncertain task blocks
+        db_tasks.count_documents.return_value = 1
+        resume_unc_res = await client.post("/api/v1/outreach/leads/lead_ctrl_1/resume")
+        assert resume_unc_res.status_code == 409
+        assert "uncertain outcome" in resume_unc_res.json()["detail"]
+        db_tasks.count_documents.return_value = 0
+
+        # 4. Resume lead - Inactive sender blocks
+        db_accounts.find_one.return_value = None
+        resume_acc_res = await client.post("/api/v1/outreach/leads/lead_ctrl_1/resume")
+        assert resume_acc_res.status_code == 409
+        assert "inactive or disconnected" in resume_acc_res.json()["detail"]
+        db_accounts.find_one.return_value = {"id": "acc_sender_1", "status": "active"}
+
+        # 5. Clean resume passes
+        resume_ok_res = await client.post("/api/v1/outreach/leads/lead_ctrl_1/resume")
+        assert resume_ok_res.status_code == 200
+        assert resume_ok_res.json()["status"] == "resumed"
+        assert resume_ok_res.json()["execution_state"] == "queued"
+
+

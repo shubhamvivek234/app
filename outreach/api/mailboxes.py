@@ -15,6 +15,7 @@ from db.mongo import get_db
 from outreach.core.mailbox_connection import (
     consume_oauth_callback, start_mailbox_connection,
     mailbox_connection_enabled, email_send_enabled, browser_binding_cookie_name,
+    is_mailbox_pilot_allowed, is_email_send_pilot_allowed,
 )
 from utils.encryption import encrypt
 
@@ -55,9 +56,9 @@ async def list_mailboxes(
     allowed = {"sender_account_id", "email", "provider", "status", "sync_status", "last_sync_at"}
     return {
         "mailboxes": [{key: doc[key] for key in allowed if key in doc} for doc in docs],
-        "connection_enabled": mailbox_connection_enabled(),
-        "send_enabled": email_send_enabled(),
-        "sync_enabled": _enabled("OUTREACH_EMAIL_SYNC_ENABLED"),
+        "connection_enabled": is_mailbox_pilot_allowed(workspace_id),
+        "send_enabled": is_email_send_pilot_allowed(workspace_id),
+        "sync_enabled": _enabled("OUTREACH_EMAIL_SYNC_ENABLED") and is_mailbox_pilot_allowed(workspace_id),
     }
 
 
@@ -124,8 +125,9 @@ async def authorize_mailbox(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
+    workspace_id = _workspace_id(current_user)
     result = await start_mailbox_connection(
-        db, _workspace_id(current_user), str(current_user.get("user_id") or ""),
+        db, workspace_id, str(current_user.get("user_id") or ""),
         request.sender_account_id, provider,
     )
     cookie_name = result.pop("browser_binding_cookie_name")

@@ -31,6 +31,7 @@ describe('Outreach analytics, swipe files, and inbox screens', () => {
   it('shows recorded analytics without invented email health', async () => {
     global.fetch = jest.fn((url) => {
       if (url === '/api/v1/outreach/campaigns') return Promise.resolve(ok([]));
+      if (url === '/api/v1/outreach/accounts') return Promise.resolve(ok([]));
       if (url.startsWith('/api/v1/outreach/analytics?')) return Promise.resolve(ok({
         has_connected_account: true,
         kpis: {

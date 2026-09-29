@@ -19,7 +19,7 @@ import httpx
 import logging
 
 from outreach.core.email_finder import normalize_email, suppress_email
-from outreach.core.mailbox_connection import MailboxUnavailable, _paid_sender, get_mailbox_access_token
+from outreach.core.mailbox_connection import MailboxUnavailable, _paid_sender, get_mailbox_access_token, is_mailbox_pilot_allowed
 from outreach.models import LeadExecutionState
 from outreach.core.paid_access import _utc
 
@@ -37,6 +37,16 @@ _MESSAGE_ID_PATTERN = re.compile(r"<[^<>\s]{1,998}>")
 
 def _sync_enabled() -> bool:
     return os.getenv("OUTREACH_EMAIL_SYNC_ENABLED", "false").strip().lower() in {"true", "1"}
+
+
+def is_mailbox_sync_pilot_allowed(workspace_id: str | None = None) -> bool:
+    if not _sync_enabled():
+        return False
+    allowlist = os.getenv("OUTREACH_MAILBOX_PILOT_WORKSPACES", "").strip()
+    if not allowlist or allowlist == "*":
+        return True
+    allowed_ids = {ws.strip() for ws in allowlist.split(",") if ws.strip()}
+    return bool(workspace_id and workspace_id in allowed_ids)
 
 
 def _safe_graph_delta_url(url: str) -> bool:
@@ -82,7 +92,7 @@ async def bootstrap_mailbox_sync(db, workspace_id: str, sender_account_id: str, 
                                  expected_connection_job_id: str | None = None,
                                  sync_lease_id: str | None = None) -> dict:
     """Establish a post-connection cursor; no historical email is attributed."""
-    if not _sync_enabled():
+    if not is_mailbox_sync_pilot_allowed(workspace_id):
         await db.outreach_mailboxes.update_one(
             {"workspace_id": workspace_id, "sender_account_id": sender_account_id},
             {"$set": {"sync_status": "disabled", "last_sync_at": None}},
@@ -282,9 +292,17 @@ async def _apply_inbound(db, mailbox: dict, provider_id: str, recipient: str,
                 {"workspace_id": workspace_id, "id": op["lead_id"], "has_replied": {"$ne": True}},
                 {"$set": {"has_replied": True, "replied_at": received_at,
                           "execution_state": LeadExecutionState.REPLIED,
+                          "pause_reason": "Lead replied via email",
                           "email_reply_attribution": attribution, "updated_at": now}},
             )
             if getattr(changed, "modified_count", 0):
+                if hasattr(db, "outreach_tasks") and hasattr(db.outreach_tasks, "update_many"):
+                    task_res = db.outreach_tasks.update_many(
+                        {"lead_id": op["lead_id"], "workspace_id": workspace_id, "status": "pending"},
+                        {"$set": {"status": "skipped", "skip_reason": "Lead replied: follow-up touches stopped", "resolved_at": now}},
+                    )
+                    if hasattr(task_res, "__await__"):
+                        await task_res
                 if op.get("campaign_id"):
                     await db.outreach_campaigns.update_one(
                         {"workspace_id": workspace_id, "id": op["campaign_id"]},
@@ -494,7 +512,7 @@ async def _graph_messages(mailbox: dict, token: str) -> tuple[list[dict], str]:
 
 async def sync_mailbox_replies(db, *, workspace_id: str, sender_account_id: str) -> dict:
     """Worker-only sync; failed or incomplete cycles immediately disable sends."""
-    if not _sync_enabled() or not await _paid_sender(db, workspace_id, sender_account_id):
+    if not is_mailbox_sync_pilot_allowed(workspace_id) or not await _paid_sender(db, workspace_id, sender_account_id):
         return {"status": "unavailable"}
     mailbox = await db.outreach_mailboxes.find_one({
         "workspace_id": workspace_id, "sender_account_id": sender_account_id, "status": "active",
