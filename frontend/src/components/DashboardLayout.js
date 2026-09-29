@@ -190,6 +190,7 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
   const navigation = {
     overview: [
       { name: 'Dashboard', path: '/dashboard', icon: FaLayerGroup, badge: 'Live', badgeBg: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' },
+      { name: 'Cold Outreach', path: '/outreach', icon: FaPaperPlane, badge: 'New', badgeBg: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300' },
     ],
     growth: [
       { name: 'AI Agent', path: '/agent', icon: FaRobot, badge: 'Agentic', badgeBg: 'bg-violet-50 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300' },
@@ -206,7 +207,6 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
       { name: 'Timeslots', path: '/timeslots', icon: FaRegClock },
     ],
     workflow: [
-      { name: 'LinkedIn Cold Outreach', path: '/outreach', icon: FaPaperPlane, badge: 'Unravler', badgeBg: 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300' },
       { name: 'Client Approvals', path: '/approvals', icon: FaCheckDouble, badge: 'Review', badgeBg: 'bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300' },
       { name: 'Audience', path: '/audience', icon: FaAddressBook, badge: 'CRM', badgeBg: 'bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300' },
       { name: 'Broadcast', path: '/broadcast', icon: FaPaperPlane, badge: 'Outreach', badgeBg: 'bg-sky-50 text-sky-700 dark:bg-sky-950/50 dark:text-sky-300' },
@@ -257,6 +257,7 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
   };
 
   const publishActive = isActive('/publish');
+  const outreachActive = isActive('/outreach');
   const analyticsActive = isActive('/analytics');
   const canNavigateHome = user?.subscription_status === 'active';
 
@@ -310,6 +311,19 @@ const DashboardLayout = ({ children, hideSidebar = false, noPadding = false }) =
           >
             <FaBullhorn className="text-xs" />
             Publish
+          </Link>
+
+          <Link
+            to="/outreach"
+            data-testid="header-nav-outreach"
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+              outreachActive
+                ? 'text-indigo-700 bg-indigo-50 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border dark:border-indigo-800/50 shadow-2xs'
+                : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800/80'
+            }`}
+          >
+            <FaPaperPlane className="text-xs" />
+            Cold Outreach
           </Link>
 
           <Link
