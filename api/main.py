@@ -223,7 +223,7 @@ def create_app() -> FastAPI:
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-    # CORS — explicit origins only, never wildcard
+    # CORS — explicit origins + trusted Vercel deployments regex
     allowed_origins = [
         o.strip()
         for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
@@ -232,9 +232,10 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
+        allow_origin_regex=r"^https://([a-zA-Z0-9-]+\.)?vercel\.app$",
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-Trace-ID", "X-TOTP-Code"],
+        allow_headers=["*"],
     )
 
     # Security headers + trace_id (order matters — outermost first)
