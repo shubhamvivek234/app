@@ -36,9 +36,8 @@ Completed:
 - `outreach-site` verification: 6/6 Node tests pass including all 18 HTML pages, link checks, and compliance filters; desktop/mobile browser screenshots verified.
 
 ## Latest Release and Local Work
-- Commit `3e3130e` deployed gated Gmail/Microsoft mailbox OAuth, encrypted tokens, reply/bounce sync, one-to-one email sending, Hunter email finding, and uncertain-action review; API/MCP healthy. Live flags remain off.
-- Outreach Integrations implementation completed (Slices 1-6): transactional outbox, DNS-pinned safe transport, HMAC-SHA256 signer, retry engine with dead letter & manual replay, scoped API keys (`unr_live_`), idempotent lead ingest/pause, Slack pilot Block Kit alerts with zero body leak, Zapier/Make REST hooks, HubSpot one-way contact sync, Google Sheets formula-safe ingest, OutreachSettings tab UI, and marketing alignment in outreach-site.
-- Verification: 288 outreach backend tests and 62 frontend tests pass; frontend build, Python compile, and 6/6 outreach-site tests pass. Feature flag `OUTREACH_INTEGRATIONS_ENABLED=false` remains default release gate.
+- Commit `3355a18` deployed Outreach Integrations (Slices 1-6): transactional outbox, DNS-pinned safe transport, HMAC-SHA256 signer, retry engine with dead letter & manual replay, scoped API keys (`unr_live_`), idempotent lead ingest/pause, Slack pilot Block Kit alerts with zero body leak, Zapier/Make REST hooks, HubSpot one-way contact sync, Google Sheets formula-safe ingest, OutreachSettings tab UI, and marketing alignment in outreach-site.
+- Verification: 288 outreach backend tests, 62 frontend tests, frontend build, and 6/6 outreach-site tests pass. EC2 backend deployed: API/MCP healthy; beat and workers running outbox and webhook dispatch tasks. Live flags remain off.
 
 ## Active Work
 Next:
