@@ -25,6 +25,7 @@ import { toast } from 'sonner';
 import OutreachAccounts from './OutreachAccounts';
 import OutreachMailboxes from './OutreachMailboxes';
 import OutreachActionReview from './OutreachActionReview';
+import OutreachIntegrations from './OutreachIntegrations';
 
 export default function OutreachSettings({ initialTab = 'accounts' }) {
   const [activeTab, setActiveTab] = useState(() => (
@@ -300,6 +301,7 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
     { id: 'accounts', label: 'Accounts' },
     { id: 'mailboxes', label: 'Email mailboxes' },
     { id: 'action-reviews', label: 'Action reviews' },
+    { id: 'integrations', label: 'Integrations & Webhooks' },
     { id: 'members', label: 'Members' },
     { id: 'billing', label: 'Billing' },
     { id: 'help', label: 'Help & Resources' },
@@ -357,6 +359,7 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
             {activeTab === 'accounts' && <OutreachAccounts />}
             {activeTab === 'mailboxes' && <OutreachMailboxes />}
             {activeTab === 'action-reviews' && <OutreachActionReview />}
+            {activeTab === 'integrations' && <OutreachIntegrations />}
 
             {/* ── TAB 2: MEMBERS ─────────────────────────────────────────── */}
             {activeTab === 'members' && (

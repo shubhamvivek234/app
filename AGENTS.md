@@ -35,11 +35,10 @@ Completed:
 - Added Dripify-style interactive Features mega menu dropdown and 9 dedicated feature pages: `features.html`, `feature-sequences.html`, `feature-leads.html`, `feature-engage.html`, `feature-personalization.html`, `feature-inbox.html`, `feature-safety.html`, `feature-analytics.html`, `feature-teams.html`.
 - `outreach-site` verification: 6/6 Node tests pass including all 18 HTML pages, link checks, and compliance filters; desktop/mobile browser screenshots verified.
 
-## Current Local Work (not committed or deployed)
-- Added gated Gmail/Microsoft mailbox OAuth, encrypted tokens, reply/bounce sync, one-to-one email sending, Hunter email finding, and an admin action-review queue for uncertain sends.
-- Sequence capability catalog enables only verified runners; InMail, Follow, Comment, Reply to comment, and Endorse skills remain unavailable. Experimental public integrations remain off.
-- All new mailbox, send, sync, Hunter, and integration flags default false. Provider approval, credentials, consented live tests, and product/legal review remain required.
-- Verification: 252 outreach backend tests and 67 frontend tests pass; production build, Python compile, Bandit, Compose config, and diff check pass. Broad backend suite has 5 unrelated failures (4 sandbox DNS, 1 synthetic Starlette scope).
+## Latest Release and Local Work
+- Commit `3e3130e` deployed gated Gmail/Microsoft mailbox OAuth, encrypted tokens, reply/bounce sync, one-to-one email sending, Hunter email finding, and uncertain-action review; API/MCP healthy. Live flags remain off.
+- Outreach Integrations implementation completed (Slices 1-6): transactional outbox, DNS-pinned safe transport, HMAC-SHA256 signer, retry engine with dead letter & manual replay, scoped API keys (`unr_live_`), idempotent lead ingest/pause, Slack pilot Block Kit alerts with zero body leak, Zapier/Make REST hooks, HubSpot one-way contact sync, Google Sheets formula-safe ingest, OutreachSettings tab UI, and marketing alignment in outreach-site.
+- Verification: 288 outreach backend tests and 62 frontend tests pass; frontend build, Python compile, and 6/6 outreach-site tests pass. Feature flag `OUTREACH_INTEGRATIONS_ENABLED=false` remains default release gate.
 
 ## Active Work
 Next:
@@ -51,7 +50,7 @@ Next:
 - Scheduled Engage scraping/AI drafting and unattended like/comment dispatch remain unimplemented; any automatic LinkedIn interaction requires separate product/legal approval.
 - Decide whether to migrate historical plaintext JSESSIONID records; newly connected/refreshed senders use encrypted storage.
 - Live logged-in Engage smoke test after Mac unlock; review whether scheduled auto-engagement should instead be a human-approved queue.
-- Sequence pre-warming automation (`LIKE_LAST_POST`, `COMMENT_LAST_POST` in executor).
+- Sequence pre-warming: `LIKE_LAST_POST` runner exists; `COMMENT_LAST_POST` remains unsupported.
 - Content Writing Styles UI (`OutreachStyles.js`).
 - Auto-Plug scheduled first comments in post composer.
 - Before publishing `unravler.io`: acquire/configure domain and static host, review outreach legal/order terms, confirm support mailbox, add canonical/SEO metadata, and align any scheduler-customer discount with billing enforcement. Current site CTA uses mailto for manual pilot requests.

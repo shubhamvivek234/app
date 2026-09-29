@@ -297,6 +297,16 @@ celery_app.conf.beat_schedule.update({
         "schedule": 60.0,
         "options": {"queue": "outreach"},
     },
+    "scan-outreach-event-outbox": {
+        "task": "celery_workers.tasks.outreach.scan_event_outbox",
+        "schedule": 15.0,
+        "options": {"queue": "outreach"},
+    },
+    "dispatch-due-outreach-deliveries": {
+        "task": "celery_workers.tasks.outreach.dispatch_webhook_deliveries",
+        "schedule": 15.0,
+        "options": {"queue": "outreach"},
+    },
 })
 
 
@@ -613,3 +623,29 @@ async def _run_due_steps() -> dict:
             )
 
     return counts
+
+
+@celery_app.task(name="celery_workers.tasks.outreach.scan_event_outbox", queue="outreach", acks_late=True)
+def scan_event_outbox(batch_size: int = 50) -> dict:
+    return run_async(_scan_event_outbox(batch_size=batch_size))
+
+
+async def _scan_event_outbox(batch_size: int = 50, db=None) -> dict:
+    if is_shutting_down():
+        return {"status": "shutting_down"}
+    db = db or await _inbox_db()
+    from outreach.core.event_outbox import scan_and_fanout_outbox
+    return await scan_and_fanout_outbox(db, batch_size=batch_size)
+
+
+@celery_app.task(name="celery_workers.tasks.outreach.dispatch_webhook_deliveries", queue="outreach", acks_late=True)
+def dispatch_webhook_deliveries(batch_size: int = 20) -> dict:
+    return run_async(_dispatch_webhook_deliveries(batch_size=batch_size))
+
+
+async def _dispatch_webhook_deliveries(batch_size: int = 20, db=None) -> dict:
+    if is_shutting_down():
+        return {"status": "shutting_down"}
+    db = db or await _inbox_db()
+    from outreach.core.webhook_delivery import dispatch_due_deliveries
+    return await dispatch_due_deliveries(db, batch_size=batch_size)

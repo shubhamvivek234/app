@@ -179,6 +179,23 @@ async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
     await _safe_create_index(db.outreach_engage_posts, [("workspace_id", 1), ("list_id", 1), ("liked_at", -1)])
     await _safe_create_index(db.outreach_engage_posts, [("workspace_id", 1), ("list_id", 1), ("commented_at", -1)])
     await _safe_create_index(db.outreach_engage_drafts, [("workspace_id", 1), ("list_id", 1), ("status", 1), ("created_at", -1)])
+    await _safe_create_index(db.outreach_event_outbox, [("workspace_id", 1), ("dedupe_key", 1)], unique=True)
+    await _safe_create_index(db.outreach_event_outbox, [("status", 1), ("occurred_at", 1)])
+    await _safe_create_index(db.outreach_event_outbox, [("lease_id", 1), ("leased_until", 1)])
+    await _safe_create_index(db.outreach_webhooks, [("workspace_id", 1), ("id", 1)], unique=True)
+    await _safe_create_index(db.outreach_webhooks, [("workspace_id", 1), ("status", 1)])
+    await _safe_create_index(db.outreach_webhook_deliveries, [("event_id", 1), ("destination_id", 1)], unique=True)
+    await _safe_create_index(db.outreach_webhook_deliveries, [("status", 1), ("next_attempt_at", 1)])
+    await _safe_create_index(db.outreach_webhook_deliveries, [("workspace_id", 1), ("status", 1), ("created_at", -1)])
+    await _safe_create_index(db.outreach_webhook_deliveries, [("destination_id", 1), ("status", 1), ("created_at", -1)])
+    await _safe_create_index(db.outreach_webhook_deliveries, [("created_at", 1)], expireAfterSeconds=7776000)
+    await _safe_create_index(db.outreach_api_keys, [("workspace_id", 1), ("id", 1)], unique=True)
+    await _safe_create_index(db.outreach_api_keys, [("key_hash", 1)], unique=True)
+    await _safe_create_index(db.outreach_api_keys, [("workspace_id", 1), ("revoked_at", 1)])
+    await _safe_create_index(db.outreach_integrations, [("workspace_id", 1), ("provider", 1)], unique=True)
+    await _safe_create_index(db.outreach_external_mappings,
+                             [("workspace_id", 1), ("provider", 1), ("external_account_id", 1), ("object_type", 1), ("internal_id", 1)],
+                             unique=True)
 
     logger.info("All MongoDB indexes created successfully")
 

@@ -1,20 +1,36 @@
-"""Outbound webhook signing and delivery with SSRF protection and HMAC-SHA256."""
+"""
+Outreach Webhook Dispatcher and Event Pipeline Bridge.
+Connects workspace events with safe egress transport, HMAC-SHA256 signatures,
+and the transactional event outbox.
+"""
 from datetime import datetime, timezone
-import hashlib
-import hmac
 import json
 import logging
-from uuid import uuid4
+from typing import Any
+import uuid
 import httpx
 
 from outreach.core.crypto import decrypt_secret
+from outreach.core.event_definitions import WebhookEvent
+from outreach.core.event_outbox import record_outbox_event, scan_and_fanout_outbox
+from outreach.core.safe_transport import SSRFSecurityError, create_safe_client
+from outreach.core.webhook_delivery import dispatch_due_deliveries
+from outreach.core.webhook_signer import build_delivery_headers, compute_signature
 from utils.ssrf_guard import is_safe_url
 
 logger = logging.getLogger(__name__)
 
 
-def sign_payload(payload_bytes: bytes, secret: str) -> str:
-    """Computes HMAC-SHA256 hex digest of the raw request body."""
+def sign_payload(payload_bytes: bytes, secret: str, timestamp_str: str | None = None) -> str:
+    """
+    Computes HMAC-SHA256 signature.
+    If timestamp_str is provided, uses '{timestamp}.{body}', else signs body directly.
+    """
+    if timestamp_str:
+        return compute_signature(payload_bytes, secret, timestamp_str)
+    # Direct HMAC-SHA256 fallback for legacy test compatibility
+    import hashlib
+    import hmac
     return hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
 
 
@@ -22,16 +38,17 @@ async def dispatch_webhook(
     url: str,
     secret: str,
     event_type: str,
-    data: dict,
+    data: dict[str, Any],
     *,
     timeout: float = 10.0,
     http_client: httpx.AsyncClient | None = None,
-) -> dict:
+    allow_private_for_tests: bool = False,
+) -> dict[str, Any]:
     """
-    Validates URL safety, signs payload with HMAC-SHA256, and posts JSON data.
-    Returns status code and delivery status.
+    Validates URL safety with DNS pinning, signs payload with HMAC-SHA256,
+    and executes external HTTP POST request with bounded response size.
     """
-    if not is_safe_url(url):
+    if not is_safe_url(url) and not allow_private_for_tests:
         logger.warning("Blocked outbound webhook attempt to unsafe URL: %s", url)
         return {
             "success": False,
@@ -39,81 +56,123 @@ async def dispatch_webhook(
             "error": "Destination URL rejected by SSRF security policy",
         }
 
+    event_id = f"evt_{uuid.uuid4().hex}"
+    delivery_id = f"del_{uuid.uuid4().hex}"
+    now = datetime.now(timezone.utc)
+
     envelope = {
-        "event": event_type,
-        "event_id": f"evt_{uuid4().hex[:16]}",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "id": event_id,
+        "type": event_type,
+        "version": 1,
+        "occurred_at": now.isoformat(),
         "data": data,
     }
-    payload_bytes = json.dumps(envelope, separators=(",", ":"), default=str).encode("utf-8")
-    signature = sign_payload(payload_bytes, secret)
+    payload_bytes = json.dumps(envelope, separators=(",", ":"), ensure_ascii=False, default=str).encode("utf-8")
+    headers = build_delivery_headers(
+        raw_body_bytes=payload_bytes,
+        secret=secret,
+        event_id=event_id,
+        delivery_id=delivery_id,
+        timestamp=now,
+    )
 
-    headers = {
-        "Content-Type": "application/json",
-        "User-Agent": "Unravler-Webhooks/1.0",
-        "X-Unravler-Event": event_type,
-        "X-Unravler-Signature": f"sha256={signature}",
-    }
+    client = http_client or create_safe_client(timeout=timeout, allow_private_for_tests=allow_private_for_tests)
+    should_close_client = http_client is None
 
     try:
-        if http_client:
-            resp = await http_client.post(url, content=payload_bytes, headers=headers, timeout=timeout)
-        else:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(url, content=payload_bytes, headers=headers)
-
+        resp = await client.post(url, content=payload_bytes, headers=headers)
         success = 200 <= resp.status_code < 300
         return {
             "success": success,
             "status_code": resp.status_code,
             "response_text": resp.text[:300] if not success else "OK",
-            "event_id": envelope["event_id"],
+            "event_id": event_id,
+            "delivery_id": delivery_id,
+        }
+    except SSRFSecurityError as ssrf_err:
+        logger.warning("SSRF guard blocked destination '%s': %s", url[:100], ssrf_err)
+        return {
+            "success": False,
+            "status_code": 0,
+            "error": f"Destination URL rejected by SSRF security policy: {ssrf_err}",
+            "event_id": event_id,
+            "delivery_id": delivery_id,
+        }
+    except httpx.TimeoutException:
+        return {
+            "success": False,
+            "status_code": 0,
+            "error": "Connection timed out",
+            "event_id": event_id,
+            "delivery_id": delivery_id,
         }
     except Exception as exc:
-        logger.info("Webhook dispatch failed to %s: %s", url, exc)
+        logger.info("Webhook dispatch failed to %s: %s", url[:100], exc)
         return {
             "success": False,
             "status_code": 0,
             "error": str(exc)[:200],
-            "event_id": envelope["event_id"],
+            "event_id": event_id,
+            "delivery_id": delivery_id,
         }
+    finally:
+        if should_close_client:
+            await client.aclose()
+
+
+async def emit_workspace_event(
+    db: Any,
+    workspace_id: str,
+    event_type: WebhookEvent | str,
+    aggregate_id: str,
+    dedupe_key: str,
+    data: dict[str, Any],
+    *,
+    session: Any = None,
+) -> dict[str, Any]:
+    """
+    Standard entry point for recording an event to the transactional outbox.
+    All source state transitions should call this method to emit durable events.
+    """
+    return await record_outbox_event(
+        db=db,
+        workspace_id=workspace_id,
+        event_type=event_type,
+        aggregate_id=aggregate_id,
+        dedupe_key=dedupe_key,
+        data=data,
+        session=session,
+    )
 
 
 async def broadcast_workspace_event(
-    db,
+    db: Any,
     workspace_id: str,
     event_type: str,
-    data: dict,
-) -> list[dict]:
-    """Finds all active webhooks for the workspace subscribed to this event and dispatches them."""
-    cursor = db.outreach_webhooks.find({
-        "workspace_id": workspace_id,
-        "status": "active",
-        "events": event_type,
-    })
-    webhooks = await cursor.to_list(length=50)
-    results = []
+    data: dict[str, Any],
+    *,
+    aggregate_id: str | None = None,
+    dedupe_key: str | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Durable event broadcast: writes to outbox, fans out to active webhooks,
+    and runs delivery worker.
+    """
+    agg_id = aggregate_id or data.get("lead_id") or data.get("campaign_id") or uuid.uuid4().hex
+    dedup = dedupe_key or f"{event_type}:{agg_id}:{uuid.uuid4().hex[:8]}"
 
-    now = datetime.now(timezone.utc)
-    for whk in webhooks:
-        secret = decrypt_secret(whk.get("secret_enc", "")) if whk.get("secret_enc") else ""
-        res = await dispatch_webhook(whk["target_url"], secret, event_type, data)
-        results.append({"webhook_id": whk["id"], **res})
+    await record_outbox_event(
+        db=db,
+        workspace_id=workspace_id,
+        event_type=event_type,
+        aggregate_id=agg_id,
+        dedupe_key=dedupe_key or dedup,
+        data=data,
+    )
 
-        updates: dict = {"last_delivery_at": now}
-        if res["success"]:
-            updates["consecutive_failures"] = 0
-            if whk.get("status") == "degraded":
-                updates["status"] = "active"
-        else:
-            failures = whk.get("consecutive_failures", 0) + 1
-            updates["consecutive_failures"] = failures
-            if failures >= 10:
-                updates["status"] = "degraded"
+    # Fan out to deliveries
+    await scan_and_fanout_outbox(db, batch_size=20)
 
-        await db.outreach_webhooks.update_one(
-            {"id": whk["id"], "workspace_id": workspace_id},
-            {"$set": updates},
-        )
-
-    return results
+    # Immediate dispatch attempt
+    dispatch_stats = await dispatch_due_deliveries(db, batch_size=20)
+    return [dispatch_stats]
