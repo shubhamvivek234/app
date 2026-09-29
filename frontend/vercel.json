@@ -5,12 +5,8 @@
       "destination": "https://socialentangler-b92a8.firebaseapp.com/__/auth/$1"
     },
     {
-      "source": "/api/v1/outreach/mailboxes",
-      "destination": "https://api.unravler.com/api/v1/outreach/mailboxes"
-    },
-    {
-      "source": "/api/v1/outreach/mailboxes/(.*)",
-      "destination": "https://api.unravler.com/api/v1/outreach/mailboxes/$1"
+      "source": "/api/(.*)",
+      "destination": "https://api.unravler.com/api/$1"
     },
     {
       "source": "/(.*)",
