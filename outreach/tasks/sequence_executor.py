@@ -101,8 +101,8 @@ class SequenceExecutor:
             LeadExecutionState.FAILED,
         ):
             return {"status": "terminal_state", "state": lead.get("execution_state")}
-        if lead.get("execution_state") == LeadExecutionState.REPLIED and not lead.get("waiting_for_reply_at"):
-            return {"status": "terminal_state", "state": lead.get("execution_state")}
+        if (lead.get("execution_state") == LeadExecutionState.REPLIED or lead.get("has_replied")) and not lead.get("waiting_for_reply_at"):
+            return {"status": "terminal_state", "state": LeadExecutionState.REPLIED}
 
         # 1. Fetch Campaign and verify active status
         workspace_id = lead.get("workspace_id")
@@ -263,8 +263,36 @@ class SequenceExecutor:
                     "updated_at": now,
                 }
                 if node_type in (SequenceNodeType.CONNECTION_REQUEST, SequenceNodeType.IF_CONNECTED) and branch_signal:
+                    newly_connected = not lead.get("is_connected")
                     updates["is_connected"] = True
                     updates["accepted_at"] = lead.get("accepted_at") or now
+                    if newly_connected:
+                        try:
+                            from outreach.core.event_outbox import record_outbox_event
+                            from outreach.core.event_definitions import WebhookEvent
+
+                            lead_display_name = (
+                                f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip()
+                                or lead.get("name")
+                                or "Prospect"
+                            )
+                            await record_outbox_event(
+                                db=db,
+                                workspace_id=workspace_id,
+                                event_type=WebhookEvent.CONNECTION_ACCEPTED,
+                                aggregate_id=lead_id,
+                                dedupe_key=f"lead.connection_accepted:{lead_id}",
+                                data={
+                                    "lead_id": lead_id,
+                                    "lead_name": lead_display_name,
+                                    "campaign_id": lead.get("campaign_id"),
+                                    "channel": "linkedin",
+                                    "linkedin_url": lead.get("linkedin_url"),
+                                    "sender_account_id": assigned_account_id,
+                                },
+                            )
+                        except Exception as outbox_err:
+                            logger.warning("Failed to record connection accepted outbox event for lead %s: %s", lead_id, outbox_err)
                 await db.outreach_leads.update_one(
                     {"id": lead_id},
                     {"$set": updates, "$unset": {waiting_field: ""}},
@@ -530,10 +558,38 @@ class SequenceExecutor:
             if branch_signal:
                 next_node_id = branches["positive"]
                 if node_type == SequenceNodeType.IF_CONNECTED:
+                    newly_connected = not lead.get("is_connected")
                     await db.outreach_leads.update_one({"id": lead_id}, {"$set": {
                         "is_connected": True,
                         "accepted_at": lead.get("accepted_at") or datetime.now(timezone.utc),
                     }})
+                    if newly_connected:
+                        try:
+                            from outreach.core.event_outbox import record_outbox_event
+                            from outreach.core.event_definitions import WebhookEvent
+
+                            lead_display_name = (
+                                f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip()
+                                or lead.get("name")
+                                or "Prospect"
+                            )
+                            await record_outbox_event(
+                                db=db,
+                                workspace_id=workspace_id,
+                                event_type=WebhookEvent.CONNECTION_ACCEPTED,
+                                aggregate_id=lead_id,
+                                dedupe_key=f"lead.connection_accepted:{lead_id}",
+                                data={
+                                    "lead_id": lead_id,
+                                    "lead_name": lead_display_name,
+                                    "campaign_id": lead.get("campaign_id"),
+                                    "channel": "linkedin",
+                                    "linkedin_url": lead.get("linkedin_url"),
+                                    "sender_account_id": assigned_account_id,
+                                },
+                            )
+                        except Exception as outbox_err:
+                            logger.warning("Failed to record connection accepted outbox event for lead %s: %s", lead_id, outbox_err)
             else:
                 if node_type == SequenceNodeType.IF_CONNECTED and not lead.get("waiting_for_connection_at"):
                     waiting_since = datetime.now(timezone.utc)

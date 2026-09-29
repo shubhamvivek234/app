@@ -117,9 +117,14 @@ def format_slack_event_card(payload: dict[str, Any]) -> dict[str, Any]:
     fields = [
         {"type": "mrkdwn", "text": f"*Event:* `{event_type}`"},
         {"type": "mrkdwn", "text": f"*Channel:* `{channel}`"},
+    ]
+    lead_name = data.get("lead_name")
+    if lead_name:
+        fields.append({"type": "mrkdwn", "text": f"*Lead:* {lead_name}"})
+    fields.extend([
         {"type": "mrkdwn", "text": f"*Lead ID:* `{lead_id}`"},
         {"type": "mrkdwn", "text": f"*Campaign ID:* `{campaign_id}`"},
-    ]
+    ])
 
     blocks: list[dict[str, Any]] = [
         {
@@ -160,8 +165,9 @@ def format_slack_event_card(payload: dict[str, Any]) -> dict[str, Any]:
         ],
     })
 
+    summary_target = f"{lead_name} ({lead_id})" if lead_name else f"Lead {lead_id}"
     return {
-        "text": f"{title} - Lead {lead_id} ({channel})",
+        "text": f"{title} - {summary_target} ({channel})",
         "blocks": blocks,
     }
 

@@ -36,8 +36,8 @@ Completed:
 - `outreach-site` verification: 6/6 Node tests pass including all 18 HTML pages, link checks, and compliance filters; desktop/mobile browser screenshots verified.
 
 ## Latest Release and Local Work
-- Commit `3355a18` deployed Outreach Integrations (Slices 1-6): transactional outbox, DNS-pinned safe transport, HMAC-SHA256 signer, retry engine with dead letter & manual replay, scoped API keys (`unr_live_`), idempotent lead ingest/pause, Slack pilot Block Kit alerts with zero body leak, Zapier/Make REST hooks, HubSpot one-way contact sync, Google Sheets formula-safe ingest, OutreachSettings tab UI, and marketing alignment in outreach-site.
-- Verification: 288 outreach backend tests, 62 frontend tests, frontend build, and 6/6 outreach-site tests pass. EC2 backend deployed: API/MCP healthy; beat and workers running outbox and webhook dispatch tasks. Live flags remain off.
+- Verified and wired end-to-end prospect reply & connection workflow: transactional outbox emission (`lead.replied`, `lead.connection_accepted`) across LinkedIn inbox sync and email mailbox sync, unified email reply inbox thread upsert, sequence follow-up auto-halt on reply, background periodic inbox poll beat task (every 5 min), and enriched Slack Block Kit alert cards with zero private body text leak.
+- Verification: 294 outreach backend tests, 93 frontend tests, and production build pass.
 
 ## Active Work
 Next:

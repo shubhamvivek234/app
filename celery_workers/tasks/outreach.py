@@ -307,6 +307,11 @@ celery_app.conf.beat_schedule.update({
         "schedule": 15.0,
         "options": {"queue": "outreach"},
     },
+    "sync-linkedin-inbox-replies": {
+        "task": "celery_workers.tasks.outreach.periodic_inbox_sync",
+        "schedule": 300.0,
+        "options": {"queue": "outreach"},
+    },
 })
 
 
@@ -649,3 +654,45 @@ async def _dispatch_webhook_deliveries(batch_size: int = 20, db=None) -> dict:
     db = db or await _inbox_db()
     from outreach.core.webhook_delivery import dispatch_due_deliveries
     return await dispatch_due_deliveries(db, batch_size=batch_size)
+
+
+@celery_app.task(name="celery_workers.tasks.outreach.periodic_inbox_sync", queue="outreach", acks_late=True)
+def periodic_inbox_sync() -> dict:
+    return run_async(_periodic_inbox_sync())
+
+
+async def _periodic_inbox_sync(db=None) -> dict:
+    """Periodic poll of active LinkedIn sender inboxes for prospect replies."""
+    if is_shutting_down() or not live_actions_enabled():
+        return {"status": "skipped", "reason": "live_actions_disabled"}
+    db = db or await _inbox_db()
+    from outreach.engine.inbox_sync import InboxSynchronizer
+    from outreach.core.paid_access import get_active_entitlement
+
+    active_senders = await db.outreach_accounts.find(
+        {"status": "active"},
+        {"workspace_id": 1, "user_id": 1, "id": 1},
+    ).to_list(length=100)
+
+    synced_accounts = 0
+    total_replies = 0
+    workspaces: dict[str, list[dict]] = {}
+    for s in active_senders:
+        ws_id = s.get("workspace_id")
+        if ws_id:
+            workspaces.setdefault(ws_id, []).append(s)
+
+    for ws_id, senders in workspaces.items():
+        if not await get_active_entitlement(db, ws_id):
+            continue
+        syncer = InboxSynchronizer(db, ws_id, senders[0].get("user_id", ""))
+        for sender in senders:
+            try:
+                res = await syncer.sync_account_inbox(sender["id"])
+                if res.get("synced_threads"):
+                    synced_accounts += 1
+                total_replies += res.get("new_replies_detected", 0)
+            except Exception as exc:
+                logger.warning("Periodic inbox sync error for sender %s: %s", sender["id"], exc)
+
+    return {"synced_accounts": synced_accounts, "new_replies_detected": total_replies}

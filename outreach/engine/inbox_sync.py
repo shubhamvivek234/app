@@ -227,6 +227,35 @@ class InboxSynchronizer:
                         {"$set": {"interested_count": interested_count}},
                     )
 
+                if newly_replied:
+                    try:
+                        from outreach.core.event_outbox import record_outbox_event
+                        from outreach.core.event_definitions import WebhookEvent
+
+                        lead_display_name = (
+                            f"{matched_lead.get('first_name', '')} {matched_lead.get('last_name', '')}".strip()
+                            or matched_lead.get("name")
+                            or lead_name
+                            or "Prospect"
+                        )
+                        await record_outbox_event(
+                            db=self.db,
+                            workspace_id=self.workspace_id,
+                            event_type=WebhookEvent.LEAD_REPLIED,
+                            aggregate_id=matched_lead["id"],
+                            dedupe_key=f"lead.replied:linkedin:{matched_lead['id']}",
+                            data={
+                                "lead_id": matched_lead["id"],
+                                "lead_name": lead_display_name,
+                                "campaign_id": campaign_id,
+                                "channel": "linkedin",
+                                "linkedin_url": matched_lead.get("linkedin_url") or profile_url,
+                                "sender_account_id": account_id,
+                            },
+                        )
+                    except Exception as outbox_err:
+                        logger.warning("Failed to record outbox event for replied lead %s: %s", matched_lead.get("id"), outbox_err)
+
         if conversations and not synced_count:
             return {"status": "error", "error": "LinkedIn returned conversations without usable IDs", "skipped_threads": skipped_count}
         return {

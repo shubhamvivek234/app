@@ -16,11 +16,14 @@ from email.utils import getaddresses
 from urllib.parse import quote, urlparse
 
 import httpx
+import logging
 
 from outreach.core.email_finder import normalize_email, suppress_email
 from outreach.core.mailbox_connection import MailboxUnavailable, _paid_sender, get_mailbox_access_token
 from outreach.models import LeadExecutionState
 from outreach.core.paid_access import _utc
+
+logger = logging.getLogger(__name__)
 
 
 GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
@@ -281,11 +284,106 @@ async def _apply_inbound(db, mailbox: dict, provider_id: str, recipient: str,
                           "execution_state": LeadExecutionState.REPLIED,
                           "email_reply_attribution": attribution, "updated_at": now}},
             )
-            if getattr(changed, "modified_count", 0) and op.get("campaign_id"):
-                await db.outreach_campaigns.update_one(
-                    {"workspace_id": workspace_id, "id": op["campaign_id"]},
-                    {"$inc": {"replies_count": 1}},
+            if getattr(changed, "modified_count", 0):
+                if op.get("campaign_id"):
+                    await db.outreach_campaigns.update_one(
+                        {"workspace_id": workspace_id, "id": op["campaign_id"]},
+                        {"$inc": {"replies_count": 1}},
+                    )
+                lead_doc = None
+                if hasattr(db, "outreach_leads") and hasattr(db.outreach_leads, "find_one"):
+                    find_res = db.outreach_leads.find_one(
+                        {"workspace_id": workspace_id, "id": op["lead_id"]},
+                        {"first_name": 1, "last_name": 1, "name": 1, "email": 1, "linkedin_url": 1},
+                    )
+                    import inspect
+                    if inspect.isawaitable(find_res):
+                        lead_doc = await find_res
+                    elif isinstance(find_res, dict):
+                        lead_doc = find_res
+                lead_doc = lead_doc or {}
+                lead_display = (
+                    f"{lead_doc.get('first_name', '')} {lead_doc.get('last_name', '')}".strip()
+                    or lead_doc.get("name")
+                    or original_recipient
                 )
+
+                # 1. Upsert into unified outreach inbox thread
+                try:
+                    from outreach.models import OutreachInboxThread, OutreachInboxMessage, MessageSenderType
+                    thread_id = f"thread_email_{op['lead_id']}"
+                    find_thread = None
+                    if hasattr(db, "outreach_inbox_threads") and hasattr(db.outreach_inbox_threads, "find_one"):
+                        t_res = db.outreach_inbox_threads.find_one({
+                            "workspace_id": workspace_id,
+                            "$or": [{"lead_id": op["lead_id"]}, {"id": thread_id}],
+                        })
+                        import inspect
+                        if inspect.isawaitable(t_res):
+                            find_thread = await t_res
+                        elif isinstance(t_res, dict):
+                            find_thread = t_res
+
+                    new_msg = OutreachInboxMessage(
+                        sender_type=MessageSenderType.LEAD,
+                        sender_name=lead_display,
+                        sender_urn=original_recipient,
+                        body=f"Inbound reply received from {original_recipient}",
+                        timestamp=received_at,
+                    )
+                    if find_thread:
+                        await db.outreach_inbox_threads.update_one(
+                            {"id": find_thread["id"], "workspace_id": workspace_id},
+                            {
+                                "$push": {"messages": new_msg.model_dump()},
+                                "$set": {
+                                    "last_message_snippet": f"Inbound reply from {original_recipient}",
+                                    "last_message_at": received_at,
+                                },
+                                "$inc": {"unread_count": 1},
+                            },
+                        )
+                    elif hasattr(db, "outreach_inbox_threads") and hasattr(db.outreach_inbox_threads, "insert_one"):
+                        new_thread = OutreachInboxThread(
+                            id=thread_id,
+                            workspace_id=workspace_id,
+                            account_id=sender_id,
+                            lead_id=op["lead_id"],
+                            lead_name=lead_display,
+                            lead_urn=original_recipient,
+                            campaign_id=op.get("campaign_id"),
+                            is_outreach=True,
+                            last_message_snippet=f"Inbound reply from {original_recipient}",
+                            last_message_at=received_at,
+                            unread_count=1,
+                            messages=[new_msg],
+                        )
+                        await db.outreach_inbox_threads.insert_one(new_thread.model_dump())
+                except Exception as thread_err:
+                    logger.warning("Failed to sync inbox thread for email reply %s: %s", op.get("lead_id"), thread_err)
+
+                # 2. Record Transactional Outbox Event for Slack notifications & Webhook subscribers
+                try:
+                    from outreach.core.event_outbox import record_outbox_event
+                    from outreach.core.event_definitions import WebhookEvent
+
+                    await record_outbox_event(
+                        db=db,
+                        workspace_id=workspace_id,
+                        event_type=WebhookEvent.LEAD_REPLIED,
+                        aggregate_id=op["lead_id"],
+                        dedupe_key=f"lead.replied:email:{op['lead_id']}:{provider_id}",
+                        data={
+                            "lead_id": op["lead_id"],
+                            "lead_name": lead_display,
+                            "campaign_id": op.get("campaign_id"),
+                            "channel": "email",
+                            "email": original_recipient,
+                            "sender_account_id": sender_id,
+                        },
+                    )
+                except Exception as outbox_err:
+                    logger.warning("Failed to record outbox event for email reply %s: %s", op.get("lead_id"), outbox_err)
         else:
             await db.outreach_leads.update_one(
                 {"workspace_id": workspace_id, "id": op["lead_id"], "has_replied": {"$ne": True}},

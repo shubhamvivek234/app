@@ -2,7 +2,7 @@
 Comprehensive tests for Outreach Integrations:
 Slice 3 (Slack Pilot), Slice 4 (Zapier/Make REST Hooks), and Slice 5 (HubSpot & Google Sheets).
 """
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -21,6 +21,8 @@ from outreach.core.slack_notifier import (
     validate_slack_webhook_url,
 )
 from outreach.core.webhook_delivery import dispatch_due_deliveries
+
+pytestmark = pytest.mark.usefixtures("outreach_paid_gate_stub")
 
 
 # ── Slice 3: Slack Pilot Tests ─────────────────────────────────────────────
@@ -313,3 +315,250 @@ async def test_hubspot_contact_sync_creates_mapping():
     saved_doc = mock_db.outreach_external_mappings.update_one.call_args[0][1]["$set"]
     assert saved_doc["external_id"] == "hs_contact_98765"
     assert saved_doc["provider"] == "hubspot"
+
+
+@pytest.mark.asyncio
+async def test_inbox_sync_emits_lead_replied_outbox_event(monkeypatch):
+    """When a lead replies on LinkedIn, inbox sync must record a lead.replied event into the outbox."""
+    monkeypatch.setenv("OUTREACH_MOCK_AUTH", "true")
+    from outreach.engine.inbox_sync import InboxSynchronizer
+    from outreach.core.crypto import encrypt_secret
+
+    mock_db = MagicMock()
+    enc_cookie = encrypt_secret("li_at=mock_cookie")
+    mock_account = {
+        "id": "acc_sender_1",
+        "workspace_id": "ws_test",
+        "status": "active",
+        "name": "Alex Sender",
+        "encrypted_session_cookie": enc_cookie,
+    }
+    mock_db.outreach_accounts.find_one = AsyncMock(return_value=mock_account)
+    mock_db.outreach_inbox_threads.find_one = AsyncMock(return_value=None)
+    mock_db.outreach_inbox_threads.insert_one = AsyncMock()
+    mock_db.outreach_inbox_threads.count_documents = AsyncMock(return_value=1)
+    mock_db.outreach_leads.find_one = AsyncMock(return_value={
+        "id": "lead_123",
+        "first_name": "Jordan",
+        "last_name": "Davis",
+        "campaign_id": "cmp_abc",
+        "linkedin_url": "https://linkedin.com/in/jordandavis",
+    })
+    mock_db.outreach_leads.update_one = AsyncMock(return_value=MagicMock(modified_count=1))
+    mock_db.outreach_campaigns.update_one = AsyncMock()
+    mock_db.outreach_event_outbox.insert_one = AsyncMock()
+
+    syncer = InboxSynchronizer(db=mock_db, workspace_id="ws_test")
+    res = await syncer.sync_account_inbox("acc_sender_1")
+
+    assert res.get("new_replies_detected", 0) >= 1
+    assert mock_db.outreach_event_outbox.insert_one.called
+    outbox_doc = mock_db.outreach_event_outbox.insert_one.call_args[0][0]
+    assert outbox_doc["type"] == "lead.replied"
+    assert outbox_doc["aggregate_id"] == "lead_123"
+    assert outbox_doc["payload"]["data"]["lead_name"] == "Jordan Davis"
+    assert outbox_doc["payload"]["data"]["channel"] == "linkedin"
+
+
+@pytest.mark.asyncio
+async def test_mailbox_sync_emits_lead_replied_and_creates_inbox_thread():
+    """When an email reply is confirmed, mailbox_sync must record lead.replied event and upsert inbox thread."""
+    from outreach.core.mailbox_sync import _apply_inbound
+
+    mock_db = MagicMock()
+    mock_db.outreach_email_inbound_events.find_one = AsyncMock(return_value=None)
+    mock_db.outreach_email_inbound_events.update_one = AsyncMock()
+    mock_db.outreach_email_operations.find_one = AsyncMock(return_value={
+        "_id": "op_99",
+        "lead_id": "lead_email_1",
+        "campaign_id": "camp_cold_email",
+        "message_id": "<sent-123@unravler.io>",
+        "recipient": "prospect@example.com",
+    })
+    mock_db.outreach_leads.update_one = AsyncMock(return_value=MagicMock(modified_count=1))
+    mock_db.outreach_leads.find_one = AsyncMock(return_value={
+        "id": "lead_email_1",
+        "first_name": "Taylor",
+        "last_name": "Swift",
+        "email": "prospect@example.com",
+    })
+    mock_db.outreach_campaigns.update_one = AsyncMock()
+    mock_db.outreach_inbox_threads.find_one = AsyncMock(return_value=None)
+    mock_db.outreach_inbox_threads.insert_one = AsyncMock()
+    mock_db.outreach_event_outbox.insert_one = AsyncMock()
+
+    mailbox = {"workspace_id": "ws_email", "sender_account_id": "snd_email", "email": "sender@unravler.io"}
+    inbound_msg = {
+        "id": "prov_msg_456",
+        "references": ["<sent-123@unravler.io>"],
+        "from": "prospect@example.com",
+        "in_reply_to": "<sent-123@unravler.io>",
+    }
+
+    with patch("outreach.core.mailbox_sync.suppress_email", new_callable=AsyncMock):
+        res = await _apply_inbound(
+            mock_db,
+            mailbox,
+            "prov_msg_456",
+            "prospect@example.com",
+            datetime.now(timezone.utc),
+            inbound_msg,
+            kind="reply",
+        )
+
+    assert res["status"] == "reply"
+    # Thread created
+    assert mock_db.outreach_inbox_threads.insert_one.called
+    thread_doc = mock_db.outreach_inbox_threads.insert_one.call_args[0][0]
+    assert thread_doc["lead_name"] == "Taylor Swift"
+    assert thread_doc["lead_id"] == "lead_email_1"
+
+    # Outbox event recorded
+    assert mock_db.outreach_event_outbox.insert_one.called
+    outbox_doc = mock_db.outreach_event_outbox.insert_one.call_args[0][0]
+    assert outbox_doc["type"] == "lead.replied"
+    assert outbox_doc["payload"]["data"]["channel"] == "email"
+    assert outbox_doc["payload"]["data"]["lead_name"] == "Taylor Swift"
+
+
+@pytest.mark.asyncio
+async def test_sequence_executor_halts_on_has_replied():
+    """Sequence executor stops immediately if lead has has_replied=True."""
+    from outreach.tasks.sequence_executor import SequenceExecutor
+    from outreach.models import LeadExecutionState
+
+    mock_db = MagicMock()
+    mock_db.outreach_leads.find_one = AsyncMock(return_value={
+        "id": "lead_done",
+        "workspace_id": "ws_123",
+        "has_replied": True,
+        "execution_state": LeadExecutionState.WAITING_DELAY,
+    })
+
+    res = await SequenceExecutor.execute_lead_step("lead_done", db=mock_db)
+    assert res["status"] == "terminal_state"
+    assert res["state"] == LeadExecutionState.REPLIED
+
+
+def test_slack_card_with_lead_name_and_zero_leak():
+    """format_slack_event_card includes prospect name cleanly while strictly preventing body leaks."""
+    payload = {
+        "id": "evt_replied_1",
+        "type": "lead.replied",
+        "version": 1,
+        "occurred_at": "2026-09-29T15:00:00Z",
+        "workspace_id": "ws_test",
+        "data": {
+            "lead_id": "lead_999",
+            "lead_name": "Jordan Davis",
+            "campaign_id": "cmp_alpha",
+            "channel": "linkedin",
+            "linkedin_url": "https://www.linkedin.com/in/jordandavis",
+            "private_secret_reply": "Confidential pitch details",
+        },
+    }
+
+    card = format_slack_event_card(payload)
+    card_str = str(card)
+
+    assert "Jordan Davis" in card_str
+    assert "lead_999" in card_str
+    assert "cmp_alpha" in card_str
+    assert "LINKEDIN" in card_str
+    assert "Confidential pitch details" not in card_str
+
+
+def test_slack_card_for_connection_accepted():
+    """format_slack_event_card produces connection accepted card with handshake emoji and prospect link."""
+    payload = {
+        "id": "evt_conn_1",
+        "type": "lead.connection_accepted",
+        "version": 1,
+        "occurred_at": "2026-09-29T16:00:00Z",
+        "workspace_id": "ws_test",
+        "data": {
+            "lead_id": "lead_conn_100",
+            "lead_name": "Elena Rostova",
+            "campaign_id": "cmp_beta",
+            "channel": "linkedin",
+            "linkedin_url": "https://www.linkedin.com/in/elenarostova",
+        },
+    }
+
+    card = format_slack_event_card(payload)
+    card_str = str(card)
+
+    assert "Connection Accepted" in card["text"]
+    assert "Elena Rostova" in card_str
+    assert "lead_conn_100" in card_str
+    assert "https://www.linkedin.com/in/elenarostova" in card_str
+
+
+@pytest.mark.asyncio
+async def test_sequence_executor_emits_connection_accepted_outbox_event(monkeypatch):
+    """When a lead accepts connection, sequence executor records lead.connection_accepted to outbox."""
+    monkeypatch.setenv("OUTREACH_MOCK_AUTH", "true")
+    from outreach.tasks.sequence_executor import SequenceExecutor
+    from outreach.models import SequenceNodeType, LeadExecutionState
+    from outreach.core.crypto import encrypt_secret
+
+    mock_db = MagicMock()
+    mock_lead = {
+        "id": "lead_conn_test",
+        "workspace_id": "ws_test",
+        "campaign_id": "cmp_test",
+        "assigned_account_id": "acc_1",
+        "first_name": "Marcus",
+        "last_name": "Vance",
+        "linkedin_url": "https://linkedin.com/in/marcusvance",
+        "is_connected": False,
+        "current_node_id": "node_check_conn",
+        "waiting_for_connection_at": datetime.now(timezone.utc) - timedelta(days=1),
+        "execution_state": LeadExecutionState.WAITING_DELAY,
+    }
+    mock_db.outreach_leads.find_one = AsyncMock(return_value=mock_lead)
+    mock_db.outreach_leads.update_one = AsyncMock()
+    mock_db.outreach_campaigns.find_one = AsyncMock(return_value={
+        "id": "cmp_test", "workspace_id": "ws_test", "status": "active",
+    })
+    mock_db.outreach_accounts.find_one = AsyncMock(return_value={
+        "id": "acc_1",
+        "workspace_id": "ws_test",
+        "status": "active",
+        "session_cookie_enc": encrypt_secret("li_at=mock_cookie"),
+        "jsession_id": "ajax:12345",
+    })
+    mock_db.outreach_sequences.find_one = AsyncMock(return_value={
+        "campaign_id": "cmp_test",
+        "workspace_id": "ws_test",
+        "compiled_dag": {
+            "root_node_ids": ["node_check_conn"],
+            "nodes": {
+                "node_check_conn": {
+                    "id": "node_check_conn",
+                    "type": SequenceNodeType.IF_CONNECTED,
+                    "branches": {"positive": "node_msg_1", "negative": None},
+                },
+                "node_msg_1": {
+                    "id": "node_msg_1",
+                    "type": SequenceNodeType.SEND_MESSAGE,
+                    "delay_hours": 24,
+                },
+            },
+        },
+    })
+    mock_db.outreach_event_outbox.insert_one = AsyncMock()
+
+    with patch("outreach.core.rate_limiter.OutboundRateLimiter.is_within_working_hours", return_value=True), \
+         patch("outreach.core.paid_access.sender_is_ready", new_callable=AsyncMock, return_value=True), \
+         patch("outreach.engine.voyager_client.VoyagerClient.check_connection_status_strict", new_callable=AsyncMock, return_value=True):
+        res = await SequenceExecutor.execute_lead_step("lead_conn_test", db=mock_db)
+
+    assert res["status"] == "branch_advanced"
+    assert res["condition_met"] is True
+    assert mock_db.outreach_event_outbox.insert_one.called
+    outbox_doc = mock_db.outreach_event_outbox.insert_one.call_args[0][0]
+    assert outbox_doc["type"] == "lead.connection_accepted"
+    assert outbox_doc["aggregate_id"] == "lead_conn_test"
+    assert outbox_doc["payload"]["data"]["lead_name"] == "Marcus Vance"
+
