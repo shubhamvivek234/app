@@ -911,6 +911,71 @@ async def get_campaign_preflight(
     }
 
 
+@router.get("/{campaign_id}/node-counts")
+async def get_campaign_node_counts(
+    campaign_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Returns real-time lead counts distributed across sequence nodes and execution states for a campaign.
+    Uses optimized compound index [("campaign_id", 1), ("current_node_id", 1)].
+    """
+    workspace_id = _workspace_id(current_user)
+    campaign = await db.outreach_campaigns.find_one(_campaign_filter(campaign_id, current_user))
+    if not campaign:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+
+    node_pipeline = [
+        {
+            "$match": {
+                "campaign_id": campaign_id,
+                "workspace_id": workspace_id,
+                "execution_state": "in_progress",
+                "current_node_id": {"$ne": None},
+            }
+        },
+        {"$group": {"_id": "$current_node_id", "count": {"$sum": 1}}},
+    ]
+    node_docs = await _fetch_cursor_docs(db.outreach_leads.aggregate(node_pipeline), length=1000)
+    node_counts = {str(doc["_id"]): doc["count"] for doc in node_docs if doc.get("_id")}
+
+    queued_pipeline = [
+        {
+            "$match": {
+                "campaign_id": campaign_id,
+                "workspace_id": workspace_id,
+                "execution_state": "queued",
+                "current_node_id": {"$ne": None},
+            }
+        },
+        {"$group": {"_id": "$current_node_id", "count": {"$sum": 1}}},
+    ]
+    queued_docs = await _fetch_cursor_docs(db.outreach_leads.aggregate(queued_pipeline), length=1000)
+    queued_node_counts = {str(doc["_id"]): doc["count"] for doc in queued_docs if doc.get("_id")}
+
+    combined_node_counts = dict(node_counts)
+    for node_id, q_count in queued_node_counts.items():
+        combined_node_counts[node_id] = combined_node_counts.get(node_id, 0) + q_count
+
+    state_pipeline = [
+        {"$match": {"campaign_id": campaign_id, "workspace_id": workspace_id}},
+        {"$group": {"_id": "$execution_state", "count": {"$sum": 1}}},
+    ]
+    state_docs = await _fetch_cursor_docs(db.outreach_leads.aggregate(state_pipeline), length=50)
+    execution_state_counts = {str(doc["_id"]): doc["count"] for doc in state_docs if doc.get("_id")}
+
+    total_leads = sum(execution_state_counts.values())
+
+    return {
+        "campaign_id": campaign_id,
+        "node_counts": node_counts,
+        "waiting_node_counts": combined_node_counts,
+        "execution_state_counts": execution_state_counts,
+        "total_leads": total_leads,
+    }
+
+
 @router.post("/{campaign_id}/launch", dependencies=[require_permission("campaign:update")])
 async def launch_campaign(
     campaign_id: str,

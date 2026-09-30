@@ -169,4 +169,116 @@ describe('ImportLeadsModal', () => {
       expect.objectContaining({ imported_count: 1 })
     );
   });
+
+  it('supports staged lead name editing, reverting to original, and submitting to import-staged', async () => {
+    const onLeadsImported = jest.fn();
+    let stagedPayload = null;
+
+    global.fetch.mockImplementation((url, opts) => {
+      if (url === '/api/v1/outreach/leads/preview') {
+        return Promise.resolve(response({
+          total_submitted: 1,
+          valid_count: 1,
+          duplicate_count: 0,
+          contacted_count: 0,
+          dnc_count: 0,
+          invalid_count: 0,
+          rows: [
+            {
+              row_number: 1,
+              linkedin_url: 'https://linkedin.com/in/alexhamilton',
+              raw_first_name: 'ALEXANDER',
+              cleaned_first_name: 'Alexander',
+              first_name: 'Alexander',
+              last_name: 'Hamilton',
+              company_name: 'Treasury',
+              status: 'valid',
+              rejection_code: null,
+              error_reason: null,
+            },
+          ],
+        }));
+      }
+
+      if (url === '/api/v1/outreach/leads/import-staged') {
+        stagedPayload = JSON.parse(opts.body);
+        return Promise.resolve(response({
+          imported_count: 1,
+          duplicates_count: 0,
+          skipped_count: 0,
+          total_submitted: 1,
+          rejections: [],
+        }));
+      }
+
+      return Promise.reject(new Error(`Unexpected request: ${url}`));
+    });
+
+    await act(async () => {
+      root.render(
+        <ImportLeadsModal
+          isOpen={true}
+          onClose={() => {}}
+          campaignId="camp-1"
+          onLeadsImported={onLeadsImported}
+        />
+      );
+    });
+
+    // Step 1: Select Paste URLs
+    const pasteButton = [...container.querySelectorAll('button')].find((b) =>
+      b.textContent.includes('Paste LinkedIn profile URLs')
+    );
+    await act(async () => pasteButton.click());
+
+    // Step 2: Fill in URLs textarea
+    const textarea = container.querySelector('textarea');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set.call(
+        textarea,
+        'https://linkedin.com/in/alexhamilton, ALEXANDER Hamilton, Treasury'
+      );
+      textarea.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    const previewBtn = [...container.querySelectorAll('button')].find((b) =>
+      b.textContent.includes('Validate & Preview')
+    );
+    await act(async () => previewBtn.click());
+
+    // Step 3: Verify preview row and test revert
+    expect(container.textContent).toContain('Validation Preview');
+    const revertBtn = [...container.querySelectorAll('button')].find((b) =>
+      b.textContent.includes('Revert')
+    );
+    expect(revertBtn).toBeTruthy();
+
+    // Click revert to restore raw name
+    await act(async () => revertBtn.click());
+    const nameInput = container.querySelector('input[aria-label="First name for lead #1"]');
+    expect(nameInput.value).toBe('ALEXANDER');
+
+    // Now edit the name to "Alex"
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(
+        nameInput,
+        'Alex'
+      );
+      nameInput.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(nameInput.value).toBe('Alex');
+
+    // Confirm & Ingest with custom edits
+    const ingestBtn = [...container.querySelectorAll('button')].find((b) =>
+      b.textContent.includes('Confirm & Ingest')
+    );
+    await act(async () => ingestBtn.click());
+
+    // Verify /import-staged was called with custom edited name
+    expect(stagedPayload).toBeTruthy();
+    expect(stagedPayload.campaign_id).toBe('camp-1');
+    expect(stagedPayload.leads[0].cleaned_first_name).toBe('Alex');
+    expect(stagedPayload.leads[0].raw_first_name).toBe('ALEXANDER');
+    expect(container.textContent).toContain('Lead Intake Complete');
+  });
 });

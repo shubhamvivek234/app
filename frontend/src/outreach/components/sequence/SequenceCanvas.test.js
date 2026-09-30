@@ -111,4 +111,38 @@ describe('Server-driven sequence capabilities', () => {
       expect.objectContaining({ source: 'condition', target: 'with-email', label: 'Yes' }),
     ]));
   });
+
+  it('fetches and renders real-time lead count badges on sequence cards for campaign', async () => {
+    global.fetch = jest.fn((url) => {
+      if (url.includes('node-counts')) {
+        return Promise.resolve(ok({
+          campaign_id: 'camp-active',
+          node_counts: { node_invite: 34 },
+          waiting_node_counts: { node_invite: 34 },
+          execution_state_counts: { in_progress: 34 },
+          total_leads: 34,
+        }));
+      }
+      if (url.includes('sequence-capabilities')) {
+        return Promise.resolve(ok({ capabilities: [] }));
+      }
+      if (url.includes('/api/v1/outreach/sequences')) {
+        return Promise.resolve(ok({
+          tree: [
+            {
+              id: 'node_invite',
+              type: 'connection_request',
+              title: 'Send Invite',
+              subtitle: 'Wait 1 day',
+              delay_days: 1,
+            },
+          ],
+        }));
+      }
+      return Promise.reject(new Error(`Unexpected url: ${url}`));
+    });
+
+    await act(async () => root.render(<SequenceCanvas campaignId="camp-active" />));
+    expect(container.textContent).toContain('34 leads waiting');
+  });
 });

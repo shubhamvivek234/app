@@ -4,7 +4,7 @@ import {
   CornerDownRight, Award, GitBranch, Clock, Plus, X, ZoomIn, ZoomOut, Maximize2,
   CheckCircle2, Sparkles, ChevronRight, Edit3, Trash2, MoreVertical, Navigation,
   Link2, Check, Search, ExternalLink, Play, Copy, RefreshCw, ChevronDown,
-  ArrowLeft, ArrowRight, Crosshair
+  ArrowLeft, ArrowRight, Crosshair, Users
 } from 'lucide-react';
 
 const ACTION_DEFINITIONS = [
@@ -205,6 +205,8 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
   const [capabilities, setCapabilities] = useState(null);
   const [capabilityError, setCapabilityError] = useState('');
   const [capabilityRetryKey, setCapabilityRetryKey] = useState(0);
+  const [nodeCounts, setNodeCounts] = useState({});
+  const [nodeCountsLoading, setNodeCountsLoading] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(100);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
@@ -284,6 +286,32 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
     loadCapabilities();
     return () => { cancelled = true; };
   }, [capabilityRetryKey]);
+
+  useEffect(() => {
+    if (!campaignId || campaignId === 'new') return;
+    let cancelled = false;
+    const fetchNodeCounts = async () => {
+      try {
+        setNodeCountsLoading(true);
+        const token = localStorage.getItem('token');
+        const res = await fetch(`/api/v1/outreach/campaigns/${campaignId}/node-counts`, {
+          credentials: 'include',
+          headers: { Authorization: token ? `Bearer ${token}` : '' },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) {
+          setNodeCounts(data?.waiting_node_counts || data?.node_counts || {});
+        }
+      } catch (_) {
+        // Non-blocking
+      } finally {
+        if (!cancelled) setNodeCountsLoading(false);
+      }
+    };
+    fetchNodeCounts();
+    return () => { cancelled = true; };
+  }, [campaignId]);
 
   const stepCapability = (type) => capabilities?.[type] || null;
   const stepReason = (type) => {
@@ -903,6 +931,17 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
               <p className="text-xs font-semibold text-rose-500 mt-0.5">Action required</p>
             ) : (
               <p className="text-xs text-slate-400 truncate mt-0.5">{step.subtitle}</p>
+            )}
+            {nodeCounts[step.id] !== undefined && nodeCounts[step.id] > 0 && (
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <span
+                  data-testid={`lead-count-${step.id}`}
+                  className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 border border-indigo-200/80 shadow-2xs"
+                >
+                  <Users className="w-2.5 h-2.5" />
+                  {nodeCounts[step.id]} {nodeCounts[step.id] === 1 ? 'lead waiting' : 'leads waiting'}
+                </span>
+              </div>
             )}
           </div>
           <button

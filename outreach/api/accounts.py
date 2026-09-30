@@ -205,3 +205,32 @@ async def disconnect_account(
 
     logger.info("Account %s disconnected; paid-term IP retained for user %s", account_id, user_id)
     return {"status": "success", "message": "Sender disconnected and campaigns paused. Its IP remains reserved through the paid provider term for this sender only."}
+
+
+class ResumeSenderRequest(BaseModel):
+    force: bool = Field(default=False, description="Override mandatory platform cooldown")
+
+
+@router.post("/{account_id}/resume", dependencies=[require_permission("account:connect")])
+async def resume_sender_account(
+    account_id: str,
+    req: ResumeSenderRequest = ResumeSenderRequest(),
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Manually resumes a sender whose circuit breaker was tripped.
+    Requires cooldown window to have elapsed unless force=True is provided.
+    """
+    from outreach.core.circuit_breaker import CircuitBreaker
+    ws_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    try:
+        result = await CircuitBreaker.resume_sender(
+            sender_id=account_id,
+            workspace_id=ws_id,
+            db=db,
+            force=req.force,
+        )
+        return {"status": "success", "result": result}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))

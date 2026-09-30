@@ -17,7 +17,14 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 import uuid
 from api.deps import get_current_user, require_permission
 from db.mongo import get_db
-from outreach.core.lead_importer import LeadImporter, normalize_linkedin_url, _host_variants
+from outreach.core.lead_importer import (
+    LeadImporter,
+    normalize_linkedin_url,
+    _host_variants,
+    build_lead_identifiers,
+    check_compound_suppression,
+)
+from outreach.core.name_cleaner import clean_first_name
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +89,15 @@ class ImportURLsRequest(BaseModel):
     consent_basis: str = Field(default="user_provided", description="Consent or source basis")
 
 
+class ImportStagedRequest(BaseModel):
+    campaign_id: str
+    leads: list[dict[str, Any]] = Field(..., description="Staged lead objects from preview")
+    skip_already_contacted: bool = True
+    skip_do_not_contact: bool = True
+    require_name: bool = False
+    consent_basis: str = Field(default="user_provided", description="Consent or source basis")
+
+
 class LeadPreviewRequest(BaseModel):
     campaign_id: str
     source_type: str = Field(default="csv", description="'csv' | 'pasted_urls'")
@@ -102,7 +118,11 @@ class ImportSearchRequest(BaseModel):
 
 
 class DoNotContactRequest(BaseModel):
-    linkedin_url: str
+    linkedin_url: str | None = None
+    email: str | None = None
+    member_urn: str | None = None
+    sales_lead_urn: str | None = None
+    vanity_name: str | None = None
     reason: str | None = None
 
 
@@ -308,6 +328,65 @@ async def import_leads_csv(
     return result
 
 
+@router.post("/import-staged", dependencies=[require_permission("lead:create")])
+async def import_leads_staged(
+    req: ImportStagedRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Ingests reviewed and staged leads into a campaign with user-edited names, compound deduplication, and DNC suppression.
+    """
+    workspace_id = _workspace_id(current_user)
+    campaign = await _require_campaign(req.campaign_id, current_user, db)
+    if campaign.get("status") == "warming_up":
+        raise HTTPException(status_code=409, detail="Pause conditional launch before changing its lead cohort")
+    if campaign.get("status") == "active":
+        linked_list_count = await db.outreach_engage_lists.count_documents({
+            "campaign_id": req.campaign_id, "workspace_id": workspace_id,
+        })
+        if linked_list_count:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This active campaign has an Engage warm-up list. Import into a new draft campaign so new contacts complete warm-up before launch.",
+            )
+        sender_count = await db.outreach_accounts.count_documents({
+            "id": {"$in": campaign.get("sender_account_ids", [])},
+            "workspace_id": workspace_id,
+            "status": "active",
+        })
+        sequence = await db.outreach_sequences.find_one({
+            "campaign_id": req.campaign_id, "is_deleted": {"$ne": True},
+        })
+        if not sender_count or not (sequence or {}).get("compiled_dag", {}).get("root_node_ids"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This campaign needs an active sender and a valid sequence before more contacts can be imported.",
+            )
+
+    if not req.leads:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No leads provided for import.",
+        )
+
+    result = await LeadImporter.ingest_leads(
+        leads=req.leads,
+        campaign_id=req.campaign_id,
+        workspace_id=workspace_id,
+        db=db,
+        skip_already_contacted=req.skip_already_contacted,
+        skip_do_not_contact=req.skip_do_not_contact,
+        campaign=campaign,
+        source="staged_preview",
+        source_metadata={"source_type": "staged_preview", "consent_basis": req.consent_basis},
+        require_name=req.require_name,
+        include_rejections=True,
+    )
+
+    return result
+
+
 @router.post("/import-search", dependencies=[require_permission("lead:create")])
 async def import_search_url(
     req: ImportSearchRequest,
@@ -492,26 +571,67 @@ async def add_do_not_contact(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """Adds a LinkedIn profile URL to the global Do-Not-Contact exclusion list."""
+    """Adds a contact (by URL, email, vanity, or URN) to the global Do-Not-Contact exclusion list."""
     workspace_id = _workspace_id(current_user)
-    cleaned_url = normalize_linkedin_url(req.linkedin_url)
-    if not cleaned_url:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid LinkedIn profile URL")
+    identifiers = build_lead_identifiers(
+        raw_url=req.linkedin_url,
+        email=req.email,
+        member_urn=req.member_urn,
+        sales_lead_urn=req.sales_lead_urn,
+        vanity_name=req.vanity_name,
+    )
+    if not (identifiers.normalized_url or identifiers.email or identifiers.member_urn or identifiers.sales_lead_urn or identifiers.vanity_name):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one valid contact identifier (LinkedIn URL, email, vanity, or URN) must be provided",
+        )
+
+    primary_key = (
+        identifiers.normalized_url
+        or identifiers.email
+        or identifiers.member_urn
+        or identifiers.sales_lead_urn
+        or identifiers.vanity_name
+    )
 
     doc = {
         "workspace_id": workspace_id,
-        "linkedin_url": cleaned_url,
+        "linkedin_url": identifiers.normalized_url or req.linkedin_url or "",
+        "vanity_name": identifiers.vanity_name or "",
+        "member_urn": identifiers.member_urn or "",
+        "sales_lead_urn": identifiers.sales_lead_urn or "",
+        "email": identifiers.email or "",
+        "identifiers": identifiers.model_dump(),
         "reason": req.reason or "Manual exclusion",
         "created_at": datetime.now(timezone.utc),
     }
 
+    or_clauses = []
+    if identifiers.normalized_url:
+        or_clauses.append({"identifiers.normalized_url": identifiers.normalized_url})
+        or_clauses.append({"linkedin_url": identifiers.normalized_url})
+    if identifiers.email:
+        or_clauses.append({"identifiers.email": identifiers.email})
+        or_clauses.append({"email": identifiers.email})
+    if identifiers.member_urn:
+        or_clauses.append({"identifiers.member_urn": identifiers.member_urn})
+        or_clauses.append({"member_urn": identifiers.member_urn})
+    if identifiers.sales_lead_urn:
+        or_clauses.append({"identifiers.sales_lead_urn": identifiers.sales_lead_urn})
+        or_clauses.append({"sales_lead_urn": identifiers.sales_lead_urn})
+    if identifiers.vanity_name:
+        or_clauses.append({"identifiers.vanity_name": identifiers.vanity_name})
+        or_clauses.append({"vanity_name": identifiers.vanity_name})
+
+    query = {"workspace_id": workspace_id, "$or": or_clauses} if or_clauses else {"workspace_id": workspace_id, "linkedin_url": primary_key}
+
     await db.outreach_do_not_contact.update_one(
-        {"workspace_id": workspace_id, "linkedin_url": cleaned_url},
+        query,
         {"$set": doc},
         upsert=True,
     )
 
-    return {"status": "success", "message": f"{cleaned_url} added to Do-Not-Contact list"}
+    return {"status": "success", "message": f"{primary_key} added to Do-Not-Contact list"}
 
 
 @router.get("/do-not-contact")
@@ -900,17 +1020,19 @@ async def resume_lead(
     if not lead:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
 
-    # 1. Suppression check: Do-Not-Contact list
-    cleaned_url = normalize_linkedin_url(lead.get("linkedin_url", ""))
-    if cleaned_url and hasattr(db, "outreach_do_not_contact"):
-        dnc = await db.outreach_do_not_contact.find_one({
-            "workspace_id": workspace_id,
-            "linkedin_url": {"$in": list(_host_variants(cleaned_url))},
-        })
-        if dnc:
+    # 1. Suppression check: Do-Not-Contact list (compound)
+    if hasattr(db, "outreach_do_not_contact"):
+        suppressed = await check_compound_suppression(
+            workspace_id=workspace_id,
+            candidates=[lead],
+            db=db,
+            collection_name="outreach_do_not_contact",
+        )
+        if suppressed:
+            reason = suppressed[0].get("reason", "Manual exclusion")
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Cannot resume lead: this profile is on the workspace Do-Not-Contact exclusion list.",
+                detail=f"Cannot resume lead: this profile is on the workspace Do-Not-Contact exclusion list ({reason}).",
             )
 
     # 2. Action provenance preflight: block if any uncertain tasks exist

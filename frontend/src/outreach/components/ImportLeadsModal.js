@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import {
   FileSpreadsheet, Search, Users, MessageSquare, Upload, ArrowRight, X, AlertCircle,
   CheckCircle2, Loader2, Shield, Sparkles, Calendar, Bookmark, ExternalLink,
-  Check, Filter, ChevronDown, ThumbsUp, MessageCircle, Link, UserPlus, Info
+  Check, Filter, ChevronDown, ThumbsUp, MessageCircle, Link, UserPlus, Info,
+  RotateCcw
 } from 'lucide-react';
 
 export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsImported }) {
@@ -22,6 +23,8 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
   // Preview & Ingest state
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewResult, setPreviewResult] = useState(null);
+  const [stagedRows, setStagedRows] = useState([]);
+  const [hasEdits, setHasEdits] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [importResult, setImportResult] = useState(null);
@@ -84,12 +87,48 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
         throw new Error(data.detail || 'Failed to preview leads.');
       }
       setPreviewResult(data);
+      setStagedRows(data.rows || []);
+      setHasEdits(false);
       setStep(3);
     } catch (err) {
       setError(err.message);
     } finally {
       setPreviewLoading(false);
     }
+  };
+
+  const handleNameChange = (rowNumber, newName) => {
+    setStagedRows((prev) =>
+      prev.map((r) => {
+        if (r.row_number === rowNumber) {
+          return {
+            ...r,
+            cleaned_first_name: newName,
+            first_name: newName,
+            is_custom_edited: true,
+          };
+        }
+        return r;
+      })
+    );
+    setHasEdits(true);
+  };
+
+  const handleRevertName = (rowNumber) => {
+    setStagedRows((prev) =>
+      prev.map((r) => {
+        if (r.row_number === rowNumber) {
+          const original = r.raw_first_name || '';
+          return {
+            ...r,
+            cleaned_first_name: original,
+            first_name: original,
+            is_custom_edited: false,
+          };
+        }
+        return r;
+      })
+    );
   };
 
   const handleExecuteImport = async () => {
@@ -103,7 +142,25 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
       const token = localStorage.getItem('token');
       let res;
 
-      if (sourceType === 'urls') {
+      if (hasEdits) {
+        const validStaged = stagedRows.filter((r) => r.status === 'valid');
+        res = await fetch('/api/v1/outreach/leads/import-staged', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: token ? `Bearer ${token}` : '',
+          },
+          body: JSON.stringify({
+            campaign_id: campaignId,
+            leads: validStaged,
+            skip_already_contacted: skipContacted,
+            skip_do_not_contact: true,
+            require_name: requireName,
+            consent_basis: 'user_provided',
+          }),
+        });
+      } else if (sourceType === 'urls') {
         res = await fetch('/api/v1/outreach/leads/import-urls', {
           method: 'POST',
           credentials: 'include',
@@ -165,6 +222,8 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
     setDefaultFirstName('');
     setDefaultCompanyName('');
     setPreviewResult(null);
+    setStagedRows([]);
+    setHasEdits(false);
     setImportResult(null);
     setError(null);
   };
@@ -511,48 +570,82 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
               {/* Row-Level Preview Table */}
               <div className="border border-gray-200 rounded-xl overflow-hidden">
                 <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-200 flex items-center justify-between text-xs font-semibold text-gray-700">
-                  <span>Row Verification Preview (Showing {Math.min(previewResult.rows.length, 50)} of {previewResult.total_submitted})</span>
+                  <span>Row Verification Preview (Showing {Math.min(stagedRows.length, 50)} of {previewResult.total_submitted})</span>
                   <span className="text-gray-500 font-normal">Identical DNC & deduplication rules enforced</span>
                 </div>
-                <div className="max-h-56 overflow-y-auto divide-y divide-gray-100 text-xs">
-                  {previewResult.rows.length === 0 ? (
+                <div className="max-h-60 overflow-y-auto divide-y divide-gray-100 text-xs">
+                  {stagedRows.length === 0 ? (
                     <div className="p-4 text-center text-gray-400">No leads parsed from source.</div>
                   ) : (
-                    previewResult.rows.slice(0, 50).map((row) => (
-                      <div key={row.row_number} className="p-2.5 flex items-center justify-between hover:bg-gray-50/70">
-                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                          <span className="font-mono text-[11px] text-gray-400 w-5">#{row.row_number}</span>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-medium text-gray-900 truncate">
-                                {row.first_name || row.last_name ? `${row.first_name} ${row.last_name}`.trim() : (row.vanity_name || 'No name')}
+                    stagedRows.slice(0, 50).map((row) => {
+                      const currentName = row.cleaned_first_name || row.first_name || '';
+                      const rawName = row.raw_first_name || '';
+                      const isModified = rawName && currentName !== rawName;
+
+                      return (
+                        <div key={row.row_number} className="p-2.5 flex items-center justify-between gap-3 hover:bg-gray-50/70">
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            <span className="font-mono text-[11px] text-gray-400 w-5">#{row.row_number}</span>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-medium text-gray-900 truncate">
+                                  {currentName || row.last_name ? `${currentName} ${row.last_name || ''}`.trim() : (row.vanity_name || 'No name')}
+                                </span>
+                                {row.status === 'valid' && (
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      type="text"
+                                      value={currentName}
+                                      aria-label={`First name for lead #${row.row_number}`}
+                                      onChange={(e) => handleNameChange(row.row_number, e.target.value)}
+                                      placeholder="First name"
+                                      className="px-1.5 py-0.5 border border-gray-300 rounded text-xs font-medium text-gray-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 w-24 bg-white"
+                                    />
+                                    {isModified && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRevertName(row.row_number)}
+                                        title={`Revert to original: ${rawName}`}
+                                        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] text-gray-600 hover:text-indigo-600 bg-gray-100 hover:bg-indigo-50 rounded border border-gray-200 transition-colors cursor-pointer"
+                                      >
+                                        <RotateCcw className="h-2.5 w-2.5" /> Revert
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+                                {row.company_name && (
+                                  <span className="text-gray-400 text-[11px]">· {row.company_name}</span>
+                                )}
+                              </div>
+                              <span className="text-[11px] text-gray-500 truncate block font-mono mt-0.5">
+                                {row.linkedin_url || row.raw_url}
                               </span>
-                              {row.company_name && (
-                                <span className="text-gray-400 text-[11px]">· {row.company_name}</span>
-                              )}
                             </div>
-                            <span className="text-[11px] text-gray-500 truncate block font-mono">
-                              {row.linkedin_url || row.raw_url}
-                            </span>
+                          </div>
+
+                          <div className="shrink-0 ml-2">
+                            {row.status === 'valid' ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 border border-emerald-200">
+                                <Check className="h-3 w-3" /> Valid
+                              </span>
+                            ) : (
+                              <span
+                                title={row.error_reason}
+                                className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold border ${
+                                  row.rejection_code === 'do_not_contact'
+                                    ? 'bg-red-50 text-red-700 border-red-200'
+                                    : row.rejection_code?.startsWith('duplicate')
+                                    ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                    : 'bg-gray-100 text-gray-700 border-gray-200'
+                                }`}
+                              >
+                                <AlertCircle className="h-3 w-3" /> {row.error_reason || 'Rejected'}
+                              </span>
+                            )}
                           </div>
                         </div>
-
-                        <div className="shrink-0 ml-3">
-                          {row.status === 'valid' ? (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 border border-emerald-200">
-                              <Check className="h-3 w-3" /> Valid
-                            </span>
-                          ) : (
-                            <span
-                              title={row.error_reason}
-                              className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-700 border border-red-200"
-                            >
-                              <AlertCircle className="h-3 w-3" /> {row.error_reason || 'Rejected'}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </div>

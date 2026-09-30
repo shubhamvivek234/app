@@ -27,11 +27,21 @@ class AccountAuthMode(str, Enum):
 class AccountStatus(str, Enum):
     ACTIVE = "active"
     CHECKPOINT = "checkpoint"
+    CHECKPOINT_DETECTED = "checkpoint_detected"
     WARMING = "warming"
     PAUSED = "paused"
     DISCONNECTED = "disconnected"
     REAUTH_REQUIRED = "reauth_required"
     ERROR = "error"
+
+
+class StopReason(str, Enum):
+    RATE_LIMITED_429 = "rate_limited_429"
+    SECURITY_CHALLENGE_999 = "security_challenge_999"
+    CHECKPOINT_CAPTCHA = "checkpoint_captcha"
+    PROXY_UNHEALTHY = "proxy_unhealthy"
+    SESSION_EXPIRED = "session_expired"
+    COMMERCIAL_LIMIT = "commercial_limit"
 
 
 class ProxyStatus(str, Enum):
@@ -101,6 +111,19 @@ class OutreachAccount(BaseModel):
     user_agent: str = ""
     jsession_id: str = ""  # Encrypted JSESSIONID for new accounts; legacy plaintext is read-only compatible
     status: AccountStatus = AccountStatus.ACTIVE
+    stop_reason: StopReason | None = None
+    stopped_at: datetime | None = None
+    cooldown_until: datetime | None = None
+    daily_action_cap: int = 50
+    hourly_action_cap: int = 8
+    min_interval_seconds: int = 45
+    max_interval_seconds: int = 180
+    working_hours_start: str = "09:00"
+    working_hours_end: str = "17:00"
+    working_timezone: str = "UTC"
+    auto_withdraw_enabled: bool = False
+    withdraw_after_days: int = 21
+    max_daily_withdrawals: int = 25
     country_code: str = "US"
     proxy: ProxyConfig | None = None
     limits: DailyLimits = Field(default_factory=DailyLimits)
@@ -221,6 +244,16 @@ class LeadExecutionState(str, Enum):
     FAILED = "failed"
 
 
+class LeadIdentifiers(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    normalized_url: str | None = None      # Standardized: https://linkedin.com/in/<vanity>
+    vanity_name: str | None = None         # Extracted vanity handle: 'johndoe'
+    member_urn: str | None = None          # Stable LinkedIn URN: 'urn:li:member:12345678' or numeric id
+    sales_lead_urn: str | None = None      # Sales Nav identifier: 'urn:li:fs_salesProfile:(...)' or opaque ID
+    email: str | None = None               # Primary contact email
+
+
 class OutreachLead(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -230,6 +263,9 @@ class OutreachLead(BaseModel):
     assigned_account_id: str | None = None
     linkedin_url: str
     linkedin_urn: str | None = None
+    identifiers: LeadIdentifiers = Field(default_factory=LeadIdentifiers)
+    raw_first_name: str | None = None
+    cleaned_first_name: str | None = None
     first_name: str = ""
     last_name: str = ""
     company_name: str = ""
@@ -255,6 +291,20 @@ class OutreachLead(BaseModel):
     replied_at: datetime | None = None
     pause_reason: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
+
+
+class WithdrawnInvite(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=generate_uuid)
+    workspace_id: str
+    account_id: str
+    lead_id: str | None = None
+    member_urn: str | None = None
+    vanity_name: str | None = None
+    linkedin_url: str | None = None
+    withdrawn_at: datetime = Field(default_factory=utc_now)
+    reinvite_blocked_until: datetime | None = None
 
 
 # ── AI Voice Cloning Models ────────────────────────────────────────────────

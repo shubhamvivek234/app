@@ -312,6 +312,11 @@ celery_app.conf.beat_schedule.update({
         "schedule": 300.0,
         "options": {"queue": "outreach"},
     },
+    "withdraw-stale-outreach-invitations": {
+        "task": "celery_workers.tasks.outreach.withdraw_stale_invitations",
+        "schedule": 3600.0,
+        "options": {"queue": "outreach"},
+    },
 })
 
 
@@ -696,3 +701,42 @@ async def _periodic_inbox_sync(db=None) -> dict:
                 logger.warning("Periodic inbox sync error for sender %s: %s", sender["id"], exc)
 
     return {"synced_accounts": synced_accounts, "new_replies_detected": total_replies}
+
+
+@celery_app.task(name="celery_workers.tasks.outreach.withdraw_stale_invitations", queue="outreach", acks_late=True)
+def withdraw_stale_invitations() -> dict:
+    return run_async(_withdraw_stale_invitations())
+
+
+async def _withdraw_stale_invitations(db=None, redis_client=None) -> dict:
+    """Periodic auto-withdrawal of stale sent invitations for opted-in senders."""
+    if is_shutting_down():
+        return {"status": "shutting_down", "processed_senders": 0, "total_withdrawn": 0}
+    db = db or await _inbox_db()
+    from outreach.core.safety_shield import SafetyShield
+
+    cursor = db.outreach_accounts.find(
+        {
+            "auto_withdraw_enabled": True,
+            "status": "active",
+            "is_deleted": {"$ne": True},
+        }
+    )
+    senders = await _fetch_cursor_docs(cursor, length=200)
+
+    total_withdrawn = 0
+    for sender in senders:
+        sender_id = sender.get("id")
+        workspace_id = sender.get("workspace_id")
+        try:
+            withdrawn = await SafetyShield.withdraw_stale_invitations(
+                account_id=sender_id,
+                db=db,
+                workspace_id=workspace_id,
+                redis_client=redis_client,
+            )
+            total_withdrawn += withdrawn
+        except Exception as exc:
+            logger.error("Auto-withdraw failed for sender %s: %s", sender_id, exc)
+
+    return {"processed_senders": len(senders), "total_withdrawn": total_withdrawn}
