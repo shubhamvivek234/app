@@ -317,6 +317,11 @@ celery_app.conf.beat_schedule.update({
         "schedule": 3600.0,
         "options": {"queue": "outreach"},
     },
+    "reap-stale-search-crawlers": {
+        "task": "celery_workers.tasks.outreach.reap_stale_search_crawlers",
+        "schedule": 120.0,
+        "options": {"queue": "outreach"},
+    },
 })
 
 
@@ -740,3 +745,443 @@ async def _withdraw_stale_invitations(db=None, redis_client=None) -> dict:
             logger.error("Auto-withdraw failed for sender %s: %s", sender_id, exc)
 
     return {"processed_senders": len(senders), "total_withdrawn": total_withdrawn}
+
+
+@celery_app.task(name="celery_workers.tasks.outreach.crawl_page", queue="outreach", acks_late=True)
+def crawl_page(job_id: str, cursor: int = 0, lease_token: str = "") -> dict:
+    return run_async(_crawl_page(job_id, cursor, lease_token))
+
+
+async def _crawl_page(job_id: str, cursor: int = 0, lease_token: str = "", db=None, redis_client=None) -> dict:
+    """Discrete single-page search crawler. Fetches one page, lands leads in 'staged', and reschedules."""
+    if is_shutting_down():
+        return {"status": "shutting_down"}
+
+    import random
+    from pymongo import ReturnDocument
+    from outreach.core.lead_importer import build_lead_identifiers, check_compound_suppression
+    from outreach.core.name_cleaner import clean_first_name
+    from outreach.core.rate_budget import RateBudget
+    from outreach.core.safety_shield import SafetyShield
+    from outreach.engine.voyager_client import LinkedInVoyagerClient
+    from outreach.models import LeadExecutionState, SearchImportJobStatus, SearchImportStopReason
+
+    db = db or await _inbox_db()
+
+    # 1. Atomic claim: ensure job is queued or crawling and lease token matches
+    claim_query = {
+        "id": job_id,
+        "status": {"$in": [SearchImportJobStatus.QUEUED.value, SearchImportJobStatus.CRAWLING.value]},
+    }
+    if lease_token:
+        claim_query["lease_token"] = lease_token
+
+    job = await db.outreach_import_jobs.find_one_and_update(
+        claim_query,
+        {
+            "$set": {
+                "status": SearchImportJobStatus.CRAWLING.value,
+                "heartbeat_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc),
+            }
+        },
+        return_document=ReturnDocument.AFTER,
+    )
+    if not job:
+        logger.info("Import job %s could not be claimed or is already stopped/completed.", job_id)
+        return {"status": "job_not_found_or_cancelled"}
+
+    active_lease_token = job.get("lease_token", lease_token)
+    workspace_id = job.get("workspace_id")
+    campaign_id = job.get("campaign_id")
+    sender_id = job.get("sender_account_id")
+
+    # 2. Entitlement check
+    if not await get_active_entitlement(db, workspace_id):
+        await db.outreach_import_jobs.update_one(
+            {"id": job_id},
+            {
+                "$set": {
+                    "status": SearchImportJobStatus.STOPPED.value,
+                    "stop_reason": SearchImportStopReason.ENTITLEMENT_LOST.value,
+                    "user_error_message": "Active paid outreach subscription required.",
+                    "completed_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+        return {"status": "entitlement_lost"}
+
+    # 3. Sender validation
+    sender = await db.outreach_accounts.find_one({
+        "id": sender_id,
+        "workspace_id": workspace_id,
+        "is_deleted": {"$ne": True},
+    })
+    if not sender:
+        await db.outreach_import_jobs.update_one(
+            {"id": job_id},
+            {
+                "$set": {
+                    "status": SearchImportJobStatus.STOPPED.value,
+                    "stop_reason": SearchImportStopReason.CANCELLED.value,
+                    "user_error_message": "Sender account was removed or not found.",
+                    "completed_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+        return {"status": "sender_not_found"}
+
+    if sender.get("status") in {"checkpoint_detected", "checkpoint", "reauth_required", "error"}:
+        await db.outreach_import_jobs.update_one(
+            {"id": job_id},
+            {
+                "$set": {
+                    "status": SearchImportJobStatus.STOPPED.value,
+                    "stop_reason": SearchImportStopReason.CHECKPOINT.value,
+                    "user_error_message": "Sender encountered a security checkpoint or error. Automation paused.",
+                    "completed_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+        return {"status": "sender_checkpoint"}
+
+    # 4. Proxy verification - fail closed, never direct egress
+    lease = await db.outreach_proxy_leases.find_one({
+        "workspace_id": workspace_id,
+        "sender_id": sender_id,
+    })
+    inventory = await db.outreach_proxy_inventory.find_one({"_id": lease["_id"]}) if lease else None
+    if not lease or not inventory or inventory.get("status") != "available":
+        await db.outreach_import_jobs.update_one(
+            {"id": job_id},
+            {
+                "$set": {
+                    "status": SearchImportJobStatus.STOPPED.value,
+                    "stop_reason": SearchImportStopReason.PROXY_UNHEALTHY.value,
+                    "user_error_message": "Dedicated proxy lease is unavailable. Direct egress is blocked for safety.",
+                    "completed_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+        return {"status": "proxy_unavailable"}
+
+    proxy = _proxy_from_inventory(inventory)
+    proxy_url = JITProxyManager.format_proxy_url(proxy)
+
+    # 5. Rate budget check
+    allowed, retry_after, reason = await RateBudget.acquire_token(
+        sender_id=sender["id"],
+        sender_config=sender,
+        action_type="search",
+        redis_client=redis_client,
+    )
+    if not allowed:
+        if reason.startswith("sender_stopped_"):
+            await db.outreach_import_jobs.update_one(
+                {"id": job_id},
+                {
+                    "$set": {
+                        "status": SearchImportJobStatus.STOPPED.value,
+                        "stop_reason": SearchImportStopReason.CHECKPOINT.value,
+                        "user_error_message": "Sender is stopped due to security checkpoint.",
+                        "completed_at": datetime.now(timezone.utc),
+                        "updated_at": datetime.now(timezone.utc),
+                    }
+                },
+            )
+            return {"status": "sender_stopped", "reason": reason}
+
+        # Reschedule next check with countdown
+        countdown = max(retry_after, 10)
+        try:
+            crawl_page.apply_async(args=[job_id, cursor, active_lease_token], countdown=countdown)
+        except Exception as exc:
+            logger.warning("Could not enqueue reschedule crawl_page task: %s", exc)
+        return {"status": "rescheduled", "retry_after": countdown, "reason": reason}
+
+    # 6. Fetch search page from LinkedIn Voyager / mock
+    li_at = decrypt_secret(sender["li_at_enc"]) if sender.get("li_at_enc") else ""
+    jsession_id = decrypt_secret(sender["jsession_id_enc"]) if sender.get("jsession_id_enc") else ""
+    li_a = decrypt_secret(sender["li_a_enc"]) if sender.get("li_a_enc") else None
+
+    page_size = job.get("page_size", 10)
+    voyager = LinkedInVoyagerClient(
+        li_at=li_at,
+        jsession_id=jsession_id,
+        li_a=li_a,
+        proxy_url=proxy_url,
+        user_agent=sender.get("user_agent"),
+    )
+    search_res = await voyager.search_people_entities(
+        search_url=job["search_url"],
+        start=cursor,
+        count=page_size,
+    )
+
+    # 7. Check for stop reasons from network response
+    stop_reason = search_res.get("stop_reason")
+    if stop_reason:
+        stop_reason_val = stop_reason.value if hasattr(stop_reason, "value") else str(stop_reason)
+        user_msg = search_res.get("user_error_message") or "Search crawl stopped."
+        if stop_reason in (SearchImportStopReason.CHECKPOINT, SearchImportStopReason.RATE_LIMITED, SearchImportStopReason.SESSION_EXPIRED):
+            from outreach.core.circuit_breaker import CircuitBreaker
+            from outreach.models import StopReason
+            cb_reason = (
+                StopReason.RATE_LIMITED_429 if stop_reason == SearchImportStopReason.RATE_LIMITED
+                else StopReason.SESSION_EXPIRED if stop_reason == SearchImportStopReason.SESSION_EXPIRED
+                else StopReason.SECURITY_CHALLENGE_999
+            )
+            await CircuitBreaker.trip_circuit_breaker(
+                sender_id=sender["id"],
+                reason=cb_reason,
+                db=db,
+                workspace_id=workspace_id,
+                error_details=user_msg,
+                cooldown_hours=24 if stop_reason == SearchImportStopReason.RATE_LIMITED else 0,
+            )
+        if stop_reason == SearchImportStopReason.SEARCH_EXHAUSTED:
+            final_status = SearchImportJobStatus.COMPLETED.value
+        elif stop_reason == SearchImportStopReason.SESSION_EXPIRED:
+            final_status = SearchImportJobStatus.FAILED.value
+        else:
+            final_status = SearchImportJobStatus.STOPPED.value
+
+        await db.outreach_import_jobs.update_one(
+            {"id": job_id},
+            {
+                "$set": {
+                    "status": final_status,
+                    "stop_reason": stop_reason_val,
+                    "user_error_message": user_msg,
+                    "completed_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+        return {
+            "status": final_status,
+            "stop_reason": stop_reason_val,
+            "reason": stop_reason_val,
+        }
+
+    # 8. Clamping & target count setup on page 1 (cursor == 0)
+    target_count = job.get("target_count", 100)
+    if cursor == 0:
+        total_results = search_res.get("total_results", 0)
+        max_cap = 2500 if job.get("search_type") == "sales_nav" else 1000
+        target_count = min(target_count, total_results, max_cap) if total_results > 0 else min(target_count, max_cap)
+        await db.outreach_import_jobs.update_one(
+            {"id": job_id},
+            {
+                "$set": {
+                    "total_available": total_results,
+                    "target_count": target_count,
+                }
+            },
+        )
+
+    # 9. Process entities: suppression checks & name cleaning
+    entities = search_res.get("entities", [])
+    new_staged = 0
+    duplicates_count = 0
+    dnc_count = 0
+    withdrawn_count = 0
+    unresolvable_count = 0
+    now = datetime.now(timezone.utc)
+    current_imported = job.get("leads_imported", 0)
+
+    for ent in entities:
+        if ent.get("is_unresolvable"):
+            unresolvable_count += 1
+            continue
+
+        ident = build_lead_identifiers(
+            raw_url=ent.get("profile_url"),
+            member_urn=ent.get("member_urn"),
+            sales_lead_urn=ent.get("sales_lead_urn"),
+            vanity_name=ent.get("vanity_name"),
+        )
+
+        # Compound DNC suppression
+        dnc_matches = await check_compound_suppression(
+            workspace_id=workspace_id,
+            candidates=[ident],
+            db=db,
+            collection_name="outreach_do_not_contact",
+        )
+        if dnc_matches:
+            dnc_count += 1
+            continue
+
+        # Existing leads suppression (in same campaign or workspace leads)
+        lead_matches = await check_compound_suppression(
+            workspace_id=workspace_id,
+            candidates=[ident],
+            db=db,
+            collection_name="outreach_leads",
+            extra_filter={"campaign_id": campaign_id, "is_deleted": {"$ne": True}},
+        )
+        if lead_matches:
+            duplicates_count += 1
+            continue
+
+        # Withdrawn invites 21-day cooldown suppression
+        withdrawn_matches = await check_compound_suppression(
+            workspace_id=workspace_id,
+            candidates=[ident],
+            db=db,
+            collection_name="outreach_withdrawn_invites",
+            extra_filter={"cooldown_until": {"$gt": now}},
+        )
+        if withdrawn_matches:
+            withdrawn_count += 1
+            continue
+
+        cleaned_first = clean_first_name(ent.get("first_name", ""))
+        lead_doc = {
+            "id": str(uuid.uuid4()),
+            "workspace_id": workspace_id,
+            "campaign_id": campaign_id,
+            "first_name": cleaned_first,
+            "last_name": ent.get("last_name", ""),
+            "company_name": ent.get("company_name", ""),
+            "job_title": ent.get("job_title", ""),
+            "linkedin_url": ent.get("profile_url", ""),
+            "email": ent.get("email"),
+            "location": ent.get("location", ""),
+            "headline": ent.get("headline", ""),
+            "identifiers": ident.model_dump(),
+            "execution_state": LeadExecutionState.STAGED.value,
+            "import_job_id": job_id,
+            "staged_at": now,
+            "created_at": now,
+            "updated_at": now,
+        }
+        await db.outreach_leads.insert_one(lead_doc)
+        new_staged += 1
+
+        if (current_imported + new_staged) >= target_count:
+            break
+
+    # 10. Increment progress counters
+    new_cursor = cursor + len(entities)
+    updated_job = await db.outreach_import_jobs.find_one_and_update(
+        {"id": job_id},
+        {
+            "$inc": {
+                "leads_imported": new_staged,
+                "duplicates_skipped": duplicates_count,
+                "dnc_suppressed": dnc_count,
+                "withdrawn_cooldown_skipped": withdrawn_count,
+                "unresolvable_skipped": unresolvable_count,
+                "pages_scanned": 1,
+            },
+            "$set": {
+                "cursor": new_cursor,
+                "heartbeat_at": now,
+                "updated_at": now,
+            },
+        },
+        return_document=ReturnDocument.AFTER,
+    )
+    total_imported = updated_job.get("leads_imported", 0) if updated_job else (current_imported + new_staged)
+
+    # 11. Check termination conditions
+    if total_imported >= target_count:
+        await db.outreach_import_jobs.update_one(
+            {"id": job_id},
+            {
+                "$set": {
+                    "status": SearchImportJobStatus.COMPLETED.value,
+                    "stop_reason": SearchImportStopReason.COMPLETED.value,
+                    "completed_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+        return {"status": "completed", "leads_imported": total_imported}
+
+    if len(entities) == 0:
+        await db.outreach_import_jobs.update_one(
+            {"id": job_id},
+            {
+                "$set": {
+                    "status": SearchImportJobStatus.COMPLETED.value,
+                    "stop_reason": SearchImportStopReason.SEARCH_EXHAUSTED.value,
+                    "completed_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+        return {"status": "completed", "reason": "search_exhausted", "leads_imported": total_imported}
+
+    if len(entities) < page_size:
+        await db.outreach_import_jobs.update_one(
+            {"id": job_id},
+            {
+                "$set": {
+                    "status": SearchImportJobStatus.COMPLETED.value,
+                    "stop_reason": SearchImportStopReason.SEARCH_EXHAUSTED.value,
+                    "completed_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+        return {"status": "completed", "reason": "short_page_exhausted", "leads_imported": total_imported}
+
+    # 12. Reschedule next page task with natural jitter delay
+    pacing_delay = random.randint(10, 20)
+    try:
+        crawl_page.apply_async(args=[job_id, new_cursor, active_lease_token], countdown=pacing_delay)
+    except Exception as exc:
+        logger.warning("Could not enqueue next page crawl_page task: %s", exc)
+    return {"status": "next_page_scheduled", "cursor": new_cursor, "leads_imported": total_imported}
+
+
+@celery_app.task(name="celery_workers.tasks.outreach.reap_stale_search_crawlers", queue="outreach", acks_late=True)
+def reap_stale_search_crawlers() -> dict:
+    return run_async(_reap_stale_search_crawlers())
+
+
+async def _reap_stale_search_crawlers(db=None) -> dict:
+    """Watchdog that detects dropped tasks / crashed workers and cleanly resumes their import jobs."""
+    if is_shutting_down():
+        return {"status": "shutting_down", "reaped": 0}
+    db = db or await _inbox_db()
+
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(seconds=180)
+    cursor = db.outreach_import_jobs.find({
+        "status": "crawling",
+        "heartbeat_at": {"$lt": stale_cutoff},
+    })
+    stale_jobs = await _fetch_cursor_docs(cursor, length=50)
+    reaped = 0
+
+    for job in stale_jobs:
+        job_id = job["id"]
+        new_lease = str(uuid.uuid4())
+        res = await db.outreach_import_jobs.update_one(
+            {
+                "id": job_id,
+                "status": "crawling",
+                "lease_token": job.get("lease_token"),
+            },
+            {
+                "$set": {
+                    "lease_token": new_lease,
+                    "heartbeat_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+        if res.modified_count:
+            crawl_page.delay(job_id, job.get("cursor", 0), new_lease)
+            reaped += 1
+            logger.info("Resumed stale search import job %s from cursor %s", job_id, job.get("cursor", 0))
+
+    return {"reaped": reaped}
+

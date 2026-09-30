@@ -234,6 +234,7 @@ class OutreachSequence(BaseModel):
 # ── Leads & Execution State ────────────────────────────────────────────────
 
 class LeadExecutionState(str, Enum):
+    STAGED = "staged"
     QUEUED = "queued"
     WAITING_DELAY = "waiting_delay"
     WAITING_TRIGGER = "waiting_trigger"
@@ -290,6 +291,8 @@ class OutreachLead(BaseModel):
     has_replied: bool = False
     replied_at: datetime | None = None
     pause_reason: str | None = None
+    import_job_id: str | None = None
+    staged_at: datetime | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -581,3 +584,56 @@ class OutreachIntegration(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+
+
+class SearchImportJobStatus(str, Enum):
+    QUEUED = "queued"
+    CRAWLING = "crawling"
+    COMPLETED = "completed"
+    STOPPED = "stopped"
+    FAILED = "failed"
+
+
+class SearchImportStopReason(str, Enum):
+    COMPLETED = "completed"
+    CHECKPOINT = "checkpoint"
+    RATE_LIMITED = "rate_limited"
+    COMMERCIAL_USE_LIMIT = "commercial_use_limit"
+    SESSION_EXPIRED = "session_expired"
+    PROXY_UNHEALTHY = "proxy_unhealthy"
+    ENTITLEMENT_LOST = "entitlement_lost"
+    CANCELLED = "cancelled"
+    SEARCH_EXHAUSTED = "search_exhausted"
+
+
+class SearchImportJob(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(default_factory=generate_uuid)
+    workspace_id: str
+    campaign_id: str
+    sender_account_id: str
+    search_url: str
+    search_type: str = "basic"  # 'basic' | 'sales_nav'
+    cursor: int = 0
+    page_size: int = 10
+    target_count: int = 100
+    total_available: int | None = None
+    leads_found: int = 0
+    leads_imported: int = 0
+    duplicates_skipped: int = 0
+    dnc_suppressed: int = 0
+    withdrawn_cooldown_skipped: int = 0
+    unresolvable_skipped: int = 0
+    pages_scanned: int = 0
+    status: SearchImportJobStatus = SearchImportJobStatus.QUEUED
+    stop_reason: SearchImportStopReason | None = None
+    error_message: str | None = None
+    user_error_message: str | None = None
+    lease_token: str = Field(default_factory=generate_uuid)
+    heartbeat_at: datetime = Field(default_factory=utc_now)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+    completed_at: datetime | None = None
+
+

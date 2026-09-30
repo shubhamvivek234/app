@@ -211,6 +211,18 @@ async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
                              [("workspace_id", 1), ("provider", 1), ("external_account_id", 1), ("object_type", 1), ("internal_id", 1)],
                              unique=True)
 
+    # Search Import Jobs & Staged Leads
+    await _safe_create_index(
+        db.outreach_import_jobs,
+        [("sender_account_id", 1)],
+        unique=True,
+        partialFilterExpression={"status": {"$in": ["queued", "crawling"]}},
+    )
+    await _safe_create_index(db.outreach_import_jobs, [("workspace_id", 1), ("campaign_id", 1)])
+    await _safe_create_index(db.outreach_import_jobs, [("status", 1), ("heartbeat_at", 1)])
+    await _safe_create_index(db.outreach_leads, [("import_job_id", 1), ("execution_state", 1)])
+    await _safe_create_index(db.outreach_leads, [("staged_at", 1)], expireAfterSeconds=30 * 86400)
+
     logger.info("All MongoDB indexes created successfully")
 
 

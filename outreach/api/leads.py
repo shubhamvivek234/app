@@ -25,6 +25,9 @@ from outreach.core.lead_importer import (
     check_compound_suppression,
 )
 from outreach.core.name_cleaner import clean_first_name
+from outreach.core.paid_access import get_active_entitlement
+from outreach.engine.voyager_client import parse_linkedin_search_url
+from outreach.models import LeadExecutionState, SearchImportJob, SearchImportJobStatus, SearchImportStopReason
 
 logger = logging.getLogger(__name__)
 
@@ -113,8 +116,14 @@ class LeadPreviewRequest(BaseModel):
 class ImportSearchRequest(BaseModel):
     campaign_id: str
     search_url: str
+    sender_account_id: str | None = None
     search_type: str = Field(default="basic", description="'basic' | 'sales_nav' | 'post_engagers'")
-    max_leads: int = Field(default=100, le=1000)
+    max_leads: int = Field(default=100, ge=1, le=2500)
+
+
+class CommitStagedLeadsRequest(BaseModel):
+    selected_lead_ids: list[str] | None = None
+    name_overrides: dict[str, str] | None = None
 
 
 class DoNotContactRequest(BaseModel):
@@ -393,16 +402,238 @@ async def import_search_url(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """Reject unsupported extraction instead of enrolling fabricated prospects."""
+    """
+    1-Click LinkedIn Search & Sales Navigator URL lead extraction.
+    Performs strict preflight safety checks, provisions SearchImportJob, and dispatches crawl_page.
+    """
     await _require_campaign(req.campaign_id, current_user, db)
+    workspace_id = _workspace_id(current_user)
 
+    # 1. Active paid subscription & seat check
+    if not await get_active_entitlement(db, workspace_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Active paid outreach subscription required for LinkedIn search lead extraction.",
+        )
+
+    # 2. Sender chosen by user (NO auto-select)
+    if not req.sender_account_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A sender account must be selected to crawl this search. Auto-selection is disabled for safety.",
+        )
+
+    sender = await db.outreach_accounts.find_one({
+        "id": req.sender_account_id,
+        "workspace_id": workspace_id,
+        "is_deleted": {"$ne": True},
+    })
+    if not sender:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Selected sender account not found in workspace.",
+        )
+    if sender.get("status") != "active":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Sender account status is '{sender.get('status')}'. Sender must be active to import searches.",
+        )
+
+    # 3. URL parsing & classification
     clean_url = req.search_url.strip()
-    if not clean_url or "linkedin.com" not in clean_url:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Must be a valid LinkedIn search URL")
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="LinkedIn search, event, and group extraction is not connected yet. Import a verified CSV instead.",
+    parsed_search = parse_linkedin_search_url(clean_url)
+    if not parsed_search.get("is_valid"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Must be a valid LinkedIn People search or Sales Navigator Lead search URL.",
+        )
+
+    # 4. Sales Nav seat check for sales_nav URLs
+    search_type = parsed_search["search_type"]
+    if search_type == "sales_nav":
+        prem_prod = sender.get("premium_product")
+        has_li_a = bool(sender.get("li_a_enc"))
+        if prem_prod not in ("sales_navigator", "recruiter") or not has_li_a:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The selected sender does not have a Sales Navigator seat or session cookie. Connect a Sales Navigator seat in Settings to import Sales Navigator searches.",
+            )
+
+    # 5. Dedicated ISP IP proxy lease check
+    lease = await db.outreach_proxy_leases.find_one({
+        "workspace_id": workspace_id,
+        "sender_id": req.sender_account_id,
+    })
+    inventory = await db.outreach_proxy_inventory.find_one({"_id": lease["_id"]}) if lease else None
+    if not lease or not inventory or inventory.get("status") != "available":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sender does not have an active dedicated proxy lease. Direct host egress is prohibited for account safety.",
+        )
+
+    # 6. Unique active import check for this sender
+    existing_active = await db.outreach_import_jobs.find_one({
+        "sender_account_id": req.sender_account_id,
+        "status": {"$in": [SearchImportJobStatus.QUEUED.value, SearchImportJobStatus.CRAWLING.value]},
+    })
+    if existing_active:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An active search import job is already running for this sender. Please wait for it to complete or cancel it before starting another.",
+        )
+
+    # 7. Configure page size and target caps
+    page_size = 25 if search_type == "sales_nav" else 10
+    max_cap = 2500 if search_type == "sales_nav" else 1000
+    clamped_target = min(req.max_leads, max_cap)
+
+    job = SearchImportJob(
+        workspace_id=workspace_id,
+        campaign_id=req.campaign_id,
+        sender_account_id=req.sender_account_id,
+        search_url=clean_url,
+        search_type=search_type,
+        cursor=0,
+        page_size=page_size,
+        target_count=clamped_target,
+        status=SearchImportJobStatus.QUEUED,
     )
+    job_dict = job.model_dump()
+    await db.outreach_import_jobs.insert_one(job_dict)
+
+    # 8. Dispatch page 1 task
+    from celery_workers.tasks.outreach import crawl_page
+    crawl_page.delay(job.id, 0, job.lease_token)
+
+    if "_id" in job_dict:
+        del job_dict["_id"]
+    return job_dict
+
+
+@router.get("/import-jobs/{job_id}", dependencies=[require_permission("lead:read")])
+async def get_import_job(
+    job_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Fetches real-time status and pacing metrics for a search import job."""
+    workspace_id = _workspace_id(current_user)
+    job = await db.outreach_import_jobs.find_one({"id": job_id, "workspace_id": workspace_id})
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import job not found")
+    if "_id" in job:
+        del job["_id"]
+    return job
+
+
+@router.post("/import-jobs/{job_id}/cancel", dependencies=[require_permission("lead:create")])
+async def cancel_import_job(
+    job_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Gracefully halts a running search import job."""
+    workspace_id = _workspace_id(current_user)
+    job = await db.outreach_import_jobs.find_one({"id": job_id, "workspace_id": workspace_id})
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import job not found")
+
+    if job.get("status") in (SearchImportJobStatus.COMPLETED.value, SearchImportJobStatus.STOPPED.value, SearchImportJobStatus.FAILED.value):
+        return {"status": job.get("status"), "message": "Job is already completed or stopped."}
+
+    await db.outreach_import_jobs.update_one(
+        {"id": job_id},
+        {
+            "$set": {
+                "status": SearchImportJobStatus.STOPPED.value,
+                "stop_reason": SearchImportStopReason.CANCELLED.value,
+                "user_error_message": "Search import cancelled by user.",
+                "completed_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc),
+            }
+        },
+    )
+    return {"status": "stopped", "message": "Search import cancelled."}
+
+
+@router.get("/import-jobs/{job_id}/staged", dependencies=[require_permission("lead:read")])
+async def get_staged_leads_for_job(
+    job_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Retrieves all staged leads imported by this job for preview and review."""
+    workspace_id = _workspace_id(current_user)
+    cursor = db.outreach_leads.find({
+        "import_job_id": job_id,
+        "workspace_id": workspace_id,
+        "execution_state": LeadExecutionState.STAGED.value,
+    })
+    leads = await cursor.to_list(length=3000)
+    for l in leads:
+        if "_id" in l:
+            del l["_id"]
+    return {"leads": leads, "count": len(leads)}
+
+
+@router.post("/import-jobs/{job_id}/commit", dependencies=[require_permission("lead:create")])
+async def commit_staged_leads(
+    job_id: str,
+    req: CommitStagedLeadsRequest | None = None,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Promotes staged leads into active 'queued' campaign leads after user review.
+    Clears staged_at to avoid 30-day TTL expiration.
+    """
+    workspace_id = _workspace_id(current_user)
+    job = await db.outreach_import_jobs.find_one({"id": job_id, "workspace_id": workspace_id})
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import job not found")
+
+    query = {
+        "import_job_id": job_id,
+        "workspace_id": workspace_id,
+        "execution_state": LeadExecutionState.STAGED.value,
+    }
+    if req and req.selected_lead_ids:
+        query["id"] = {"$in": req.selected_lead_ids}
+
+    # Apply name overrides if user edited names during review
+    if req and req.name_overrides:
+        for lead_id, new_name in req.name_overrides.items():
+            await db.outreach_leads.update_one(
+                {"id": lead_id, "import_job_id": job_id},
+                {"$set": {"first_name": new_name.strip()}},
+            )
+
+    # Promote to queued
+    res = await db.outreach_leads.update_many(
+        query,
+        {
+            "$set": {
+                "execution_state": LeadExecutionState.QUEUED.value,
+                "staged_at": None,
+                "updated_at": datetime.now(timezone.utc),
+            }
+        },
+    )
+
+    # Increment campaign lead count
+    await db.outreach_campaigns.update_one(
+        {"id": job["campaign_id"]},
+        {
+            "$inc": {"leads_count": res.modified_count},
+            "$set": {"updated_at": datetime.now(timezone.utc)},
+        },
+    )
+
+    return {
+        "status": "committed",
+        "enrolled_count": res.modified_count,
+        "campaign_id": job["campaign_id"],
+    }
 
 
 async def _lead_query(

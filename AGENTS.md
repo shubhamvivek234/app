@@ -43,13 +43,11 @@ Completed:
 - Verification: 300 outreach backend tests, 63 frontend tests, and production build pass. Live actions remain disabled by default.
 
 ## Active Work
-- 2026-09-30: Completed Dripify Parity & Safety Plan (Phases 1-5).
-- Phase 1: Compound suppression engine (vanity, Sales Nav URN, member URN, email) across DNC, active campaigns, and past contacts.
-- Phase 2: Redis token bucket rate budget (action caps, working hours, cooldown) + sender circuit breaker with manual reauthorization resume endpoint.
-- Phase 3: Safe non-destructive name cleaner (strips emojis, company suffixes, titles, credentials) with staged import preview, inline edit, and single-click revert.
-- Phase 4: Sequence canvas real-time node lead counters via compound MongoDB aggregation.
-- Phase 5: Opt-in pending invite hygiene worker (off-peak rate-budgeted withdrawal, 21-day re-invitation block & import suppression, Celery periodic task).
-- Verification: 345 backend tests, 75 frontend tests, Python bytecode compile, and production build pass.
+- 2026-09-30: Completed 1-Click LinkedIn & Sales Nav Search Import (Discrete Crawler + Staged Review).
+- Discrete Celery crawler per page (`crawl_page`) with RateBudget countdown rescheduling & watchdog reaper.
+- Full preflight: paid seat, user-selected sender, Sales Nav credential check, proxy lease fail-closed, single-job sender lock.
+- Staged state review: duplicate, DNC, withdrawn-cooldown, and unresolvable filter; manual review & bulk commit.
+- Verification: 355 outreach backend tests, 75 frontend tests, Python bytecode compile, and production build pass.
 Next:
 - Review live mailbox pilot and purchased IPRoyal seat verification before enabling live actions.
 
