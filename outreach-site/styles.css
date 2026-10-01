@@ -100,21 +100,92 @@ p { line-height: 1.66; }
   flex: none;
   text-decoration: none;
   position: relative;
+  color: #111111;
 }
-.brand img { width: 148px; height: auto; display: block; }
+
+/* Flowing ribbon mark animated like unravler.com loader */
+.brand-mark-shell {
+  width: 35px;
+  height: 42px;
+  margin-right: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  animation: unravlerPulseBreath 4s ease-in-out infinite;
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.brand:hover .brand-mark-shell {
+  transform: scale(1.06);
+}
+
+.brand-mark-svg {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+  display: block;
+  overflow: visible;
+}
+
+@keyframes unravlerRibbonWave {
+  0%, 100% {
+    transform: scaleX(0.92) translateX(-2px);
+    opacity: 0.28;
+  }
+  50% {
+    transform: scaleX(1.04) translateX(2px);
+    opacity: 1;
+  }
+}
+
+@keyframes unravlerPulseBreath {
+  0%, 100% {
+    transform: scale(0.98);
+    opacity: 0.92;
+  }
+  50% {
+    transform: scale(1.03);
+    opacity: 1;
+  }
+}
+
+.brand-ribbon-1 {
+  animation: unravlerRibbonWave 3.2s cubic-bezier(0.4, 0, 0.2, 1) infinite 0.0s;
+  transform-origin: center;
+}
+.brand-ribbon-2 {
+  animation: unravlerRibbonWave 3.2s cubic-bezier(0.4, 0, 0.2, 1) infinite 0.3s;
+  transform-origin: center;
+}
+.brand-ribbon-3 {
+  animation: unravlerRibbonWave 3.2s cubic-bezier(0.4, 0, 0.2, 1) infinite 0.6s;
+  transform-origin: center;
+}
+.brand-ribbon-4 {
+  animation: unravlerRibbonWave 3.2s cubic-bezier(0.4, 0, 0.2, 1) infinite 0.9s;
+  transform-origin: center;
+}
+
+.brand img {
+  height: 44px;
+  width: auto;
+  display: block;
+}
 .brand .brand-logo-white { display: none; }
 .brand .brand-logo-dark { display: block; }
+.brand noscript img { display: none !important; }
 .brand-suffix {
   display: inline-block;
   font-family: var(--font-sans);
-  font-size: 26px;
+  font-size: 31px;
   font-weight: 800;
   line-height: 1;
   color: #111111;
   letter-spacing: -0.04em;
   margin-left: -2px;
   position: relative;
-  top: 3px;
+  top: 3.5px;
   background: none;
   border: none;
   padding: 0;
@@ -407,6 +478,10 @@ body[data-page="feature"] .site-header .nav-shell {
   padding-inline: 44px;
   height: 80px;
 }
+body[data-page="home"] .site-header:not(.is-scrolled) .brand,
+body[data-page="feature"] .site-header:not(.is-scrolled) .brand {
+  color: #FFFFFF !important;
+}
 body[data-page="home"] .site-header:not(.is-scrolled) .brand-logo-white,
 body[data-page="feature"] .site-header:not(.is-scrolled) .brand-logo-white {
   display: block !important;
@@ -418,13 +493,13 @@ body[data-page="feature"] .site-header:not(.is-scrolled) .brand-logo-dark {
 body[data-page="home"] .site-header:not(.is-scrolled) .brand-suffix,
 body[data-page="feature"] .site-header:not(.is-scrolled) .brand-suffix {
   color: #FFFFFF !important;
-  font-size: 26px;
+  font-size: 31px;
   font-weight: 800;
   line-height: 1;
   letter-spacing: -0.04em;
   margin-left: -2px;
   position: relative;
-  top: 3px;
+  top: 3.5px;
   background: none;
   border: none;
   padding: 0;
@@ -509,6 +584,10 @@ body[data-page="feature"] .site-header.is-scrolled .nav-shell {
   width: min(calc(100% - 72px), 1360px);
   padding-inline: 0;
   height: 76px;
+}
+body[data-page="home"] .site-header.is-scrolled .brand,
+body[data-page="feature"] .site-header.is-scrolled .brand {
+  color: #111111 !important;
 }
 body[data-page="home"] .site-header.is-scrolled .brand-logo-white,
 body[data-page="feature"] .site-header.is-scrolled .brand-logo-white {
@@ -877,6 +956,9 @@ body[data-feature="personalization"] .hero-panel .button-ghost:hover {
   background: rgba(88, 28, 135, 0.06);
   color: #3B0764;
 }
+body[data-feature="personalization"] .site-header:not(.is-scrolled) .brand {
+  color: #581C87 !important;
+}
 body[data-feature="personalization"] .site-header:not(.is-scrolled) .brand-logo-white {
   display: none !important;
 }
@@ -974,6 +1056,9 @@ body[data-feature="analytics"] .hero-panel .button-ghost {
 body[data-feature="analytics"] .hero-panel .button-ghost:hover {
   background: rgba(120, 53, 15, 0.06);
   color: #451A03;
+}
+body[data-feature="analytics"] .site-header:not(.is-scrolled) .brand {
+  color: #78350F !important;
 }
 body[data-feature="analytics"] .site-header:not(.is-scrolled) .brand-logo-white {
   display: none !important;
@@ -1969,9 +2054,10 @@ body[data-feature="teams"] .hero-panel {
 /* Footer */
 .site-footer { border-top: 1px solid var(--line); background: var(--paper); }
 .footer-inner { display: grid; grid-template-columns: 1.7fr .7fr .8fr 1.1fr; gap: 60px; padding-top: 68px; padding-bottom: 72px; }
-.footer-brand .brand { display: inline-flex; align-items: center; gap: 0; text-decoration: none; position: relative; }
-.footer-brand .brand img { width: 146px; height: auto; display: block; }
-.footer-brand .brand-suffix { font-size: 25.5px; top: 3px; }
+.footer-brand .brand { display: inline-flex; align-items: center; gap: 0; text-decoration: none; position: relative; color: #111111; }
+.footer-brand .brand .brand-mark-shell { width: 34px; height: 41px; margin-right: 11px; }
+.footer-brand .brand img { height: 42px; width: auto; display: block; }
+.footer-brand .brand-suffix { font-size: 30.5px; top: 3.5px; }
 .footer-brand p { max-width: 260px; margin: 18px 0 38px; color: var(--ink-soft); font-size: 13.5px; line-height: 1.55; }
 .footer-brand > span { color: var(--muted); font-size: 11.5px; }
 .footer-column { display: flex; flex-direction: column; gap: 12px; }
@@ -2072,8 +2158,9 @@ body[data-feature="teams"] .hero-panel {
   .announcement { min-height: 42px; font-size: 11px; gap: 7px; }
   .announcement-dot { width: 6px; height: 6px; flex-basis: 6px; }
   .nav-shell { height: 66px; }
-  .brand img { width: 136px; }
-  .brand-suffix { font-size: 24px; top: 2.5px; }
+  .brand-mark-shell { width: 31px; height: 38px; margin-right: 10px; }
+  .brand img { height: 38px; width: auto; }
+  .brand-suffix { font-size: 27px; top: 2.5px; }
   .nav-toggle { display: inline-flex; }
   .nav-links {
     position: absolute;
@@ -2246,4 +2333,13 @@ body[data-feature="teams"] .hero-panel {
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
   .js-motion .reveal { opacity: 1; transform: none; }
+  .brand-ribbon-1,
+  .brand-ribbon-2,
+  .brand-ribbon-3,
+  .brand-ribbon-4,
+  .brand-mark-shell {
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
 }
