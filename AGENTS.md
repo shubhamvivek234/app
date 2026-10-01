@@ -43,12 +43,12 @@ Completed:
 - Verification: 300 outreach backend tests, 63 frontend tests, and production build pass. Live actions remain disabled by default.
 
 ## Active Work
-- 2026-10-01: Added loader ribbon wave animation to Unravler logo across outreach-site with 20% size increase and relaxed 3.2s wave tempo.
+- 2026-10-01: Added loader ribbon wave animation to Unravler logo across outreach-site (+20% size increase, relaxed 3.2s wave tempo, and calibrated tight 3px gap to "u"). Commit `92fd600` pushed to `main`.
 - 2026-09-30: Completed 1-Click LinkedIn & Sales Nav Search Import (Discrete Crawler + Staged Review).
 - Discrete Celery crawler per page (`crawl_page`) with RateBudget countdown rescheduling & watchdog reaper.
 - Full preflight: paid seat, user-selected sender, Sales Nav credential check, proxy lease fail-closed, single-job sender lock.
 - Staged state review: duplicate, DNC, withdrawn-cooldown, and unresolvable filter; manual review & bulk commit.
-- Verification: 355 outreach backend tests, 75 frontend tests, 6 outreach-site tests, and frontend production build pass. Commit `5f020ca` pushed to `main`.
+- Verification: 355 outreach backend tests, 75 frontend tests, 6 outreach-site tests, and frontend production build pass.
 Next:
 - Review live mailbox pilot and purchased IPRoyal seat verification before enabling live actions.
 
