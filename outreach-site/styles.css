@@ -107,7 +107,7 @@ p { line-height: 1.66; }
 .brand-mark-shell {
   width: 35px;
   height: 42px;
-  margin-right: 12px;
+  margin-right: 3px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2055,7 +2055,7 @@ body[data-feature="teams"] .hero-panel {
 .site-footer { border-top: 1px solid var(--line); background: var(--paper); }
 .footer-inner { display: grid; grid-template-columns: 1.7fr .7fr .8fr 1.1fr; gap: 60px; padding-top: 68px; padding-bottom: 72px; }
 .footer-brand .brand { display: inline-flex; align-items: center; gap: 0; text-decoration: none; position: relative; color: #111111; }
-.footer-brand .brand .brand-mark-shell { width: 34px; height: 41px; margin-right: 11px; }
+.footer-brand .brand .brand-mark-shell { width: 34px; height: 41px; margin-right: 3px; }
 .footer-brand .brand img { height: 42px; width: auto; display: block; }
 .footer-brand .brand-suffix { font-size: 30.5px; top: 3.5px; }
 .footer-brand p { max-width: 260px; margin: 18px 0 38px; color: var(--ink-soft); font-size: 13.5px; line-height: 1.55; }
@@ -2158,7 +2158,7 @@ body[data-feature="teams"] .hero-panel {
   .announcement { min-height: 42px; font-size: 11px; gap: 7px; }
   .announcement-dot { width: 6px; height: 6px; flex-basis: 6px; }
   .nav-shell { height: 66px; }
-  .brand-mark-shell { width: 31px; height: 38px; margin-right: 10px; }
+  .brand-mark-shell { width: 31px; height: 38px; margin-right: 3px; }
   .brand img { height: 38px; width: auto; }
   .brand-suffix { font-size: 27px; top: 2.5px; }
   .nav-toggle { display: inline-flex; }
