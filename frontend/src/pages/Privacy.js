@@ -168,12 +168,12 @@ const Privacy = () => {
           <section>
             <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-3">7. Data Retention and Account Erasure</h2>
             <p className="mb-2">
-              We retain your account data and post history for as long as your workspace remains active. When you cancel or delete your account:
+              We retain your account data and post history while your workspace remains active. When you request account deletion:
             </p>
             <ul className="list-disc pl-6 space-y-1.5">
-              <li>All active OAuth tokens across all platforms are permanently invalidated and deleted.</li>
-              <li>Your drafts, scheduled queues, and cached analytics are purged from our primary database within 30 days.</li>
-              <li>You can trigger immediate erasure via <strong>Settings &rarr; Delete Account</strong> or by following our <Link to="/data-deletion" className="text-indigo-600 dark:text-indigo-400 underline font-semibold">Data Deletion Guide</Link>.</li>
+              <li>Account access is blocked and outreach is stopped. Cleanup of owned workspace data and external services can await operator review.</li>
+              <li>Shared workspaces owned by others are preserved. Limited recovery, financial, provider-term and access-blocking records may remain under retention review.</li>
+              <li>You can request deletion via <strong>Settings &rarr; Delete Account</strong> or by following our <Link to="/data-deletion" className="text-indigo-600 dark:text-indigo-400 underline font-semibold">Data Deletion Guide</Link>.</li>
             </ul>
           </section>
 

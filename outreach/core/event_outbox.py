@@ -35,6 +35,9 @@ async def record_outbox_event(
     Safe to call within a MongoDB multi-document transaction session.
     """
     now = occurred_at or datetime.now(timezone.utc)
+    from outreach.core.erasure import workspace_is_open
+    if not await workspace_is_open(db, workspace_id):
+        raise ValueError("Workspace is closed for erasure")
     type_str = event_type.value if isinstance(event_type, WebhookEvent) else str(event_type)
     event_id = f"evt_{uuid.uuid4().hex}"
 
@@ -61,6 +64,17 @@ async def record_outbox_event(
         "created_at": now,
         "dispatched_at": None,
     }
+
+    from outreach.core.suppression import SuppressionDatabase
+    if isinstance(db, SuppressionDatabase):
+        # The workspace guard orders reply writers. Reuse dedup evidence rather
+        # than catching a duplicate insert that aborts the enclosing transaction.
+        scope = {"workspace_id": workspace_id, "dedupe_key": dedupe_key}
+        await db.outreach_event_outbox.update_one(scope, {"$setOnInsert": doc}, upsert=True)
+        saved = await db.outreach_event_outbox.find_one(scope)
+        if not saved:
+            raise RuntimeError("Reply event was not persisted")
+        return saved
 
     try:
         kwargs = {"session": session} if session else {}
@@ -114,6 +128,11 @@ async def scan_and_fanout_outbox(
             break
 
         workspace_id = event["workspace_id"]
+        from outreach.core.erasure import workspace_is_open
+        if not await workspace_is_open(db, workspace_id):
+            await db.outreach_event_outbox.update_one({"_id": event["_id"], "workspace_id": workspace_id}, {
+                "$set": {"status": "suppressed", "suppressed_reason": "erasure_requested", "resolved_at": now}})
+            continue
         if not is_integrations_pilot_allowed(workspace_id):
             await db.outreach_event_outbox.update_one(
                 {"_id": event["_id"]},

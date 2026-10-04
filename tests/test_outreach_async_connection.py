@@ -29,7 +29,8 @@ def proxy():
 
 
 @pytest.mark.asyncio
-async def test_connection_queues_encrypted_job_and_never_calls_linkedin_in_api():
+@pytest.mark.parametrize("broker_available", [True, False])
+async def test_connection_queues_encrypted_job_and_never_calls_linkedin_in_api(broker_available):
     db = MagicMock()
     db.outreach_entitlements.find_one = AsyncMock(return_value={
         "workspace_id": "workspace-1", "status": "active", "seats": 1,
@@ -38,11 +39,17 @@ async def test_connection_queues_encrypted_job_and_never_calls_linkedin_in_api()
     })
     db.outreach_sender_slots.insert_one = AsyncMock()
     db.outreach_connection_locks.insert_one = AsyncMock()
+    db.outreach_connection_locks.find_one = AsyncMock(return_value={"job_id": "local-owned-job"})
     db.outreach_proxy_leases.find_one = AsyncMock(return_value=None)
     db.outreach_connection_jobs.insert_one = AsyncMock()
+    db.outreach_accounts.find_one = AsyncMock(return_value=None)
+    db.outreach_connection_jobs.find_one = AsyncMock(return_value=None)
+    db.outreach_connection_locks.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
     with patch("outreach.api.connection_jobs.reserve_sender_proxy", new_callable=AsyncMock, return_value=proxy()), patch(
         "outreach.engine.session_authenticator.SessionAuthenticator.validate_session_cookie", new_callable=AsyncMock,
     ) as linkedin, patch("outreach.api.connection_jobs._enqueue_connection_job") as enqueue:
+        if not broker_available:
+            enqueue.side_effect = RuntimeError("broker offline")
         result = await connect_via_cookie(
             ConnectCookieRequest(li_at="AQprivate", jsession_id="ajax:private", country_code="IN"),
             current_user=USER, db=db,
@@ -53,8 +60,10 @@ async def test_connection_queues_encrypted_job_and_never_calls_linkedin_in_api()
     queued = db.outreach_connection_jobs.insert_one.await_args.args[0]
     assert queued["li_at_enc"] != "AQprivate"
     assert queued["jsession_id_enc"] != "ajax:private"
+    assert queued["next_verification_due_at"] <= datetime.now(timezone.utc)
     assert "AQprivate" not in str(enqueue.call_args)
     assert "ajax:private" not in str(enqueue.call_args)
+    db.outreach_connection_jobs.delete_one.assert_not_called()
 
 
 @pytest.mark.asyncio

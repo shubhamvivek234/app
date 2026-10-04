@@ -133,6 +133,8 @@ _TASK_MODULES = (
     "celery_workers.tasks.outreach",
     "celery_workers.tasks.engage",
     "celery_workers.tasks.mailbox",
+    "celery_workers.tasks.voice_preparation",
+    "celery_workers.tasks.voice_studio",
 )
 
 _SCHEDULE_MODULES = (
@@ -145,6 +147,8 @@ _SCHEDULE_MODULES = (
     "celery_workers.tasks.auto_plug",
     "celery_workers.tasks.outreach",
     "celery_workers.tasks.mailbox",
+    "celery_workers.tasks.voice_preparation",
+    "celery_workers.tasks.voice_studio",
 )
 
 # ── App factory ──────────────────────────────────────────────────────────────

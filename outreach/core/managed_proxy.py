@@ -10,7 +10,9 @@ from urllib.parse import unquote, urlsplit
 
 from outreach.models import ProxyConfig, ProxyStatus
 from outreach.core.paid_access import _utc
-from utils.encryption import encrypt
+from outreach.core.proxy_custody import seal_proxy_password
+from outreach.core.credential_custody import PREFIX
+from outreach.core.session_custody import custody_mode
 from utils.ssrf_guard import is_safe_url
 from pymongo.errors import DuplicateKeyError
 
@@ -24,6 +26,7 @@ def _proxy_from_inventory(doc: dict) -> ProxyConfig:
         proxy_id=doc["_id"], provider=doc["provider"], host=doc["host"],
         port=doc["port"], username=doc["username"],
         password_enc=doc["password_enc"], country_code=doc["country_code"],
+        credential_generation=doc.get("credential_generation"), custody_workspace_id=doc.get("custody_workspace_id"),
         status=ProxyStatus.HEALTHY, assigned_at=datetime.now(timezone.utc),
     )
 
@@ -62,21 +65,37 @@ async def import_iproyal_proxy(
     doc = {
         "_id": proxy_id, "provider": "iproyal_static",
         "provider_order_id": provider_order_id, "host": host, "port": port,
-        "username": username, "password_enc": encrypt(password),
+        "username": username,
         "country_code": country_code, "status": "available",
         "expires_at": expires_at, "created_at": now,
         "last_workspace_id": workspace_id, "provider_auto_renew_confirmed": False,
     }
-    await db.outreach_proxy_inventory.insert_one(doc)
+    from outreach.core.suppression import mutate_suppression
+    async def preflight(current):
+        # Verify the workspace guard/transaction capability before any KMS call.
+        return None
+    await mutate_suppression(db, workspace_id, preflight)
+    doc.update(await seal_proxy_password(password, doc, workspace_id))
+    async def insert(current):
+        await current.outreach_proxy_inventory.insert_one({**doc, "workspace_id": workspace_id})
+    await mutate_suppression(db, workspace_id, insert)
     return {
         "proxy_id": proxy_id, "provider": doc["provider"],
         "country_code": country_code, "expires_at": expires_at,
     }
 
 
+def _compatible_inventory(inventory, workspace):
+    if inventory.get("last_workspace_id") != workspace or inventory.get("workspace_id", workspace) != workspace:
+        return False
+    return custody_mode() != "kms_v1" or (inventory.get("workspace_id") == workspace
+        and inventory.get("custody_workspace_id") == workspace and bool(inventory.get("credential_generation"))
+        and str(inventory.get("password_enc") or "").startswith(PREFIX))
+
+
 async def reserve_sender_proxy(
     db, workspace_id: str, sender_id: str, country_code: str,
-    *, now: datetime | None = None,
+    *, now: datetime | None = None, reservation_job_id: str | None = None,
 ) -> ProxyConfig:
     """Atomically reserve one IP per sender; never reuse across customers."""
     now = now or datetime.now(timezone.utc)
@@ -86,7 +105,9 @@ async def reserve_sender_proxy(
     })
     if existing:
         inventory = await db.outreach_proxy_inventory.find_one({"_id": existing["_id"]})
-        if (inventory and inventory.get("status") == "available"
+        if inventory and not _compatible_inventory(inventory, workspace_id):
+            raise ManagedProxyUnavailable("Sender IP custody or workspace changed. Contact support.")
+        if (inventory and _compatible_inventory(inventory, workspace_id) and inventory.get("status") == "available"
                 and inventory.get("country_code") == country_code
                 and _utc(inventory.get("expires_at"))
                 and _utc(inventory["expires_at"]) > now):
@@ -111,7 +132,7 @@ async def reserve_sender_proxy(
     }).to_list(length=100)
     for candidate in candidates:
         expiry = _utc(candidate.get("expires_at"))
-        if not expiry or expiry <= now:
+        if not expiry or expiry <= now or not _compatible_inventory(candidate, workspace_id):
             continue
         proxy_id = candidate["_id"]
         # Sticky ownership is written first. Even if connection fails, this
@@ -128,6 +149,7 @@ async def reserve_sender_proxy(
                 "_id": proxy_id, "workspace_id": workspace_id,
                 "sender_id": sender_id, "country_code": country_code,
                 "provider": "iproyal_static", "created_at": now,
+                **({"reservation_job_id": reservation_job_id} if reservation_job_id else {}),
             })
             return _proxy_from_inventory(candidate)
         except DuplicateKeyError:
@@ -137,7 +159,8 @@ async def reserve_sender_proxy(
     )
 
 
-async def release_sender_reservation(db, workspace_id: str, sender_id: str, proxy_id: str) -> None:
+async def release_sender_reservation(db, workspace_id: str, sender_id: str, proxy_id: str, *, reservation_job_id: str | None = None) -> None:
     await db.outreach_proxy_leases.delete_one({
         "_id": proxy_id, "workspace_id": workspace_id, "sender_id": sender_id,
+        **({"reservation_job_id": reservation_job_id} if reservation_job_id else {}),
     })

@@ -97,7 +97,7 @@ async def delete_account(
     """
     GDPR Article 17 — Right to erasure.
     Marks account as deletion_pending and enqueues full data wipe.
-    All data removed within 30 days per retention policy.
+    Outreach database cleanup waits for operator-confirmed writer drain.
     """
     user_id = current_user["user_id"]
     now = datetime.now(timezone.utc)
@@ -106,9 +106,18 @@ async def delete_account(
         {"user_id": user_id},
         {"$set": {
             "deletion_requested_at": now,
+            "deletion_next_publish_at": now,
             "status": "deletion_pending",
         }},
     )
+
+    from outreach.core.erasure import begin_user_erasure, stop_identity
+    try:
+        await stop_identity(db, current_user.get("firebase_uid"))
+        await begin_user_erasure(db, user_id)
+    except Exception as exc:
+        logger.warning("Account deletion stop could not be completed (%s)", type(exc).__name__)
+        raise HTTPException(503, "Data deletion could not be safely started. Please retry.") from None
 
     try:
         enqueue_task(
@@ -120,13 +129,13 @@ async def delete_account(
             },
             queue="default",
         )
-    except (ImportError, Exception) as exc:
-        logger.warning("GDPR erasure task unavailable: %s", exc)
+    except Exception as exc:
+        logger.warning("Account deletion publication will retry (%s)", type(exc).__name__)
 
     logger.info("Account deletion requested: user=%s", user_id)
     return DeleteAccountResponse(
         status="queued",
-        message="Account deletion has been queued. All data will be removed within 30 days.",
+        message="Account deletion has been requested. Outreach is stopped; cleanup may await operator review. Limited recovery and provider-term records can remain under retention review.",
     )
 
 
@@ -186,15 +195,14 @@ async def get_data_deletion_status(
         return {
             "found": True,
             "confirmation_code": confirmation_code,
-            "status": record.get("status", "completed"),
-            "details": record.get("details", "All data associated with this deletion request has been permanently purged."),
-            "created_at": created.isoformat() if isinstance(created, datetime) else str(created),
+            "status": record.get("status", "unknown"),
+            "details": record.get("details", "No completion details have been recorded for this request."),
+            "created_at": created.isoformat() if isinstance(created, datetime) else None,
         }
     return {
         "found": False,
         "confirmation_code": confirmation_code,
-        "status": "completed",
-        "details": "Deletion request verified and purged in accordance with our data retention policy.",
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "status": "not_found",
+        "details": "No deletion request was found for this confirmation code.",
+        "created_at": None,
     }
-

@@ -142,7 +142,7 @@ async def resolve_uncertain_action(
 
     campaign = await db.outreach_campaigns.find_one({
         "workspace_id": workspace_id, "id": task.get("campaign_id"),
-    }, {"_id": 0, "status": 1})
+    }, {"_id": 0, "status": 1, "authorization_revision": 1})
     if not campaign or campaign.get("status") != "paused":
         raise HTTPException(status_code=409, detail="Pause the campaign before resolving this action")
     lead = await db.outreach_leads.find_one({
@@ -175,6 +175,24 @@ async def resolve_uncertain_action(
         "decision": request.decision, "source": "human_assertion", "actor_id": actor_id,
         "evidence_note": request.evidence_note, "recorded_at": now,
     }
+    if task.get("intent_id"):
+        intent_scope = {"_id": task["intent_id"], "workspace_id": workspace_id,
+                        "legacy_operation_id": task_id, "campaign_id": task["campaign_id"]}
+        intent = await db.outreach_intents.find_one(intent_scope)
+        if not intent or intent.get("status") not in {"unknown_outcome", "in_flight", "executed", "canceled"}:
+            raise HTTPException(status_code=409, detail="Execution evidence is missing or changed during review")
+        if request.decision == "not_sent_stop" and (intent.get("attempt") or {}).get("outcome") == "provider_accepted":
+            raise HTTPException(status_code=409, detail="Provider already accepted the action")
+        # Human resolution remains an assertion; retain the original physical
+        # attempt's unknown outcome instead of inventing provider acceptance.
+        from outreach.core.sender_execution import SenderExecution
+        from outreach.core.paid_access import _utc
+        guard = SenderExecution(db)
+        ownership = await db.outreach_sender_execution.find_one(guard.scope(workspace_id, task["account_id"]))
+        if ownership and ownership.get("owner_token") == task.get("owner_token"):
+            expiry = _utc(ownership.get("expires_at"))
+            if not expiry or expiry > now:
+                raise HTTPException(status_code=409, detail="Wait for the dispatch claim to end before completing review")
     if task.get("status") == "uncertain":
         claimed = await db.outreach_tasks.find_one_and_update(
             {**scope, "status": "uncertain"},
@@ -183,8 +201,25 @@ async def resolve_uncertain_action(
         if not claimed:
             raise HTTPException(status_code=409, detail="Another reviewer changed this action")
 
-    # Keep `resolving` as a visible, non-retryable state until every dependent
-    # record has been updated. Retrying the same decision completes it.
+    # Finish dependent records before completing the visible review workflow.
+    if task.get("intent_id"):
+        changed_intent = await db.outreach_intents.update_one(
+            {**intent_scope, "status": intent["status"], "attempt.outcome": (intent.get("attempt") or {}).get("outcome")},
+            {"$set": {"status": "executed" if request.decision == "confirmed_sent" else "canceled",
+                      "resolution": resolution, "projection_reconciled": True, "updated_at": now}},
+        )
+        if not getattr(changed_intent, "matched_count", 0):
+            # No dependent record was changed. Release a refused decision so
+            # new provider evidence can be reviewed using the correct decision.
+            await db.outreach_tasks.update_one(
+                {**scope, "status": "resolving", "resolution.decision": request.decision,
+                 "resolution.recorded_at": resolution["recorded_at"]},
+                {"$set": {"status": "uncertain"}, "$unset": {"resolution": ""},
+                 "$push": {"refused_resolutions": {**resolution, "reason": "execution_evidence_changed"}}},
+            )
+            raise HTTPException(status_code=409, detail="Execution evidence changed during review; reload the action")
+        if ownership and ownership.get("owner_token") == task.get("owner_token"):
+            await guard.release(workspace_id, task["account_id"], task["owner_token"])
     if email_op and email_op.get("status") != "accepted":
         operation_scope = {"_id": email_op["_id"], "workspace_id": workspace_id,
                            "status": {"$in": ["uncertain", "dispatching"]}}
@@ -212,6 +247,8 @@ async def resolve_uncertain_action(
             lead_changes = {"execution_state": LeadExecutionState.FAILED,
                             "failure_reason": "An admin stopped this lead after reviewing an uncertain action.",
                             "next_action_due_at": None, "updated_at": now}
+        if isinstance(campaign.get("authorization_revision"), int) and campaign["authorization_revision"] > 0:
+            lead_changes["authorized_revision"] = campaign["authorization_revision"]
         updated = await db.outreach_leads.update_one(
             {"workspace_id": workspace_id, "id": task.get("lead_id"),
              "campaign_id": task.get("campaign_id"), "execution_state": LeadExecutionState.WAITING_TRIGGER},

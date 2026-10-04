@@ -214,14 +214,18 @@ class JITProxyManager:
         """Clear a local assignment; the provider retains the purchased proxy."""
         return bool(proxy_id)
 
-    async def test_proxy_health(self, proxy: ProxyConfig) -> bool:
+    async def test_proxy_health(self, proxy: ProxyConfig, *, prepared_proxy=None) -> bool:
         """
         Verifies that outgoing traffic through this proxy reaches the web and masks the host IP.
         """
+        from outreach.core.session_custody import custody_mode
+        if custody_mode() == "kms_v1" and (prepared_proxy is None or not prepared_proxy.scoped
+                or not prepared_proxy.matches(proxy, proxy.custody_workspace_id)):
+            return False
         if self.is_mock and proxy.provider == "webshare_mock" and proxy.host == "127.0.0.1":
             return True
 
-        proxy_url = self.format_proxy_url(proxy)
+        proxy_url = prepared_proxy.url if prepared_proxy else self.format_proxy_url(proxy)
         try:
             async with httpx.AsyncClient(proxy=proxy_url, timeout=10.0) as client:
                 resp = await client.get("https://httpbin.org/ip")
@@ -246,6 +250,8 @@ class JITProxyManager:
             username = getattr(proxy, "username", "")
             password_enc = getattr(proxy, "password_enc", "")
 
+        if password_enc.startswith("uc1:"):
+            raise ProxyProvisioningError("Scoped proxy preparation is required")
         try:
             password = decrypt_strict(password_enc) if username else ""
         except (ValueError, EnvironmentError) as exc:

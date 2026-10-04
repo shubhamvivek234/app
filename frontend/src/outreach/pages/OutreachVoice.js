@@ -1,3 +1,4 @@
+import { normalizeVoiceSample } from '../utils/voiceAudio';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Mic,
@@ -20,6 +21,15 @@ import {
 
 export default function OutreachVoice() {
   const [voices, setVoices] = useState([]);
+  const [jobs, setJobs] = useState([]);
+  const [studioEnabled, setStudioEnabled] = useState(false);
+  const [consent, setConsent] = useState(false);
+  const requests = useRef(new Map());
+  const mounted = useRef(true);
+  const requestId = (key) => {
+    if (!requests.current.has(key)) requests.current.set(key, window.crypto.randomUUID());
+    return requests.current.get(key);
+  };
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isRecording, setIsRecording] = useState(false);
@@ -41,6 +51,7 @@ export default function OutreachVoice() {
   const [previewLoading, setPreviewLoading] = useState(false);
 
   const mediaRecorderRef = useRef(null);
+  const streamRef = useRef(null);
   const audioChunksRef = useRef([]);
   const timerIntervalRef = useRef(null);
   const previewAudioRef = useRef(null);
@@ -55,7 +66,7 @@ export default function OutreachVoice() {
       });
       if (res.ok) {
         const data = await res.json();
-        setVoices(data.voices || []);
+        if (mounted.current) { setVoices(data.voices || []); setJobs(data.jobs || []); setStudioEnabled(data.studio_enabled === true); }
       }
     } catch (err) {
       console.error('Failed to load voice profiles:', err);
@@ -78,6 +89,7 @@ export default function OutreachVoice() {
   };
 
   useEffect(() => {
+    mounted.current = true;
     const init = async () => {
       setLoading(true);
       await Promise.all([fetchVoices(), fetchAccounts()]);
@@ -86,12 +98,49 @@ export default function OutreachVoice() {
     init();
 
     return () => {
+      mounted.current = false;
+      streamRef.current?.getTracks().forEach(track => track.stop());
+      if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
       if (previewAudioRef.current) previewAudioRef.current.pause();
       if (audioContextRef.current) audioContextRef.current.close().catch(() => {});
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!jobs.some(job => ['queued', 'preparing', 'possible', 'received'].includes(job.status))) return undefined;
+    const timer = setInterval(fetchVoices, 3000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobs]);
+
+  useEffect(() => () => { if (audioUrl) URL.revokeObjectURL(audioUrl); }, [audioUrl]);
+
+  const studioAction = async (path, method = 'POST', body) => {
+    const response = await fetch(`/api/v1/outreach/voice/${path}`, {
+      method, headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}`,
+        ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || 'Voice Studio action is unavailable.');
+    await fetchVoices();
+    return data;
+  };
+
+  const playSaved = async (jobId) => {
+    try {
+      const data = await studioAction(`jobs/${jobId}/audio`, 'GET');
+      if (previewAudioRef.current) previewAudioRef.current.pause();
+      const audio = new Audio(`data:audio/wav;base64,${data.audio_base64}`);
+      previewAudioRef.current = audio;
+      audio.onended = () => setIsPlayingPreview(false);
+      audio.onerror = () => setIsPlayingPreview(false);
+      setIsPlayingPreview(true);
+      await audio.play();
+    } catch (error) { setErrorMsg(error.message); }
+  };
 
   const startRecording = async () => {
     setErrorMsg('');
@@ -103,6 +152,7 @@ export default function OutreachVoice() {
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
 
       // Audio analysis for volume / silence detection
       try {
@@ -138,9 +188,8 @@ export default function OutreachVoice() {
       };
 
       mediaRecorder.onstop = () => {
-        const blob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
-        setAudioBlob(blob);
-        setAudioUrl(URL.createObjectURL(blob));
+        const blob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType || audioChunksRef.current[0]?.type });
+        if (mounted.current) { setAudioBlob(blob); setAudioUrl(URL.createObjectURL(blob)); }
         stream.getTracks().forEach((track) => track.stop());
 
         // Check if user was silent or spoke too quietly
@@ -162,6 +211,7 @@ export default function OutreachVoice() {
         });
       }, 1000);
     } catch (err) {
+      streamRef.current?.getTracks().forEach(track => track.stop());
       console.error('Microphone access denied or error:', err);
       setErrorMsg("We couldn't access your microphone. Please enable mic permissions or upload an audio file.");
     }
@@ -189,8 +239,8 @@ export default function OutreachVoice() {
     setErrorMsg('');
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 25 * 1024 * 1024) {
-      setErrorMsg('Audio file is too large (max 25MB).');
+    if (file.size > 10 * 1024 * 1024) {
+      setErrorMsg('Audio file is too large (max 10MB).');
       return;
     }
     setAudioBlob(file);
@@ -207,12 +257,22 @@ export default function OutreachVoice() {
       return;
     }
 
+    if (!consent) { setErrorMsg('Confirm speaker consent before cloning.'); return; }
     setIsCloning(true);
     setErrorMsg('');
 
     try {
       const formData = new FormData();
-      formData.append('file', audioBlob, 'sample.wav');
+      const normalized = await normalizeVoiceSample(audioBlob);
+      // Retry this same sample/name with the same identity after an uncertain response.
+      const key = audioBlob;
+      let entry = requests.current.get(key);
+      if (!entry || entry.name !== voiceName.trim()) {
+        entry = { name: voiceName.trim(), id: window.crypto.randomUUID() }; requests.current.set(key, entry);
+      }
+      formData.append('file', normalized, 'sample.wav');
+      formData.append('consent', 'true');
+      formData.append('request_id', entry.id);
       formData.append('name', voiceName.trim());
 
       const token = localStorage.getItem('token');
@@ -227,6 +287,7 @@ export default function OutreachVoice() {
         throw new Error(err.detail || 'Failed to clone voice');
       }
 
+      setConsent(false);
       setVoiceName('');
       setAudioBlob(null);
       setAudioUrl(null);
@@ -271,59 +332,20 @@ export default function OutreachVoice() {
   const handleDeleteVoice = async (voiceId) => {
     if (!window.confirm('Are you sure you want to delete this cloned voice?')) return;
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`/api/v1/outreach/voice/${voiceId}`, {
-        method: 'DELETE',
-        headers: { Authorization: token ? `Bearer ${token}` : '' },
-      });
-      if (res.ok) {
-        await fetchVoices();
-      }
-    } catch (err) {
-      console.error('Delete failed:', err);
-    }
+      await studioAction(`${voiceId}?request_id=${requestId(`delete:${voiceId}:${voices.find(v => v.id === voiceId)?.revision}`)}`, 'DELETE');
+    } catch (error) { setErrorMsg(error.message); }
   };
 
   const handleGeneratePreview = async () => {
     if (!previewVoice) return;
     setPreviewLoading(true);
     try {
-      if (previewAudioRef.current) {
-        previewAudioRef.current.pause();
-        previewAudioRef.current = null;
-      }
-      const token = localStorage.getItem('token');
-      const res = await fetch('/api/v1/outreach/voice/preview', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: token ? `Bearer ${token}` : '',
-        },
-        body: JSON.stringify({
-          voice_id: previewVoice.elevenlabs_voice_id || previewVoice.id,
-          template_text: previewScript,
-          lead_sample: {
-            first_name: leadFirstName,
-            company_name: leadCompany,
-          },
-        }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        const mime = data.media_type || 'audio/wav';
-        const snd = new Audio(`data:${mime};base64,${data.audio_base64}`);
-        previewAudioRef.current = snd;
-        setIsPlayingPreview(true);
-        snd.onended = () => setIsPlayingPreview(false);
-        snd.onerror = () => setIsPlayingPreview(false);
-        await snd.play();
-      }
-    } catch (err) {
-      console.error('Preview failed:', err);
-    } finally {
-      setPreviewLoading(false);
-    }
+      const payload = { voice_id: previewVoice.id, template_text: previewScript,
+        lead_sample: { first_name: leadFirstName, company_name: leadCompany } };
+      await studioAction('preview', 'POST', { ...payload, request_id: requestId(JSON.stringify(payload)) });
+      setPreviewVoice(null);
+    } catch (error) { setErrorMsg(error.message); }
+    finally { setPreviewLoading(false); }
   };
 
   const stopPreviewAudio = () => {
@@ -467,7 +489,7 @@ export default function OutreachVoice() {
                       className="hidden"
                     />
                   </label>
-                  <p className="text-[11px] text-gray-400 mt-1">WAV, MP3, or M4A up to 25MB</p>
+                  <p className="text-[11px] text-gray-400 mt-1">Audio your browser can decode up to 25MB</p>
                 </div>
               </div>
             )}
@@ -491,6 +513,10 @@ export default function OutreachVoice() {
 
                 <audio controls src={audioUrl} className="w-full h-8" />
 
+                <label className="flex items-start gap-2 text-xs text-gray-700">
+                  <input type="checkbox" checked={consent} onChange={event => setConsent(event.target.checked)} />
+                  I am the speaker or have their explicit permission to clone and use this voice. The sample will be sent to ElevenLabs for cloning.
+                </label>
                 <div className="flex items-center gap-2.5 pt-1">
                   <input
                     type="text"
@@ -501,13 +527,13 @@ export default function OutreachVoice() {
                   />
                   <button
                     onClick={handleCreateClone}
-                    disabled={isCloning || !voiceName.trim()}
+                    disabled={!studioEnabled || isCloning || !voiceName.trim() || !consent}
                     className="px-4 py-2 bg-[#4f46e5] text-white rounded-xl text-xs font-semibold hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2 transition-colors whitespace-nowrap shadow-xs"
                   >
                     {isCloning ? (
                       <>
                         <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        Cloning voice...
+                        Queueing voice...
                       </>
                     ) : (
                       <>
@@ -554,6 +580,7 @@ export default function OutreachVoice() {
                         <div className="flex items-center justify-between">
                           <div>
                             <p className="text-xs font-bold text-gray-900">{v.name}</p>
+                            <p className="text-xs text-gray-500">{v.status.replaceAll("_", " ")}</p>
                             <p className="text-[11px] text-gray-400">
                               {assignedAccounts.length === 0
                                 ? 'No sender assigned'
@@ -564,6 +591,7 @@ export default function OutreachVoice() {
                           </div>
                           <div className="flex items-center gap-1.5">
                             <button
+                              disabled={!studioEnabled || v.status !== "active" || !v.consent_current}
                               onClick={() => setPreviewVoice(v)}
                               title="Test voice personalization"
                               className="px-2 py-1 text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors flex items-center gap-1"
@@ -572,6 +600,7 @@ export default function OutreachVoice() {
                               Preview
                             </button>
                             <button
+                              disabled={!studioEnabled || ! ["active", "consent_revoked", "needs_vendor_verification"].includes(v.status)}
                               onClick={() => handleDeleteVoice(v.id)}
                               title="Delete voice profile"
                               className="p-1.5 text-gray-400 hover:text-rose-600 rounded-lg hover:bg-gray-100 transition-colors"
@@ -581,9 +610,19 @@ export default function OutreachVoice() {
                           </div>
                         </div>
 
+                        {v.consent_current && <button className="text-xs text-gray-500" onClick={async () => {
+                          try { await studioAction(`${v.id}/consent`, 'POST', { consent: false }); }
+                          catch (error) { setErrorMsg(error.message); }
+                        }}>Withdraw voice consent</button>}
+                        {!v.consent_current && ['active', 'consent_revoked'].includes(v.status) && <button className="text-xs text-indigo-600" onClick={async () => {
+                          if (!window.confirm('I am the speaker or have their explicit permission to clone and use this voice.')) return;
+                          try { await studioAction(`${v.id}/consent`, 'POST', { consent: true }); }
+                          catch (error) { setErrorMsg(error.message); }
+                        }}>Record speaker consent</button>}
                         {/* Sender Account Assignment Selector */}
                         <div className="relative">
                           <button
+                            disabled={v.status !== "active" || !v.consent_current}
                             onClick={() =>
                               setActiveAssignVoiceId((curr) => (curr === v.id ? null : v.id))
                             }
@@ -633,6 +672,19 @@ export default function OutreachVoice() {
               )}
             </div>
 
+            <div className="bg-white rounded-2xl border border-gray-200 p-5 space-y-3">
+              <h3 className="text-sm font-bold">Studio jobs</h3>
+              {!studioEnabled && <p className="text-xs text-gray-500">Voice Studio provider calls are not enabled for this pilot.</p>}
+              {jobs.length === 0 && <p className="text-xs text-gray-500">No Studio jobs yet.</p>}
+              {jobs.map(job => <div key={job._id} className="text-xs flex flex-wrap gap-2 items-center">
+                <span>{job.operation}: {job.status.replaceAll('_', ' ')}</span>
+                {['held_outcome', 'held_received'].includes(job.status) && <span>Operator review required; do not submit a replacement.</span>}
+                {['queued', 'preparing'].includes(job.status) && <button onClick={async () => {
+                  try { await studioAction(`jobs/${job._id}/cancel`); } catch (error) { setErrorMsg(error.message); }
+                }}>Cancel job</button>}
+                {job.operation === 'preview' && job.status === 'completed' && <button onClick={() => playSaved(job._id)}>Play saved preview</button>}
+              </div>)}
+            </div>
             {/* Tips for best results Card */}
             <div className="bg-white rounded-2xl border border-gray-200/80 p-6 shadow-xs space-y-3.5">
               <h3 className="font-bold text-gray-900 text-sm">Tips for best results</h3>
@@ -660,7 +712,7 @@ export default function OutreachVoice() {
             <div className="bg-indigo-50/50 border border-indigo-100/70 rounded-2xl p-4 flex items-center gap-3">
               <Shield className="w-5 h-5 text-indigo-600 shrink-0" />
               <p className="text-xs text-indigo-900/90 font-medium leading-relaxed">
-                Your recording stays private. We never share it.
+                Samples are encrypted in storage and sent to ElevenLabs only for requested cloning. Uncertain provider outcomes require review.
               </p>
             </div>
           </div>
@@ -755,12 +807,12 @@ export default function OutreachVoice() {
                     {previewLoading ? (
                       <>
                         <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        Synthesizing...
+                        Queueing preview...
                       </>
                     ) : (
                       <>
                         <Play className="w-3.5 h-3.5" />
-                        Play Personalized Note
+                        Queue preview
                       </>
                     )}
                   </button>

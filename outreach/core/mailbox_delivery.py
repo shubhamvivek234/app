@@ -3,16 +3,16 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import os
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from email.policy import SMTP
 
 import httpx
-from pymongo.errors import DuplicateKeyError
 
 from outreach.core.email_finder import is_lead_email_available, normalize_email
 from outreach.core.mailbox_connection import get_mailbox_access_token, get_ready_mailbox
+from outreach.core.provider_custody import MailboxAccess
+from outreach.core.session_custody import custody_mode
 
 
 GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
@@ -31,25 +31,27 @@ def _mime_message(sender: str, recipient: str, subject: str, body: str, message_
     message["Subject"] = subject
     message["Message-ID"] = message_id
     message["X-Unravler-Operation"] = message_id.strip("<>").split("@")[0]
-    message.set_content(body.rstrip() + "\n\nIf you do not want follow-ups, reply STOP.\n")
+    message.set_content(render_email_body(body))
     return message.as_bytes()
 
 
-async def _post_provider_message(provider: str, token: str, mime: bytes) -> httpx.Response:
+def render_email_body(body: str) -> str:
+    """The review screen and MIME builder must show the same effective copy."""
+    return body.rstrip() + "\n\nIf you do not want follow-ups, reply STOP.\n"
+
+
+async def _post_provider_message(provider: str, token: str, mime: bytes, *, envelope) -> httpx.Response:
+    envelope.assert_email(mime)
+    envelope.assert_bearer(token)
     async with httpx.AsyncClient(timeout=25) as client:
         if provider == "gmail":
-            return await client.post(
-                GMAIL_SEND_URL,
-                headers={"Authorization": f"Bearer {token}"},
-                json={"raw": base64.urlsafe_b64encode(mime).rstrip(b"=").decode("ascii")},
-            )
+            return await envelope.call("POST", GMAIL_SEND_URL, lambda: client.post(
+                GMAIL_SEND_URL, headers={"Authorization": f"Bearer {token}"},
+                json={"raw": base64.urlsafe_b64encode(mime).rstrip(b"=").decode("ascii")}), action="email")
         if provider == "microsoft":
-            # Graph accepts base64-encoded MIME and replies with 202 but no ID.
-            return await client.post(
-                GRAPH_SEND_URL,
-                headers={"Authorization": f"Bearer {token}", "Content-Type": "text/plain"},
-                content=base64.b64encode(mime).decode("ascii"),
-            )
+            return await envelope.call("POST", GRAPH_SEND_URL, lambda: client.post(
+                GRAPH_SEND_URL, headers={"Authorization": f"Bearer {token}", "Content-Type": "text/plain"},
+                content=base64.b64encode(mime).decode("ascii")), action="email")
     raise ValueError("Unsupported mailbox provider")
 
 
@@ -62,14 +64,6 @@ def _public_result(operation: dict) -> dict:
     if operation.get("reason"):
         result["reason"] = operation["reason"]
     return result
-
-
-async def _record_result(db, query: dict, updates: dict) -> bool:
-    try:
-        result = await db.outreach_email_operations.update_one(query, {"$set": updates})
-        return bool(getattr(result, "modified_count", 1))
-    except Exception:
-        return False
 
 
 async def _eligible_lead(db, workspace_id: str, sender_account_id: str,
@@ -95,90 +89,78 @@ async def send_outreach_email(
     db, *, workspace_id: str, sender_account_id: str, lead_id: str,
     to_email: str, subject: str, body: str, operation_id: str,
 ) -> dict:
-    """Returns accepted, failed or uncertain; never claims delivery.
+    """Accepted is provider acceptance only. A possible send is never retried."""
+    from outreach.core.provider_boundary import create_provider_envelope
+    from outreach.core.provider_operations import ProviderOperations
+    from outreach.core.request_guard import RequestDenied, current_request_parent
 
-    The operation is inserted BEFORE contacting a provider. Any duplicate or
-    ambiguous transport outcome is not blindly resent by a retrying worker.
-    """
     if not operation_id or len(operation_id) > 200:
         return {"status": "failed", "reason": "A stable operation ID is required"}
     recipient = normalize_email(to_email)
     if not recipient or not subject.strip() or not body.strip() or len(subject) > 500 or len(body) > 20000:
         return {"status": "failed", "reason": "A valid recipient, subject and body are required"}
+    operations = ProviderOperations(db, "outreach_email_operations")
     op_key = f"email:{workspace_id}:{operation_id}"
-    prior = await db.outreach_email_operations.find_one({"_id": op_key, "workspace_id": workspace_id})
-    if prior:
-        if prior.get("status") == "dispatching":
-            return {"status": "uncertain", "reason": "Previous send outcome requires reconciliation"}
+    prior = await operations.prior(workspace_id, op_key)
+    if prior and prior.get("status") != "not_submitted":
+        if prior.get("status") in {"dispatching", "uncertain"}:
+            repaired = await operations.repair(prior)
+            return _public_result(repaired) if repaired else {"status": "uncertain", "reason": "Previous send outcome requires reconciliation"}
         return _public_result(prior)
     mailbox = await get_ready_mailbox(db, workspace_id, sender_account_id)
     if not mailbox:
-        return {"status": "failed", "reason": "Paid mailbox access or reply sync is unavailable"}
+        raise RequestDenied("mailbox_unavailable")
     lead = await _eligible_lead(db, workspace_id, sender_account_id, lead_id, recipient)
     if not lead:
-        return {"status": "failed", "reason": "Campaign or lead is no longer eligible to send"}
-    now = datetime.now(timezone.utc)
-    op = {
-        "_id": op_key, "workspace_id": workspace_id, "sender_account_id": sender_account_id,
-        "lead_id": lead_id, "campaign_id": lead.get("campaign_id"), "provider": mailbox["provider"],
+        raise RequestDenied("lead_changed")
+    # Capture the identity before refresh. Reconnecting cannot authorize an old token.
+    envelope = await create_provider_envelope(db, workspace_id, sender_account_id, "email_send", mailbox, operation_id, lead_id)
+    mime = _mime_message(mailbox["email"], recipient, subject.strip(), body, _message_id(op_key))
+    envelope.assert_email(mime)
+    op = {"_id": op_key, "workspace_id": workspace_id, "sender_account_id": sender_account_id,
+        "lead_id": lead_id, "campaign_id": lead["campaign_id"], "provider": mailbox["provider"],
         "recipient": recipient, "sender_email": mailbox["email"], "subject": subject.strip(),
-        "message_id": _message_id(op_key), "status": "dispatching", "created_at": now,
-    }
-    try:
-        await db.outreach_email_operations.insert_one(op)
-    except DuplicateKeyError:
-        prior = await db.outreach_email_operations.find_one({"_id": op_key, "workspace_id": workspace_id})
-        if not prior:
-            return {"status": "uncertain", "reason": "Existing send requires reconciliation"}
-        if prior.get("status") == "dispatching":
-            return {"status": "uncertain", "reason": "Previous send outcome requires reconciliation"}
-        return _public_result(prior)
-    except Exception:
-        return {"status": "failed", "reason": "Send could not be recorded safely"}
-
-    query = {"_id": op_key, "workspace_id": workspace_id, "status": "dispatching"}
+        "message_id": _message_id(op_key), "source": "email_send", "logical_operation_id": operation_id,
+        "credential_generation": envelope.generation, "account_generation": envelope.account_generation,
+        "lead_snapshot": {name: lead.get(name) for name in ("enrollment_id", "current_node_id", "authorized_revision", "sequence_version")}}
+    if not await operations.claim(op):
+        return {"status": "uncertain", "reason": "Previous send outcome requires reconciliation"}
     try:
         token = await get_mailbox_access_token(db, mailbox)
-        # Paid period, reply sync, suppression or lead state could change during
-        # token refresh. Perform every gate again immediately before POST.
-        mailbox = await get_ready_mailbox(db, workspace_id, sender_account_id)
-        lead = await _eligible_lead(db, workspace_id, sender_account_id, lead_id, recipient)
-        if not mailbox or not lead:
-            await _record_result(db, query, {"status": "failed", "reason": "Sender or lead became unavailable before send"})
-            return {"status": "failed", "reason": "Sender or lead became unavailable before send"}
-        mime = _mime_message(mailbox["email"], recipient, subject.strip(), body, op["message_id"])
-        response = await _post_provider_message(mailbox["provider"], token, mime)
-    except (httpx.TransportError, httpx.TimeoutException):
-        await _record_result(db, query, {"status": "uncertain", "reason": "Provider request outcome is unknown"})
+        if isinstance(token, MailboxAccess):
+            envelope.bind_mailbox(token.secret)
+            token = token.secret.value
+        if not await _eligible_lead(db, workspace_id, sender_account_id, lead_id, recipient):
+            raise RequestDenied("lead_changed")
+        response = await _post_provider_message(mailbox["provider"], token, mime, envelope=envelope)
+        data = envelope.response_evidence(response, "email", True)["provider_outcome"]
+        result = {**data, "status": "failed" if data["status"] == "rejected" else "accepted"}
+        if result["status"] == "accepted":
+            result["accepted_at"] = datetime.now(timezone.utc)
+        else:
+            result["reason"] = "Provider rejected the message"
+        if not await operations.finish(workspace_id, op_key, result):
+            return {"status": "uncertain", "reason": "Provider confirmation needs reconciliation"}
+        if response.status_code in {401, 403}:
+            await db.outreach_mailboxes.update_one({"workspace_id": workspace_id, "sender_account_id": sender_account_id,
+                "connection_job_id": mailbox.get("connection_job_id"), "provider": mailbox["provider"],
+                "provider_user_id": mailbox.get("provider_user_id")}, {"$set": {"status": "reauth_required"}})
+        return _public_result(result)
+    except RequestDenied as exc:
+        parent = current_request_parent()
+        if parent and not parent.mutation_attempted:
+            await operations.finish(workspace_id, op_key, {"status": "not_submitted", "reason": exc.reason})
+            raise
+        await operations.finish(workspace_id, op_key, {"status": "uncertain", "reason": "Provider request outcome is unknown"})
         return {"status": "uncertain", "reason": "Provider request outcome is unknown"}
     except Exception:
-        await _record_result(db, query, {"status": "failed", "reason": "Mailbox is unavailable"})
-        return {"status": "failed", "reason": "Mailbox is unavailable"}
-
-    accepted = response.status_code == (200 if mailbox["provider"] == "gmail" else 202)
-    provider_data: dict = {}
-    if mailbox["provider"] == "gmail" and accepted:
+        parent = current_request_parent()
+        possible = bool(parent and parent.mutation_attempted)
+        result = {"status": "uncertain" if possible else "not_submitted", "reason": "Provider request outcome is unknown" if possible else "mailbox_unavailable"}
         try:
-            provider_data = response.json()
-        except ValueError:
-            provider_data = {}
-        accepted = isinstance(provider_data, dict) and not provider_data.get("error") and bool(provider_data.get("id"))
-    if not accepted:
-        if response.status_code in {401, 403}:
-            await db.outreach_mailboxes.update_one(
-                {"workspace_id": workspace_id, "sender_account_id": sender_account_id},
-                {"$set": {"status": "reauth_required", "updated_at": datetime.now(timezone.utc)}},
-            )
-        # A successful HTTP response with a malformed/missing provider ID may
-        # still represent a sent message. Never classify it as a safe retry.
-        status = "uncertain" if (response.status_code >= 500 or response.status_code == 429
-                                 or 200 <= response.status_code < 300) else "failed"
-        reason = "Provider acceptance was not confirmed" if status == "uncertain" else "Provider rejected the message"
-        await _record_result(db, query, {"status": status, "reason": reason})
-        return {"status": status, "reason": reason}
-    updates = {"status": "accepted", "accepted_at": datetime.now(timezone.utc),
-               "provider_message_id": provider_data.get("id") if mailbox["provider"] == "gmail" else None,
-               "provider_thread_id": provider_data.get("threadId") if mailbox["provider"] == "gmail" else None}
-    if not await _record_result(db, query, updates):
-        return {"status": "uncertain", "reason": "Provider accepted message but confirmation needs reconciliation"}
-    return _public_result(updates)
+            await operations.finish(workspace_id, op_key, result)
+        except Exception:
+            pass
+        if not possible:
+            raise RequestDenied("mailbox_unavailable") from None
+        return result

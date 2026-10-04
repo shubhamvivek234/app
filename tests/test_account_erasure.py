@@ -17,6 +17,7 @@ async def test_delete_account_endpoint_queues_erasure():
         "path": "/api/user/account",
         "client": (f"10.99.{uuid.uuid4().hex[:2]}.{uuid.uuid4().hex[:2]}", 12345),
         "headers": [],
+        "query_string": b"",
     }
     req = Request(scope=scope)
 
@@ -29,6 +30,11 @@ async def test_delete_account_endpoint_queues_erasure():
 
     db = MagicMock()
     db.users.update_one = AsyncMock()
+    with patch("outreach.core.erasure.begin_user_erasure", new=AsyncMock(return_value={"owned_workspace_ids": ["ws_test_abcde"], "pending": []})), patch("outreach.core.erasure.stop_identity", new=AsyncMock()):
+        return await _assert_delete_account_response(req, current_user, db)
+
+
+async def _assert_delete_account_response(req, current_user, db):
 
     with patch("api.routes.user.enqueue_task") as mock_enqueue:
         response = await delete_account(request=req, current_user=current_user, db=db)
@@ -49,7 +55,7 @@ async def test_delete_account_endpoint_queues_erasure():
         )
 
         assert response.status == "queued"
-        assert "30 days" in response.message
+        assert "retention review" in response.message
 
 
 @pytest.mark.asyncio
@@ -62,6 +68,7 @@ async def test_api_deps_blocks_deletion_pending_user():
         "path": "/api/posts",
         "client": ("127.0.0.1", 12345),
         "headers": [],
+        "query_string": b"",
     }
     req = Request(scope=scope)
 
@@ -76,13 +83,14 @@ async def test_api_deps_blocks_deletion_pending_user():
     with patch("api.deps.get_firebase_app"):
         with patch("api.deps.verify_session_cookie", new=AsyncMock(return_value={"uid": "fb_uid_123"})):
             with patch("api.deps._bootstrap_user_from_claims", new=AsyncMock(return_value=pending_user)):
-                with patch("api.deps.ensure_active_workspace", new=AsyncMock(return_value=pending_user)):
+                with patch("api.deps.ensure_active_workspace", new=AsyncMock(return_value=pending_user)) as hydrate:
                     req._cookies = {"session": "valid_session_cookie"}
                     with pytest.raises(HTTPException) as exc_info:
                         await get_current_user(request=req, credentials=None, db=db)
 
                     assert exc_info.value.status_code == 403
                     assert "permanent deletion" in exc_info.value.detail
+                    hydrate.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -100,7 +108,7 @@ async def test_async_erase_cascades_all_collections_and_storage():
         "utm_presets", "bio_pages", "bio_analytics", "workspace_leads",
         "user_sessions", "reports", "media_assets", "workspaces",
     ]:
-        col_mock = MagicMock(delete_many=AsyncMock(return_value=MagicMock(deleted_count=2)))
+        col_mock = MagicMock(delete_many=AsyncMock(return_value=MagicMock(deleted_count=2)), update_many=AsyncMock())
         setattr(mock_db, col, col_mock)
         collections[col] = col_mock
 
@@ -108,6 +116,7 @@ async def test_async_erase_cascades_all_collections_and_storage():
 
     mock_db.workspace_members = MagicMock(update_many=AsyncMock(return_value=MagicMock(modified_count=1)))
     mock_db.users = MagicMock(
+        update_one=AsyncMock(),
         find_one=AsyncMock(return_value={
             "user_id": "usr_wipe_me",
             "firebase_uid": "fb_wipe_uid",
@@ -138,11 +147,12 @@ async def test_async_erase_cascades_all_collections_and_storage():
             with patch("utils.storage.delete_file_async", new=AsyncMock()) as mock_del_file:
                 with patch("firebase_admin.auth.delete_user") as mock_fb_delete:
                     with patch("api.deps.get_firebase_app"):
-                        result = await _async_erase(
-                            user_id="usr_wipe_me",
-                            workspace_id="ws_wipe_me",
-                            firebase_uid="fb_wipe_uid",
-                        )
+                        with patch("outreach.core.erasure.begin_user_erasure", new=AsyncMock(return_value={"owned_workspace_ids": ["ws_wipe_me"], "pending": []})), patch("outreach.core.erasure.stop_identity", new=AsyncMock()):
+                            result = await _async_erase(
+                                user_id="usr_wipe_me",
+                                workspace_id="ws_wipe_me",
+                                firebase_uid="fb_wipe_uid",
+                            )
 
                         assert result["status"] == "completed"
                         assert mock_del_file.await_count == 2

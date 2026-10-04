@@ -7,6 +7,7 @@ Data export generates a ZIP via Celery, stored in the active storage backend, li
 import asyncio
 import csv
 import io
+import hashlib
 import json
 import logging
 import os
@@ -16,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from celery_workers.async_runner import run_async
 from celery_workers.celery_app import celery_app
 from db.mongo import get_client
+from celery_workers.shutdown_handler import is_shutting_down
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +56,47 @@ def process_erasure_request(
 ) -> dict:
     """
     GDPR Article 17 — Right to erasure.
-    Deletes or anonymises all user data across all collections, storage, and auth providers.
+    Cleans the explicit collection manifest after outreach stop/drain review.
+    Retention records remain; external failures retain pending retry references.
     """
+    if is_shutting_down():
+        return {"status": "shutting_down"}
     return run_async(_async_erase(user_id, workspace_id, firebase_uid))
+
+
+@celery_app.task(name="celery_workers.tasks.gdpr.retry_pending_erasure", time_limit=120)
+def retry_pending_erasure() -> dict:
+    if is_shutting_down():
+        return {"status": "shutting_down"}
+    return run_async(_async_retry_erasure())
+
+
+async def _async_retry_erasure() -> dict:
+    """Durable pending users survive publication failure or worker interruption."""
+    client = await get_client()
+    db = client[os.environ["DB_NAME"]]
+    now = datetime.now(timezone.utc)
+    users = await db.users.find({"status": "deletion_pending", "$or": [
+        {"deletion_next_publish_at": {"$exists": False}}, {"deletion_next_publish_at": {"$lte": now}}]
+    }).sort("deletion_next_publish_at", 1).limit(100).to_list(length=100)
+    published = 0
+    for user in users:
+        if is_shutting_down():
+            break
+        try:
+            celery_app.send_task("celery_workers.tasks.gdpr.process_erasure_request", kwargs={
+                "user_id": user["user_id"], "workspace_id": user.get("default_workspace_id") or user["user_id"]}, queue="default")
+            published += 1
+        except Exception as exc:
+            logger.warning("Account deletion publication retained (%s)", type(exc).__name__)
+        await db.users.update_one({"user_id": user["user_id"], "status": "deletion_pending"}, {
+            "$set": {"deletion_next_publish_at": now + timedelta(minutes=5)}})
+    return {"published": published}
+
+
+celery_app.conf.beat_schedule["retry-pending-account-erasure"] = {
+    "task": "celery_workers.tasks.gdpr.retry_pending_erasure", "schedule": 60.0,
+}
 
 
 async def _async_erase(
@@ -67,6 +107,17 @@ async def _async_erase(
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
 
+    from outreach.core.erasure import begin_user_erasure, stop_identity
+    await stop_identity(db, firebase_uid)
+    outreach = await begin_user_erasure(db, user_id)
+    if outreach["pending"]:
+        await db.users.update_one({"user_id": user_id}, {"$set": {
+            "deletion_next_publish_at": datetime.now(timezone.utc) + timedelta(minutes=5)}})
+        return {"status": "pending_outreach_drain", "pending_workspace_count": len(outreach["pending"])}
+    owned_workspaces = outreach["owned_workspace_ids"]
+    business_scope = {"$or": [{"workspace_id": {"$in": owned_workspaces}},
+        {"user_id": user_id, "workspace_id": {"$exists": False}}, {"user_id": user_id, "workspace_id": None}]}
+
     now = datetime.now(timezone.utc)
     deleted: dict[str, int] = {}
 
@@ -75,33 +126,42 @@ async def _async_erase(
 
     # 1. Purge physical files in cloud storage (R2 / S3 / Firebase Storage)
     storage_deleted_count = 0
+    external_failed = False
     try:
         media_cursor = db.media_assets.find(
-            {"$or": [{"user_id": user_id}, {"workspace_id": workspace_id}]}
+            business_scope
         )
         async for asset in media_cursor:
             url = asset.get("url") or asset.get("file_url")
             if url and isinstance(url, str):
                 try:
                     from utils.storage import delete_file_async
-                    await delete_file_async(url)
+                    from google.api_core.exceptions import NotFound
+                    try:
+                        await delete_file_async(url)
+                    except NotFound:
+                        pass  # Confirmed absent object after an interrupted retry.
                     storage_deleted_count += 1
                 except Exception as file_exc:
-                    logger.warning("Failed to delete media asset file %s: %s", url, file_exc)
+                    external_failed = True
+                    logger.warning("Storage erasure retained (%s)", type(file_exc).__name__)
     except Exception as media_exc:
-        logger.warning("Failed to query media assets for storage deletion: %s", media_exc)
+        external_failed = True
+        logger.warning("Storage erasure query retained (%s)", type(media_exc).__name__)
     deleted["storage_files_deleted"] = storage_deleted_count
+    if external_failed:
+        return {"status": "pending_external_cleanup", "deleted": deleted}
 
     # 2. Delete media asset database records
     media_del = await db.media_assets.delete_many(
-        {"$or": [{"user_id": user_id}, {"workspace_id": workspace_id}]}
+        business_scope
     )
     deleted["media_assets"] = media_del.deleted_count
 
     # 3. Delete from primary application collections
     for collection_name in _ERASURE_COLLECTIONS:
         result = await db[collection_name].delete_many(
-            {"$or": [{"user_id": user_id}, {"workspace_id": workspace_id}]}
+            {"user_id": user_id} if collection_name in {"login_events", "user_sessions", "notifications", "api_keys"} else business_scope
         )
         deleted[collection_name] = result.deleted_count
 
@@ -114,7 +174,7 @@ async def _async_erase(
         {"user_id": user_id},
         {
             "$set": {
-                "user_id": f"deleted_{user_id[:8]}",
+                "user_id": "deleted_" + hashlib.sha256(user_id.encode()).hexdigest(),
                 "email": "redacted@deleted.invalid",
                 "name": "Deleted User",
                 "deleted_at": now,
@@ -122,6 +182,7 @@ async def _async_erase(
         },
     )
     deleted["workspace_members_anonymised"] = anon_result.modified_count
+    await db.workspaces.update_many({"members.user_id": user_id}, {"$pull": {"members": {"user_id": user_id}}})
 
     # 6. Cancel payment gateway subscriptions if active
     if user_doc:
@@ -132,10 +193,20 @@ async def _async_erase(
                 stripe_api_key = os.environ.get("STRIPE_SECRET_KEY")
                 if stripe_api_key:
                     stripe.api_key = stripe_api_key
-                    stripe.Subscription.delete(stripe_sub_id)
+                    subscription = stripe.Subscription.retrieve(stripe_sub_id)
+                    if subscription.get("id") != stripe_sub_id:
+                        raise ValueError("Subscription identity changed")
+                    if subscription.get("status") != "canceled":
+                        subscription = stripe.Subscription.cancel(stripe_sub_id)
+                    if subscription.get("id") != stripe_sub_id or subscription.get("status") != "canceled":
+                        raise ValueError("Subscription cancellation remains unverified")
                     deleted["stripe_subscription_cancelled"] = 1
+                    await db.users.update_one({"user_id": user_id}, {"$unset": {"stripe_subscription_id": ""}})
+                else:
+                    external_failed = True
             except Exception as stripe_exc:
-                logger.warning("Failed to cancel Stripe subscription %s: %s", stripe_sub_id, stripe_exc)
+                external_failed = True
+                logger.warning("Stripe erasure retained (%s)", type(stripe_exc).__name__)
 
         razorpay_sub_id = user_doc.get("razorpay_subscription_id")
         if razorpay_sub_id:
@@ -145,10 +216,20 @@ async def _async_erase(
                 rz_secret = os.environ.get("RAZORPAY_KEY_SECRET")
                 if rz_key and rz_secret:
                     rz_client = razorpay.Client(auth=(rz_key, rz_secret))
-                    rz_client.subscription.cancel(razorpay_sub_id)
+                    subscription = rz_client.subscription.fetch(razorpay_sub_id)
+                    if subscription.get("id") != razorpay_sub_id:
+                        raise ValueError("Subscription identity changed")
+                    if subscription.get("status") != "cancelled":
+                        subscription = rz_client.subscription.cancel(razorpay_sub_id)
+                    if subscription.get("id") != razorpay_sub_id or subscription.get("status") != "cancelled":
+                        raise ValueError("Subscription cancellation remains unverified")
                     deleted["razorpay_subscription_cancelled"] = 1
+                    await db.users.update_one({"user_id": user_id}, {"$unset": {"razorpay_subscription_id": ""}})
+                else:
+                    external_failed = True
             except Exception as rz_exc:
-                logger.warning("Failed to cancel Razorpay subscription %s: %s", razorpay_sub_id, rz_exc)
+                external_failed = True
+                logger.warning("Payment erasure retained (%s)", type(rz_exc).__name__)
 
     # 7. Delete identity from Google Firebase Authentication
     resolved_firebase_uid = firebase_uid or (user_doc.get("firebase_uid") if user_doc else None)
@@ -157,10 +238,18 @@ async def _async_erase(
             from api.deps import get_firebase_app
             from firebase_admin import auth as fb_auth
             get_firebase_app()
-            fb_auth.delete_user(resolved_firebase_uid)
+            try:
+                fb_auth.delete_user(resolved_firebase_uid)
+            except fb_auth.UserNotFoundError:
+                pass  # Confirmed absent identity after an interrupted retry.
             deleted["firebase_auth_deleted"] = 1
+            await db.users.update_one({"user_id": user_id}, {"$unset": {"firebase_uid": ""}})
         except Exception as fb_exc:
-            logger.warning("Failed to delete Firebase user %s: %s", resolved_firebase_uid, fb_exc)
+            external_failed = True
+            logger.warning("Identity erasure retained (%s)", type(fb_exc).__name__)
+
+    if external_failed:
+        return {"status": "pending_external_cleanup", "deleted": deleted}
 
     # 8. Permanently delete the user document from MongoDB
     user_del = await db.users.delete_one({"user_id": user_id})

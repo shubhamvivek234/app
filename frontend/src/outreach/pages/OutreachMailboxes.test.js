@@ -73,6 +73,24 @@ describe('Outreach email connection settings', () => {
     expect(container.textContent).toContain('sam@example.com');
   });
 
+  it.each(['review_required', 'review_stopped'])('ends polling and shows a reason for %s authorization', async (status) => {
+    window.history.replaceState({}, '', '/outreach?tab=settings&mailbox_job_id=held-job');
+    global.fetch = jest.fn((url) => Promise.resolve(url.endsWith('/accounts')
+      ? ok([{ id: 'sender-a', account_name: 'Sam Sender', status: 'active' }])
+      : url.endsWith('/mailboxes/hunter-key')
+        ? ok({ configured: false })
+        : url.endsWith('/mailboxes/connection-jobs/held-job')
+          ? ok({ status, error: status === 'review_stopped'
+            ? 'Mailbox authorization was stopped after operator review.'
+            : 'Mailbox authorization outcome needs operator review before reconnecting.' })
+          : ok({ mailboxes: [], connection_enabled: true, send_enabled: false })));
+    await act(async () => root.render(<OutreachMailboxes />));
+    expect(container.textContent).toContain(status === 'review_stopped'
+      ? 'stopped after operator review' : 'operator review before reconnecting');
+    expect(window.location.search).not.toContain('mailbox_job_id');
+    expect(global.fetch.mock.calls.filter(([url]) => url.endsWith('/connection-jobs/held-job'))).toHaveLength(1);
+  });
+
   it('saves a Hunter API key without displaying it afterward', async () => {
     global.fetch = jest.fn((url, options = {}) => Promise.resolve(url.endsWith('/accounts')
       ? ok([{ id: 'sender-a', account_name: 'Sam Sender', status: 'active' }])

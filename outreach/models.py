@@ -4,9 +4,9 @@ All schemas are strict Pydantic v2 models decoupled from core inbound logic.
 """
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 import uuid
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 def generate_uuid() -> str:
@@ -15,6 +15,98 @@ def generate_uuid() -> str:
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+# Compatible domain contracts: existing collection/public identities stay intact.
+class Subscription(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    workspace_id: str
+    provider: str = "manual_verified_invoice"
+    status: Literal["pending", "active", "past_due", "canceled", "ended"] = "pending"
+    invoice_id: str | None = None
+    paid_through: datetime | None = None
+
+
+class Entitlement(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    workspace_id: str
+    seats: int = Field(ge=1, le=5, validation_alias=AliasChoices("seats", "seat_allowance"))
+    status: str = "active"
+    paid_through: datetime
+    payment_source: str = "manual_verified_invoice"
+    is_revoked: bool = False
+
+
+class ProviderOrder(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=generate_uuid)
+    workspace_id: str
+    provider: str = "iproyal_static"
+    status: Literal["requested", "pending", "confirmed", "failed", "unknown_outcome"] = "requested"
+    provider_order_id: str | None = None
+
+
+class ProxyAsset(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    id: str = Field(validation_alias=AliasChoices("id", "_id"))
+    workspace_id: str = Field(validation_alias=AliasChoices("workspace_id", "last_workspace_id"))
+    country_code: str
+    expires_at: datetime
+    provider: str = "iproyal_static"
+    status: str = "available"
+
+
+class SenderConnection(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    workspace_id: str
+    status: str = "disconnected"
+    credential_generation: str | None = None
+
+
+class CampaignAuthorization(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    campaign_id: str = Field(validation_alias=AliasChoices("campaign_id", "id"))
+    workspace_id: str
+    status: str = "draft"
+    authorization_revision: int = Field(default=0, ge=0)
+    pause_reasons: list[str] = Field(default_factory=list)
+
+
+class ActionAttempt(BaseModel):
+    """One physical submission; acceptance is separate from observed delivery."""
+    id: str = Field(default_factory=generate_uuid)
+    sender_id: str
+    owner_token: str
+    possible_submission_at: datetime
+    outcome: Literal["in_flight", "provider_accepted", "request_observed", "unknown_outcome", "failed", "not_submitted"] = "in_flight"
+    provider_message_id: str | None = None
+    provider_thread_id: str | None = None
+    provider_result_status: str | None = None
+    completed_at: datetime | None = None
+
+
+class ActionIntent(BaseModel):
+    """Atomic intent/embedded-attempt authority, compatible with the legacy ledger."""
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    id: str = Field(validation_alias=AliasChoices("id", "_id"))
+    workspace_id: str
+    campaign_id: str
+    lead_id: str
+    enrollment_id: str
+    sequence_version: int = Field(ge=1)
+    node_id: str
+    action_kind: str
+    logical_dedup_key: str
+    legacy_operation_id: str
+    authorization_revision: int = Field(ge=1)
+    credential_generation: str
+    status: Literal["pending", "claimed", "in_flight", "executed", "unknown_outcome", "failed", "canceled"] = "pending"
+    claim_token: str | None = None
+    claim_expires_at: datetime | None = None
+    next_action_due_at: datetime
+    attempt: ActionAttempt | None = None
+    attempt_history: list[ActionAttempt] = Field(default_factory=list)
 
 
 # ── Account Enums & Sub-models ─────────────────────────────────────────────
@@ -59,7 +151,9 @@ class ProxyConfig(BaseModel):
     host: str
     port: int
     username: str
-    password_enc: str  # Fernet encrypted password
+    password_enc: str  # Fernet or opt-in scoped KMS envelope
+    credential_generation: str | None = None
+    custody_workspace_id: str | None = None
     country_code: str = "US"
     status: ProxyStatus = ProxyStatus.HEALTHY
     assigned_at: datetime = Field(default_factory=utc_now)
@@ -133,6 +227,7 @@ class OutreachAccount(BaseModel):
     last_active_at: datetime | None = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+    credential_generation: str | None = None
 
 
 # ── Campaign & Schedule Models ─────────────────────────────────────────────
@@ -161,6 +256,8 @@ class OutreachCampaign(BaseModel):
     user_id: str
     name: str
     status: CampaignStatus = CampaignStatus.DRAFT
+    authorization_revision: int = Field(default=0, ge=0)
+    pause_reasons: list[str] = Field(default_factory=list)
     auto_launch_enabled: bool = False
     auto_launch_list_id: str | None = None
     auto_launch_armed_at: datetime | None = None
@@ -261,6 +358,9 @@ class OutreachLead(BaseModel):
     id: str = Field(default_factory=generate_uuid)
     campaign_id: str
     workspace_id: str
+    enrollment_id: str | None = None
+    sequence_version: int | None = None
+    authorized_revision: int | None = None
     assigned_account_id: str | None = None
     linkedin_url: str
     linkedin_urn: str | None = None
@@ -349,6 +449,8 @@ class OutreachInboxThread(BaseModel):
     workspace_id: str
     user_id: str | None = None
     account_id: str  # Connected sender account that received it
+    has_lead_reply: bool = False
+    thread_revision: int = 1
     lead_id: str | None = None
     lead_name: str
     lead_avatar: str | None = None
@@ -632,8 +734,8 @@ class SearchImportJob(BaseModel):
     user_error_message: str | None = None
     lease_token: str = Field(default_factory=generate_uuid)
     heartbeat_at: datetime = Field(default_factory=utc_now)
+    next_page_due_at: datetime = Field(default_factory=utc_now)
+    page_owner_token: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
     completed_at: datetime | None = None
-
-

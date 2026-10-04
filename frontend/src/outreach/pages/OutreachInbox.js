@@ -20,6 +20,7 @@ async function waitForInboxJob(jobId) {
     const job = await response.json();
     if (job.status === 'completed') return job;
     if (job.status === 'failed') throw new Error(job.error || 'Inbox action failed');
+    if (['unknown_outcome', 'awaiting_approval', 'cancelled', 'resolving', 'resolved', 'reviewed'].includes(job.status)) throw new Error(job.error || 'This reply is waiting for review or was cancelled.');
   }
   throw new Error('Still processing in the background. Refresh the inbox shortly.');
 }

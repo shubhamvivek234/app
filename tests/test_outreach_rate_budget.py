@@ -5,8 +5,14 @@ from outreach.core.rate_budget import RateBudget
 
 
 @pytest.fixture(autouse=True)
-def reset_budget_memory():
-    RateBudget.reset_memory()
+def isolated_budget_authority(monkeypatch):
+    from tests.outreach_memory import Database
+    db = Database()
+    acquire = RateBudget.acquire_token
+    async def scoped_acquire(sender_id, sender_config, *args, **kwargs):
+        sender_config = {**sender_config, "workspace_id": "test-workspace"}
+        return await acquire(sender_id, sender_config, *args, db=db, **kwargs)
+    monkeypatch.setattr(RateBudget, "acquire_token", scoped_acquire)
 
 
 @pytest.mark.asyncio

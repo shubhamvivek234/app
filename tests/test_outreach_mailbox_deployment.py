@@ -13,9 +13,13 @@ MAILBOX_SETTINGS = {
     "OUTREACH_HUNTER_ENABLED",
     "OUTREACH_GMAIL_CLIENT_ID",
     "OUTREACH_GMAIL_CLIENT_SECRET",
+    "OUTREACH_GMAIL_CLIENT_SECRET_ENC",
+    "OUTREACH_GMAIL_CLIENT_SECRET_GENERATION",
     "OUTREACH_GMAIL_REDIRECT_URI",
     "OUTREACH_MICROSOFT_CLIENT_ID",
     "OUTREACH_MICROSOFT_CLIENT_SECRET",
+    "OUTREACH_MICROSOFT_CLIENT_SECRET_ENC",
+    "OUTREACH_MICROSOFT_CLIENT_SECRET_GENERATION",
     "OUTREACH_MICROSOFT_REDIRECT_URI",
     "OUTREACH_MICROSOFT_TENANT",
 }
@@ -49,4 +53,3 @@ def test_mailbox_and_outreach_settings_reach_api_and_workers_without_enabling_li
 def test_mailbox_and_outreach_settings_are_documented_in_env_template():
     example = (ROOT / "backend/.env.example").read_text()
     assert all(f"{setting}=" in example for setting in MAILBOX_SETTINGS | OUTREACH_GATE_SETTINGS)
-

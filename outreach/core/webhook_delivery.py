@@ -66,6 +66,12 @@ async def dispatch_due_deliveries(
             if not delivery:
                 break
 
+            from outreach.core.erasure import workspace_is_open
+            if not await workspace_is_open(db, delivery["workspace_id"]):
+                await db.outreach_webhook_deliveries.update_one({"_id": delivery["_id"], "workspace_id": delivery["workspace_id"]}, {
+                    "$set": {"status": "cancelled"}, "$unset": {"secret_enc": "", "target_url_enc": ""}})
+                continue
+
             delivery_id = delivery["id"]
             event_id = delivery["event_id"]
             destination_type = delivery.get("destination_type", "webhook")
@@ -293,6 +299,9 @@ async def replay_delivery(
     })
     if not delivery:
         raise ValueError(f"Delivery {delivery_id} not found in workspace {workspace_id}")
+    from outreach.core.erasure import workspace_is_open
+    if not await workspace_is_open(db, workspace_id):
+        raise ValueError("Workspace is closed for erasure")
 
     if delivery["status"] not in ("dead_letter", "failed"):
         raise ValueError(f"Cannot replay delivery in '{delivery['status']}' status (only failed or dead_letter)")

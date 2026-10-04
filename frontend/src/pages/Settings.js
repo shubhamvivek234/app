@@ -465,7 +465,7 @@ const Settings = () => {
     setDeletingAccount(true);
     try {
       await requestAccountDeletion();
-      toast.success('Account permanently queued for deletion. Signing out...');
+      toast.success('Account deletion requested. Cleanup may await review. Signing out...');
       setIsDeleteDialogOpen(false);
       setDeleteConfirmText('');
       await logout();
@@ -925,7 +925,7 @@ const Settings = () => {
                 Danger zone
               </CardTitle>
               <CardDescription>
-                Queue permanent account deletion. This removes your workspace data and cannot be undone.
+                Request permanent account deletion. Cleanup may await review and cannot be undone.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -935,7 +935,7 @@ const Settings = () => {
                   <div className="space-y-1">
                     <p className="font-medium">Delete account</p>
                     <p className="text-xs leading-5 text-rose-700 dark:text-rose-300">
-                      Connected accounts, scheduled posts, and workspace data enter the deletion pipeline immediately after confirmation.
+                      Account access is blocked and outreach is stopped after confirmation. Cleanup can await review and external services.
                     </p>
                   </div>
                 </div>
@@ -956,7 +956,7 @@ const Settings = () => {
                     <AlertDialogDescription asChild>
                       <div className="space-y-2 text-sm text-slate-600 dark:text-slate-300">
                         <p>
-                          This permanently deletes your account, scheduled posts, uploaded media, connected social channels, and workspace data. This action <strong>cannot be undone</strong>.
+                          This requests deletion of your account and owned workspace data. Shared workspaces owned by others are preserved. Limited recovery, financial, provider-term and access-blocking records may remain under retention review. This action <strong>cannot be undone</strong>.
                         </p>
                         <p className="text-xs font-semibold text-rose-600 dark:text-rose-400">
                           To confirm, please type <span className="font-mono font-bold underline tracking-wider">DELETE</span> below:

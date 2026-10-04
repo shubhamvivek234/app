@@ -20,6 +20,9 @@ class _FakeUsersCollection:
     def __init__(self, docs=None):
         self.docs = [dict(doc) for doc in (docs or [])]
 
+    def with_options(self, **kwargs):
+        return self
+
     async def find_one(self, query, projection=None):
         for doc in self.docs:
             if all(doc.get(key) == value for key, value in query.items()):
@@ -72,6 +75,7 @@ class _FakeDB:
     def __init__(self):
         self.docs = []
         self.users = _FakeUsersCollection()
+        self.account_erasure_tombstones = _FakeGenericCollection()
         self.workspaces = _FakeGenericCollection()
         self.workspace_members = _FakeGenericCollection()
 

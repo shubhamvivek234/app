@@ -108,8 +108,9 @@ export default function OutreachMailboxes() {
           await refreshMailboxes();
           return;
         }
-        if (job.status === 'failed') {
-          setJobStatus(job.error || 'Mailbox connection failed. Try again.');
+        if (job.status === 'failed' || job.status === 'review_required' || job.status === 'review_stopped') {
+          setJobStatus(job.error || (job.status === 'review_stopped'
+            ? 'Mailbox authorization was stopped after operator review.' : 'Mailbox connection failed. Try again.'));
           removeJobParam();
           setPendingJobId('');
           return;

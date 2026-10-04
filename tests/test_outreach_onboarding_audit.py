@@ -54,7 +54,8 @@ async def test_session_verification_network_error_does_not_expose_proxy_secret(m
     with patch("outreach.engine.session_authenticator.httpx.AsyncClient",
                side_effect=httpx.ProxyError("http://user:secret@proxy.example")):
         with pytest.raises(InvalidSessionError) as error:
-            await SessionAuthenticator.validate_session_cookie("AQsession", jsession_id="ajax:123")
+            await SessionAuthenticator.validate_session_cookie("AQsession", jsession_id="ajax:123", proxy_url="http://proxy.example:8000",
+                request_envelope=type("Envelope", (), {"proxy_url": "http://proxy.example:8000"})())
     assert "secret" not in str(error.value)
     assert "secret" not in caplog.text
 
@@ -156,7 +157,7 @@ def test_voyager_decrypts_new_csrf_cookie_and_accepts_legacy_plaintext(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_queue_failure_releases_new_reservation_and_sender_slot(monkeypatch):
+async def test_pending_job_persistence_uncertainty_retains_reservation_and_sender_slot(monkeypatch):
     from datetime import datetime, timedelta, timezone
     from types import SimpleNamespace
     monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", "true")
@@ -170,23 +171,29 @@ async def test_queue_failure_releases_new_reservation_and_sender_slot(monkeypatc
     db.outreach_sender_slots.delete_one = AsyncMock()
     db.outreach_connection_locks.insert_one = AsyncMock()
     db.outreach_connection_locks.delete_one = AsyncMock()
+    db.outreach_connection_locks.find_one = AsyncMock(return_value={"job_id": "owned-local-job"})
+    db.outreach_connection_locks.update_one = AsyncMock(return_value=SimpleNamespace(matched_count=1))
+    db.outreach_accounts.find_one = AsyncMock(return_value=None)
     db.outreach_proxy_leases.find_one = AsyncMock(return_value=None)
-    db.outreach_connection_jobs.insert_one = AsyncMock()
+    db.outreach_connection_jobs.insert_one = AsyncMock(side_effect=RuntimeError("database unavailable"))
     db.outreach_connection_jobs.delete_one = AsyncMock()
+    db.outreach_connection_jobs.find_one = AsyncMock(return_value=None)
     with patch("outreach.api.connection_jobs.reserve_sender_proxy", new_callable=AsyncMock,
                return_value=SimpleNamespace(proxy_id="iproyal:one")), patch(
         "outreach.api.connection_jobs.release_sender_reservation", new_callable=AsyncMock,
     ) as release, patch(
-        "outreach.api.connection_jobs._enqueue_connection_job", side_effect=RuntimeError("broker unavailable"),
+        "outreach.api.connection_jobs._enqueue_connection_job",
     ):
-        with pytest.raises(RuntimeError):
+        with pytest.raises(HTTPException) as failed:
             await connect_via_cookie(
                 ConnectCookieRequest(li_at="AQprivate", jsession_id="ajax:csrf", country_code="IN"),
                 current_user=USER, db=db,
             )
-    release.assert_awaited_once()
-    db.outreach_sender_slots.delete_one.assert_awaited_once()
-    db.outreach_connection_locks.delete_one.assert_awaited_once()
+    assert failed.value.status_code == 503
+    release.assert_not_awaited()
+    db.outreach_sender_slots.delete_one.assert_not_awaited()
+    db.outreach_connection_locks.delete_one.assert_not_awaited()
+    assert db.outreach_connection_locks.update_one.await_args.args[1]["$set"]["storage_outcome_unknown"]
 @pytest.mark.asyncio
 async def test_account_list_is_workspace_scoped_and_does_not_return_secrets():
     db = MagicMock()

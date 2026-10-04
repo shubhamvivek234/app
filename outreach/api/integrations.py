@@ -764,6 +764,8 @@ async def authenticate_api_key(
     if not key_doc or key_doc.get("revoked_at"):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or revoked API key")
     ws_id = key_doc["workspace_id"]
+    from outreach.core.erasure import require_open_workspace
+    await require_open_workspace({"workspace_id": ws_id}, db)
     if not is_integrations_pilot_allowed(ws_id):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -820,6 +822,8 @@ def require_api_key_scope(required_scope: str) -> Callable:
             )
 
         workspace_id = key_doc["workspace_id"]
+        from outreach.core.erasure import require_open_workspace
+        await require_open_workspace({"workspace_id": workspace_id}, db)
         if not is_integrations_pilot_allowed(workspace_id):
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

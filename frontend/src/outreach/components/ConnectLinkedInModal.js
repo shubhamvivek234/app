@@ -124,6 +124,9 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
         const job = await jobResponse.json().catch(() => ({}));
         if (!jobResponse.ok) throw new Error(job.detail || 'Could not read sender verification status.');
         if (job.status === 'failed') throw new Error(job.error || 'LinkedIn session verification failed.');
+        if (['storage_stopped', 'repaired_stopped', 'cancelled'].includes(job.status)) {
+          throw new Error('Sender verification was stopped. Contact support before reconnecting.');
+        }
         if (job.status === 'completed' && job.account?.id) {
           onAccountConnected?.(job.account);
           closeModal(true);

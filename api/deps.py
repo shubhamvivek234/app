@@ -65,6 +65,9 @@ async def _bootstrap_user_from_claims(
     yet have firebase_uid populated.
     """
     uid = decoded.get("uid")
+    from outreach.core.erasure import identity_is_erased
+    if await identity_is_erased(db, uid):
+        raise HTTPException(status_code=403, detail="Account is marked for permanent deletion.")
     email = decoded.get("email", uid)
     display_name = decoded.get("name")
     email_verified = bool(decoded.get("email_verified", False))
@@ -72,6 +75,8 @@ async def _bootstrap_user_from_claims(
 
     user = await db.users.find_one({"firebase_uid": uid}, {"_id": 0})
     if user is not None:
+        if user.get("status") in {"deletion_pending", "deleted"}:
+            raise HTTPException(status_code=403, detail="Account is marked for permanent deletion.")
         updates = {}
         if user.get("email_verified") != email_verified:
             updates["email_verified"] = email_verified
@@ -87,6 +92,8 @@ async def _bootstrap_user_from_claims(
     if email:
         user = await db.users.find_one({"email": email}, {"_id": 0})
         if user is not None:
+            if user.get("status") in {"deletion_pending", "deleted"}:
+                raise HTTPException(status_code=403, detail="Account is marked for permanent deletion.")
             updates = {}
             if uid and not user.get("firebase_uid"):
                 updates["firebase_uid"] = uid
@@ -131,6 +138,9 @@ async def _bootstrap_user_from_claims(
     }
     try:
         await db.users.insert_one(user_doc)
+        if await identity_is_erased(db, uid):
+            await db.users.delete_one({"user_id": user_doc["user_id"], "firebase_uid": uid})
+            raise HTTPException(status_code=403, detail="Account is marked for permanent deletion.")
         event_log(
             logger,
             "info",
@@ -190,13 +200,19 @@ async def _bootstrap_user_from_claims(
             email=email,
             outcome="race_recovered",
         )
+        if await identity_is_erased(db, uid):
+            raise HTTPException(status_code=403, detail="Account is marked for permanent deletion.")
         if uid:
             user = await db.users.find_one({"firebase_uid": uid}, {"_id": 0})
             if user is not None:
+                if user.get("status") in {"deletion_pending", "deleted"}:
+                    raise HTTPException(status_code=403, detail="Account is marked for permanent deletion.")
                 return user
         if email:
             user = await db.users.find_one({"email": email}, {"_id": 0})
             if user is not None:
+                if user.get("status") in {"deletion_pending", "deleted"}:
+                    raise HTTPException(status_code=403, detail="Account is marked for permanent deletion.")
                 return user
         raise
 
@@ -387,6 +403,8 @@ async def get_current_user(
 
     try:
         user = await _bootstrap_user_from_claims(db, decoded)
+        if user.get("status") in {"deletion_pending", "deleted"}:
+            raise HTTPException(status_code=403, detail="This account has been submitted for permanent deletion and is no longer accessible.")
         user = await ensure_active_workspace(db, user)
     except DuplicateKeyError as exc:
         event_log(
@@ -429,6 +447,8 @@ async def get_current_user_from_cookie(
 
     try:
         user = await _bootstrap_user_from_claims(db, claims)
+        if user.get("status") in {"deletion_pending", "deleted"}:
+            raise HTTPException(status_code=403, detail="This account has been submitted for permanent deletion and is no longer accessible.")
         user = await ensure_active_workspace(db, user)
     except DuplicateKeyError as exc:
         event_log(

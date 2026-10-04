@@ -144,19 +144,25 @@ async def _require_voyager_success(result: dict, expected: str, account: dict, d
     raise HTTPException(status_code=502, detail=f"LinkedIn action failed: {message[:200]}")
 
 
-def _build_voyager(account: dict) -> VoyagerClient:
+async def _build_voyager(account: dict, db=None, operation_id: str | None = None) -> VoyagerClient:
     """Build VoyagerClient from a resolved account document."""
     from outreach.core.proxy_manager import JITProxyManager
+    from outreach.core.request_guard import RequestEnvelope
+    from outreach.core.inbox_freshness import credential_generation
+    from outreach.core.session_custody import account_session
 
     proxy_cfg = account.get("proxy") or {}
     if not proxy_cfg.get("host"):
         raise RuntimeError("Sender has no assigned provider IP")
-    proxy_url = JITProxyManager.format_proxy_url(proxy_cfg)
+    from outreach.core.proxy_custody import prepare_proxy
+    prepared = await prepare_proxy(proxy_cfg, account["workspace_id"])
+    proxy_url = prepared.url
 
     return VoyagerClient(
-        session_cookie_enc=account.get("session_cookie_enc", ""),
-        jsession_id=account.get("jsession_id", "ajax:123"),
+        **(await account_session(account)),
         proxy_url=proxy_url,
+        request_envelope=RequestEnvelope(db, account["workspace_id"], account["id"], credential_generation(account), "engage", proxy_url,
+            prepared_proxy=prepared, operation_id=operation_id) if db is not None else None,
     )
 
 @router.post("/lists", status_code=status.HTTP_201_CREATED, dependencies=[require_permission("engage:manage")])
@@ -720,10 +726,7 @@ async def like_engage_post(
 
     try:
         account = await _resolve_sender_account(workspace_id, db, req.sender_account_id)
-        allowed = await OutboundRateLimiter.check_and_increment_daily_limit(account, "post_likes", db)
-        if not allowed:
-            raise HTTPException(status_code=429, detail="Daily like limit reached for this LinkedIn account.")
-        res = await _build_voyager(account).like_update(post["post_urn"])
+        res = await (await _build_voyager(account, db, "engage:" + post_id)).like_update(post["post_urn"])
         await _require_voyager_success(res, "liked", account, db)
         now = datetime.now(timezone.utc)
         await db.outreach_engage_posts.update_one(
@@ -770,14 +773,8 @@ async def comment_engage_post(
 
     try:
         account = await _resolve_sender_account(workspace_id, db, req.sender_account_id)
-        allowed = await OutboundRateLimiter.check_and_increment_daily_limit(account, "comments", db)
-        if not allowed:
-            raise HTTPException(status_code=429, detail="Daily comment limit reached for this LinkedIn account.")
         auto_like = bool(req.auto_like and post["status"] == "pending")
-        if auto_like:
-            account = await db.outreach_accounts.find_one({"id": account["id"], "workspace_id": workspace_id})
-            auto_like = await OutboundRateLimiter.check_and_increment_daily_limit(account, "post_likes", db)
-        voyager = _build_voyager(account)
+        voyager = await _build_voyager(account, db, "engage:" + post_id)
         if auto_like:
             res = await voyager.auto_like_and_comment(post["post_urn"], req.comment_text.strip())
             like_res = res.get("like") or {}
@@ -819,8 +816,9 @@ async def _queue_engage_action(
     workspace_id: str,
     sender_account_id: str | None,
     action: str,
-    payload: str | None,
+    payload: dict,
     db: AsyncIOMotorDatabase,
+    actor: str,
 ) -> dict:
     post = await db.outreach_engage_posts.find_one({"id": post_id, "workspace_id": workspace_id})
     if not post:
@@ -831,30 +829,28 @@ async def _queue_engage_action(
     action_id = uuid.uuid4().hex
     claimed = await db.outreach_engage_posts.update_one(
         {"id": post_id, "workspace_id": workspace_id, "status": {"$in": allowed_statuses},
-         "action_claimed_at": {"$exists": False}, "$or": [
-             {"action_queued_at": {"$exists": False}},
-             {"action_queued_at": {"$lt": now - timedelta(hours=2)}},
-         ]},
+         "action_claimed_at": {"$exists": False}, "action_queued_at": {"$exists": False}},
         {"$set": {"action_queued_at": now, "action_id": action_id, "action_error": ""}},
     )
     if not claimed.modified_count:
         raise HTTPException(status_code=409, detail="Post is already queued, being engaged, or completed.")
+    from outreach.core.manual_actions import ManualActions
+    try:
+        await ManualActions(db).queue(action_id, workspace_id, account["id"], post_id, "engage", action, payload, actor)
+    except ValueError as exc:
+        await db.outreach_engage_posts.update_one({"id": post_id, "workspace_id": workspace_id, "action_id": action_id}, {
+            "$unset": {"action_id": "", "action_queued_at": ""}})
+        raise HTTPException(409, str(exc)) from exc
     try:
         from celery_workers.celery_app import celery_app
         celery_app.send_task(
             f"celery_workers.tasks.engage.{action}_post",
-            args=[post_id, workspace_id, account["id"], payload, action_id], queue="outreach", ignore_result=True,
+            args=[post_id, workspace_id, account["id"], None, action_id], queue="outreach", ignore_result=True,
             headers={"x-trace-id": get_trace_id() or action_id},
         )
     except Exception as exc:
-        await db.outreach_engage_posts.update_one(
-            {"id": post_id, "workspace_id": workspace_id, "action_id": action_id},
-            {"$unset": {"action_queued_at": "", "action_id": ""},
-             "$set": {"action_error": "Could not queue LinkedIn action."}},
-        )
-        logger.exception("Could not queue Engage %s for post %s", action, post_id)
-        raise HTTPException(status_code=503, detail="Could not queue LinkedIn action. Please retry.") from exc
-    return {"status": "queued", "post_id": post_id, "action": action}
+        logger.warning("Engage publish deferred (%s)", type(exc).__name__)
+    return {"status": "queued", "post_id": post_id, "action": action, "job_id": action_id}
 
 
 @router.post("/posts/{post_id}/like", status_code=status.HTTP_202_ACCEPTED, dependencies=[require_permission("engage:manage")])
@@ -865,7 +861,7 @@ async def queue_like_engage_post(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
-    return await _queue_engage_action(post_id, workspace_id, req.sender_account_id, "like", None, db)
+    return await _queue_engage_action(post_id, workspace_id, req.sender_account_id, "like", {"reaction": "LIKE"}, db, current_user.get("user_id"))
 
 
 @router.post("/posts/{post_id}/comment", status_code=status.HTTP_202_ACCEPTED, dependencies=[require_permission("engage:manage")])
@@ -879,7 +875,7 @@ async def queue_comment_engage_post(
         raise HTTPException(status_code=400, detail="Comment text cannot be empty")
     workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
     return await _queue_engage_action(post_id, workspace_id, req.sender_account_id, "comment",
-                                      json.dumps({"comment_text": req.comment_text.strip(), "auto_like": req.auto_like}), db)
+                                      {"body": req.comment_text.strip(), "auto_like": req.auto_like}, db, current_user.get("user_id"))
 
 
 @router.get("/posts/{post_id}/action", dependencies=[require_permission("engage:read")])
@@ -892,9 +888,14 @@ async def get_engage_post_action(
     post = await db.outreach_engage_posts.find_one({"id": post_id, "workspace_id": workspace_id},
                                                   {"_id": 0, "status": 1, "action_queued_at": 1,
                                                    "action_claimed_at": 1, "action_error": 1,
-                                                   "liked_at": 1, "commented_at": 1})
+                                                   "liked_at": 1, "commented_at": 1, "action_id": 1})
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
+    if post.get("action_id"):
+        job = await db.outreach_manual_actions.find_one({"_id": post["action_id"], "workspace_id": workspace_id})
+        post["action_status"] = (job or {}).get("status", "needs_review")
+        if post["action_status"] in {"unknown_outcome", "awaiting_approval"}:
+            post["action_error"] = "This action needs review before another action can be queued."
     return post
 
 

@@ -5,6 +5,7 @@ customer-facing API must never create or extend an entitlement.
 """
 from datetime import datetime, timezone
 from typing import Any
+from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorClientSession
 import os
 from pymongo.errors import DuplicateKeyError
 
@@ -32,7 +33,7 @@ def _utc(value: datetime | str | None) -> datetime | None:
 def entitlement_is_active(doc: dict[str, Any] | None, now: datetime | None = None) -> bool:
     now = now or datetime.now(timezone.utc)
     return bool(
-        doc and doc.get("status") == "active"
+        doc and doc.get("status") == "active" and not doc.get("is_revoked")
         and 1 <= int(doc.get("seats") or 0) <= PILOT_MAX_SENDERS
         and (paid_through := _utc(doc.get("paid_through"))) is not None
         and paid_through > now
@@ -41,8 +42,39 @@ def entitlement_is_active(doc: dict[str, Any] | None, now: datetime | None = Non
 
 
 async def get_active_entitlement(db, workspace_id: str, now: datetime | None = None) -> dict | None:
+    from outreach.core.erasure import workspace_is_open
+    if not await workspace_is_open(db, workspace_id):
+        return None
     doc = await db.outreach_entitlements.find_one({"workspace_id": workspace_id})
     return doc if entitlement_is_active(doc, now) else None
+
+
+async def claim_invoice_reference(db: AsyncIOMotorDatabase, invoice_id: str, workspace_id: str, seats: int,
+                                  paid_through: datetime, *, session: AsyncIOMotorClientSession | None = None) -> None:
+    """Permanent digest authority survives receipt erasure/retention release.
+
+    Reservation precedes receipt/entitlement writes. An interrupted claim can
+    only retry its original terms; it never grants access by itself.
+    """
+    from outreach.core.authorization import canonical_hash
+    from pymongo.read_concern import ReadConcern
+    from pymongo.write_concern import WriteConcern
+    identity = canonical_hash(["verified_invoice", invoice_id])
+    term = _utc(paid_through)
+    if term is None:
+        raise ValueError("Invoice paid-through term is required")
+    term = term.replace(microsecond=term.microsecond // 1000 * 1000)
+    binding = canonical_hash([workspace_id, seats, term])
+    collection = db.account_invoice_guards.with_options(
+        read_concern=ReadConcern("majority"), write_concern=WriteConcern("majority"))
+    try:
+        await collection.update_one({"_id": identity}, {"$setOnInsert": {"binding_digest": binding}}, upsert=True, session=session)
+    except DuplicateKeyError:
+        if session is not None:
+            raise  # An aborted transaction must be retried as a complete group.
+    saved = await collection.find_one({"_id": identity}, session=session)
+    if not saved or saved.get("binding_digest") != binding:
+        raise ValueError("Invoice ID has already been used for different payment terms")
 
 
 async def record_verified_payment(
@@ -55,11 +87,15 @@ async def record_verified_payment(
     verified_by = verified_by.strip()
     if not workspace_id or not invoice_id or not verified_by:
         raise ValueError("Workspace, verified invoice, and operator are required")
+    from outreach.core.erasure import workspace_is_open
+    if not await workspace_is_open(db, workspace_id):
+        raise ValueError("Workspace is closed for erasure")
     if not 1 <= seats <= PILOT_MAX_SENDERS:
         raise ValueError("Pilot seat count must be between 1 and 5")
     paid_through = _utc(paid_through)
     if paid_through is None or paid_through <= now:
         raise ValueError("Paid-through date must be in the future")
+    paid_through = paid_through.replace(microsecond=paid_through.microsecond // 1000 * 1000)
     request = await db.outreach_access_requests.find_one({"workspace_id": workspace_id})
     country_code = (request or {}).get("country_code")
     if not country_code:
@@ -77,8 +113,12 @@ async def record_verified_payment(
     if occupied > seats:
         raise ValueError("Existing sender assignments exceed the requested seat count")
 
-    # The receipt _id makes a verified invoice impossible to apply twice,
-    # including to a second workspace. DB indexes also make workspace unique.
+    # Backfill an existing legacy receipt before claiming a new reference.
+    prior = await db.outreach_payment_receipts.find_one({"_id": invoice_id})
+    if prior:
+        await claim_invoice_reference(db, invoice_id, prior["workspace_id"], prior["seats"], prior["paid_through"])
+    await claim_invoice_reference(db, invoice_id, workspace_id, seats, paid_through)
+    # Receipt uniqueness and its permanent digest both prevent cross-tenant reuse.
     receipt = {
         "_id": invoice_id, "workspace_id": workspace_id,
         "verified_by": verified_by, "verified_at": now,
@@ -140,42 +180,57 @@ async def expire_due_entitlements(db, *, now: datetime | None = None, limit: int
             expired += 1
         await db.outreach_campaigns.update_many(
             {"workspace_id": workspace_id, "status": {"$in": ["active", "warming_up"]}},
-            {"$set": {"status": "paused", "auto_launch_enabled": False, "updated_at": now}},
+            {"$set": {"status": "paused", "auto_launch_enabled": False, "updated_at": now},
+             "$inc": {"authorization_revision": 1}, "$addToSet": {"pause_reasons": "billing_expired"}},
         )
         await db.outreach_accounts.update_many(
             {"workspace_id": workspace_id, "status": {"$in": ["active", "warming", "paused"]}},
             {"$set": {"status": "reauth_required", "updated_at": now}},
         )
         await db.outreach_accounts.update_many(
+            {"workspace_id": workspace_id, "connection_finalization": {"$exists": True}},
+            {"$set": {"connection_finalization.state": "closed", "connection_finalization.closed_at": now}},
+        )
+        await db.outreach_accounts.update_many(
             {"workspace_id": workspace_id},
-            {"$unset": {"session_cookie_enc": "", "encrypted_session_cookie": "", "jsession_id": "", "li_a_enc": ""}},
+            {"$unset": {"session_cookie_enc": "", "encrypted_session_cookie": "", "jsession_id": "", "li_a_enc": "", "li_at_enc": "", "jsession_id_enc": ""}},
         )
         # Mailbox OAuth access is tied to the same paid sender seat. Keep the
         # mailbox record for a future reconnect, but do not retain usable
         # credentials or an in-flight authorization after the paid term ends.
-        await db.outreach_mailboxes.update_many(
-            {"workspace_id": workspace_id},
-            {
+        from outreach.core import suppression
+        from outreach.core.mailbox_jobs import stop_connection_jobs, _fenced
+        async def stop_mailboxes(current):
+            entitlement = await _fenced(current, "paid-mailbox-stop").outreach_entitlements.find_one({
+                "workspace_id": workspace_id, "status": "expired", "paid_through": {"$lte": now}})
+            if not entitlement: return
+            await current.outreach_mailboxes.update_many({"workspace_id": workspace_id}, {
                 "$set": {"status": "reauth_required", "updated_at": now},
-                "$unset": {"access_token_enc": "", "refresh_token_enc": ""},
-            },
-        )
-        await db.outreach_mailbox_connection_jobs.update_many(
-            {"workspace_id": workspace_id, "status": {"$in": ["pending", "queued", "running"]}},
-            {
-                "$set": {"status": "failed", "error": "Paid sender access has ended", "updated_at": now},
-                "$unset": {"authorization_code_enc": "", "code_verifier_enc": ""},
-            },
-        )
-        await db.outreach_mailbox_oauth_states.delete_many({"workspace_id": workspace_id})
+                "$unset": {"access_token_enc": "", "refresh_token_enc": ""}})
+            await stop_connection_jobs(current, workspace_id, now=now, error="Paid sender access has ended")
+            states = await current.outreach_mailbox_oauth_states.find({"workspace_id": workspace_id}).limit(101).to_list(length=101)
+            if len(states) > 100:
+                raise ValueError("Mailbox authorization cleanup requires bounded operator review")
+            for state in states:
+                await current.outreach_mailbox_oauth_states.delete_one({"workspace_id": workspace_id, "_id": state["_id"]})
+        await suppression.mutate_suppression(db, workspace_id, stop_mailboxes)
         await db.outreach_tasks.update_many(
             {"workspace_id": workspace_id, "status": {"$in": ["queued", "pending", "scheduled"]}},
             {"$set": {"status": "cancelled", "cancellation_reason": "Paid outreach period ended", "updated_at": now}},
         )
         pending_jobs = await db.outreach_connection_jobs.find({
-            "workspace_id": workspace_id, "status": {"$in": ["queued", "running"]},
+            "workspace_id": workspace_id, "status": {"$in": ["queued", "running", "finalizing", "repairing"]},
         }).to_list(length=1000)
         for job in pending_jobs:
+            from outreach.core.connection_repair import ConnectionRepair
+            repair = ConnectionRepair(db)
+            await repair.expire(job, now=now, force=True)
+            if job.get("finalization_prepared") or job["status"] in {"finalizing", "repairing"}:
+                await db.outreach_connection_jobs.update_one({"id": job["id"], "workspace_id": workspace_id,
+                    "status": {"$in": ["running", "finalizing"]}}, {"$set": {
+                    "status": "finalizing", "needs_operator_repair": True, "custody_started_at": job.get("custody_started_at") or job.get("created_at")},
+                    "$unset": {"created_at": ""}})
+                continue
             stopped = await db.outreach_connection_jobs.update_one(
                 {"id": job["id"], "workspace_id": workspace_id,
                  "status": {"$in": ["queued", "running"]}},
@@ -183,14 +238,24 @@ async def expire_due_entitlements(db, *, now: datetime | None = None, limit: int
                  "$unset": {"li_at_enc": "", "jsession_id_enc": "", "li_a_enc": ""}},
             )
             if stopped.modified_count:
+                proof = await repair.close_fence(job, now=now)
+                proven = proof.get("proven_uninstalled") or (proof.get("account_absent")
+                    and job.get("installation_protocol") == 2 and not job.get("finalization_prepared"))
+                if not proven:
+                    await db.outreach_connection_jobs.update_one({"id": job["id"], "workspace_id": workspace_id, "status": "failed"}, {
+                        "$set": {"status": "finalizing", "needs_operator_repair": True,
+                            "custody_started_at": job.get("custody_started_at") or job.get("created_at")}, "$unset": {"created_at": ""}})
+                    continue
                 if job.get("new_proxy_reservation"):
                     await db.outreach_proxy_leases.delete_one({
                         "_id": job["proxy_id"], "workspace_id": workspace_id,
                         "sender_id": job["sender_id"],
+                        "reservation_job_id": job["id"],
                     })
                 if job.get("created_slot"):
                     await db.outreach_sender_slots.delete_one({
                         "workspace_id": workspace_id, "sender_id": job["sender_id"],
+                        "reservation_job_id": job["id"],
                     })
                 await db.outreach_connection_locks.delete_one({
                     "_id": job["sender_id"], "job_id": job["id"],

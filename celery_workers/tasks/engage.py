@@ -9,8 +9,7 @@ from celery_workers.celery_app import celery_app
 from celery_workers.shutdown_handler import is_shutting_down
 from db.mongo import get_client
 from outreach.api.engage import (
-    CommentPostRequest, LikePostRequest, _build_voyager,
-    comment_engage_post, like_engage_post,
+    _build_voyager,
 )
 from outreach.core.safety_shield import SafetyShield
 from outreach.core.paid_access import sender_is_ready
@@ -85,7 +84,7 @@ async def _enrich_contacts(list_id: str, workspace_id: str, account_id: str) -> 
     if not await sender_is_ready(db, workspace_id, account):
         await _mark_job_failed(list_id, workspace_id, "enrichment_status", RuntimeError("Paid sender access is unavailable"))
         return {"status": "paid_access_required"}
-    voyager = _build_voyager(account)
+    voyager = await _build_voyager(account, db)
     await db.outreach_engage_lists.update_one(
         {"id": list_id, "workspace_id": workspace_id}, {"$set": {"enrichment_status": "running"}},
     )
@@ -145,7 +144,7 @@ async def _fetch_posts(list_id: str, workspace_id: str, account_id: str) -> dict
     if not await sender_is_ready(db, workspace_id, account):
         await db.outreach_engage_lists.update_one(query, {"$set": {"fetch_status": "failed", "fetch_error": "Paid sender access or provider IP is unavailable."}})
         return {"status": "paid_access_required"}
-    voyager = _build_voyager(account)
+    voyager = await _build_voyager(account, db)
     await db.outreach_engage_lists.update_one(query, {"$set": {"fetch_status": "running"}})
     contacts = await db.outreach_engage_contacts.find({"list_id": list_id, "workspace_id": workspace_id}).to_list(1000)
     semaphore = asyncio.Semaphore(3)
@@ -245,34 +244,10 @@ def comment_post(post_id: str, workspace_id: str, account_id: str, payload: str 
 
 async def _perform_action(post_id: str, workspace_id: str, account_id: str,
                           action: str, payload: str | None, action_id: str) -> dict:
-    import json
-    from fastapi import HTTPException
+    from outreach.core.manual_actions import ManualActions
 
     db = await _db()
-    query = {"id": post_id, "workspace_id": workspace_id}
-    claim_query = {**query, "action_id": action_id}
-    try:
-        if is_shutting_down():
-            raise RuntimeError("Outreach worker is shutting down")
-        post = await db.outreach_engage_posts.find_one(query)
-        if not post:
-            return {"status": "post_deleted"}
-        if post.get("action_id") != action_id:
-            return {"status": "stale_job"}
-        if (action == "like" and post.get("status") in {"liked", "commented"}) or \
-           (action == "comment" and post.get("status") == "commented"):
-            return {"status": "already_completed"}
-        user = {"default_workspace_id": workspace_id}
-        if action == "like":
-            return await like_engage_post(post_id, LikePostRequest(sender_account_id=account_id),
-                                          current_user=user, db=db)
-        data = json.loads(payload or "{}")
-        req = CommentPostRequest(**data, sender_account_id=account_id)
-        return await comment_engage_post(post_id, req, current_user=user, db=db)
-    except Exception as exc:
-        message = exc.detail if isinstance(exc, HTTPException) else "LinkedIn action failed. Please retry after checking the sender."
-        await db.outreach_engage_posts.update_one(claim_query, {"$set": {"action_error": str(message)[:200]}})
-        logger.error("Engage %s failed for post %s (%s)", action, post_id, type(exc).__name__)
-        return {"status": "failed", "error": str(message)[:200]}
-    finally:
-        await db.outreach_engage_posts.update_one(claim_query, {"$unset": {"action_queued_at": "", "action_id": ""}})
+    job = await db.outreach_manual_actions.find_one({"_id": action_id, "workspace_id": workspace_id})
+    if not job or job.get("source") != "engage" or job.get("account_id") != account_id or job.get("target_id") != post_id or job.get("action") != action:
+        return {"status": "unapproved_legacy_job"}
+    return await ManualActions(db).run(workspace_id, action_id)

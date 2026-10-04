@@ -66,6 +66,7 @@ async def test_reservation_is_sender_specific_and_keeps_original_customer():
         "_id": "iproyal:1", "provider": "iproyal_static", "host": "191.116.125.248",
         "port": 12323, "username": "pilot", "password_enc": "encrypted",
         "country_code": "IN", "status": "available", "expires_at": NOW + timedelta(days=30),
+        "last_workspace_id": "workspace-a",
     }
     db.outreach_proxy_inventory.find = MagicMock(return_value=MagicMock(to_list=AsyncMock(return_value=[candidate])))
     db.outreach_proxy_inventory.update_one = AsyncMock(return_value=MagicMock(modified_count=1))

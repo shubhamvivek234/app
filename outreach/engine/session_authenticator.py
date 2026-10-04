@@ -4,6 +4,7 @@ import logging
 import httpx
 from typing import Any
 from datetime import datetime, timezone
+from outreach.core.request_guard import RequestEnvelope, RequestDenied
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ class SessionAuthenticator:
         proxy_url: str | None = None,
         user_agent: str | None = None,
         li_a: str | None = None,
+        request_envelope: RequestEnvelope | None = None,
     ) -> dict[str, Any]:
         """
         Validates the li_at session cookie against LinkedIn's voyager /me endpoint.
@@ -84,13 +86,14 @@ class SessionAuthenticator:
             "X-RestLi-Protocol-Version": "2.0.0",
         }
 
-        client_kwargs: dict[str, Any] = {"timeout": 15.0}
-        if proxy_url and not ("127.0.0.1" in proxy_url or "localhost" in proxy_url):
-            client_kwargs["proxy"] = proxy_url
+        client_kwargs: dict[str, Any] = {"timeout": 15.0, "proxy": proxy_url}
 
         try:
+            if not request_envelope or not proxy_url or proxy_url != request_envelope.proxy_url:
+                raise RequestDenied("request_scope_required")
             async with httpx.AsyncClient(**client_kwargs) as client:
-                resp = await client.get("https://www.linkedin.com/voyager/api/me", headers=headers)
+                resp = await request_envelope.call("GET", "/voyager/api/me",
+                    lambda: client.get("https://www.linkedin.com/voyager/api/me", headers=headers))
                 if resp.status_code == 200:
                     data = resp.json()
                     mini = data.get("miniProfile", {})
@@ -120,7 +123,7 @@ class SessionAuthenticator:
                 elif resp.status_code in (401, 403):
                     raise InvalidSessionError("Session cookie is expired or invalid. Please re-authenticate on LinkedIn.")
                 else:
-                    logger.warning("Voyager /me returned status=%s: %s", resp.status_code, resp.text[:200])
+                    logger.warning("Voyager /me returned status=%s", resp.status_code)
                     raise InvalidSessionError(f"LinkedIn verification returned status {resp.status_code}")
         except httpx.RequestError as exc:
             logger.error("Network error validating LinkedIn session (%s)", type(exc).__name__)

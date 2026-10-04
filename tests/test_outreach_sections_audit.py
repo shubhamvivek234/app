@@ -94,9 +94,11 @@ async def test_confirmed_sequence_action_is_recorded_once_for_analytics():
     assert result["status"] == "success"
     claimed = db.outreach_tasks.insert_one.await_args.args[0]
     assert claimed["id"] == "lead_a:node_a"
-    assert claimed["status"] == "dispatching"
+    assert claimed["status"] == "preparing"
+    assert any(call.args[1].get("$set", {}).get("status") == "dispatching" for call in db.outreach_tasks.update_one.await_args_list)
     event_query, event_update = db.outreach_tasks.update_one.call_args.args
-    assert event_query == {"id": "lead_a:node_a", "workspace_id": "workspace_a", "status": "dispatching"}
+    assert event_query == {"id": "lead_a:node_a", "workspace_id": "workspace_a", "status": "dispatching",
+                           "owner_token": claimed["owner_token"]}
     assert event_update["$set"]["status"] == "completed"
 
 
@@ -130,10 +132,12 @@ async def test_inbox_sync_does_not_match_leads_by_name():
     db = MagicMock()
     account = {"id": "account_a", "workspace_id": "workspace_a", "status": "active", "session_cookie_enc": "encrypted"}
     db.outreach_accounts.find_one = AsyncMock(return_value=account)
+    db.outreach_accounts.update_one = AsyncMock(return_value=MagicMock(matched_count=1, modified_count=1))
     db.outreach_inbox_threads.find_one = AsyncMock(return_value=None)
     db.outreach_inbox_threads.insert_one = AsyncMock()
     db.outreach_leads.find_one = AsyncMock(return_value=None)
     db.outreach_leads.update_one = AsyncMock()
+    db.outreach_leads.update_many = AsyncMock(return_value=MagicMock(matched_count=0, modified_count=0))
     conversation = {
         "thread_urn": "urn:li:fs_conversation:thread1",
         "lead_urn": "urn:li:fsd_profile:member1",
@@ -149,7 +153,8 @@ async def test_inbox_sync_does_not_match_leads_by_name():
     assert db.outreach_inbox_threads.insert_one.call_args.args[0]["intent_tag"] == "not_interested"
     db.outreach_leads.update_one.assert_not_awaited()
     identity_query = db.outreach_leads.find_one.call_args.args[0]
-    assert identity_query == {"workspace_id": "workspace_a", "$or": [{"linkedin_urn": "urn:li:fsd_profile:member1"}]}
+    assert identity_query == {"workspace_id": "workspace_a", "assigned_account_id": "account_a",
+                              "$or": [{"linkedin_urn": "urn:li:fsd_profile:member1"}]}
 
 
 @pytest.mark.asyncio
@@ -176,15 +181,18 @@ async def test_inbox_list_excludes_old_sample_conversations():
 @pytest.mark.asyncio
 async def test_inbox_sync_increments_campaign_only_for_new_verified_reply():
     db = MagicMock()
+    db.outreach_event_outbox.insert_one = AsyncMock()
     db.outreach_accounts.find_one = AsyncMock(return_value={
         "id": "account_a", "workspace_id": "workspace_a", "status": "active", "session_cookie_enc": "encrypted",
     })
+    db.outreach_accounts.update_one = AsyncMock(return_value=MagicMock(matched_count=1, modified_count=1))
     db.outreach_inbox_threads.find_one = AsyncMock(side_effect=[None, {"id": "thread_a", "workspace_id": "workspace_a"}])
     db.outreach_inbox_threads.insert_one = AsyncMock()
     db.outreach_inbox_threads.update_one = AsyncMock()
     db.outreach_inbox_threads.count_documents = AsyncMock(return_value=1)
     db.outreach_leads.find_one = AsyncMock(return_value={"id": "lead_a", "campaign_id": "campaign_a"})
     db.outreach_leads.update_one = AsyncMock(side_effect=[MagicMock(modified_count=1), MagicMock(modified_count=0)])
+    db.outreach_leads.update_many = AsyncMock(return_value=MagicMock(matched_count=0, modified_count=0))
     db.outreach_campaigns.update_one = AsyncMock()
     conversation = {
         "thread_urn": "urn:li:fs_conversation:thread1", "lead_urn": "urn:li:fsd_profile:member1",
@@ -234,7 +242,7 @@ async def test_inbox_reply_is_queued_without_optimistic_sent_message():
     db.outreach_inbox_jobs.insert_one = AsyncMock()
     db.outreach_inbox_jobs.count_documents = AsyncMock(return_value=0)
     db.outreach_inbox_threads.update_one = AsyncMock()
-    with patch("celery_workers.tasks.outreach.send_inbox_reply.apply_async") as enqueue:
+    with patch("celery_workers.tasks.outreach.send_inbox_reply.apply_async") as enqueue, patch("outreach.core.manual_actions.ManualActions.queue", new_callable=AsyncMock):
         result = await send_thread_reply("thread_a", ReplyRequest(body="Hello"), current_user=USER, db=db)
     assert result["status"] == "queued"
     enqueue.assert_called_once()
@@ -248,6 +256,7 @@ async def test_inbox_sync_is_queued_and_job_status_is_workspace_scoped():
     db.outreach_inbox_jobs.insert_one = AsyncMock()
     db.outreach_inbox_jobs.count_documents = AsyncMock(return_value=0)
     db.outreach_inbox_jobs.find_one = AsyncMock(return_value=None)
+    db.outreach_manual_actions.find_one = AsyncMock(return_value=None)
     with patch("celery_workers.tasks.outreach.sync_inbox.apply_async") as enqueue:
         result = await trigger_inbox_sync(account_id=None, current_user=USER, db=db)
     assert result["status"] == "queued"
@@ -259,32 +268,15 @@ async def test_inbox_sync_is_queued_and_job_status_is_workspace_scoped():
 
 
 @pytest.mark.asyncio
-async def test_inbox_worker_records_only_confirmed_reply(monkeypatch):
+async def test_inbox_worker_rejects_unapproved_legacy_payload(monkeypatch):
     from celery_workers.tasks.outreach import _send_inbox_reply
-    monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", "true")
-
     db = MagicMock()
-    db.outreach_inbox_jobs.update_one = AsyncMock(return_value=MagicMock(modified_count=1))
-    db.outreach_inbox_threads.find_one = AsyncMock(return_value={
-        "id": "thread_a", "account_id": "account_a", "conversation_urn": "urn:li:fs_conversation:thread1",
-    })
-    db.outreach_accounts.find_one = AsyncMock(return_value={
-        "id": "account_a", "status": "active", "session_cookie_enc": "encrypted",
-    })
+    db.outreach_manual_actions.find_one = AsyncMock(return_value=None)
     db.outreach_inbox_threads.update_one = AsyncMock()
-    with patch("celery_workers.tasks.outreach._inbox_db", new_callable=AsyncMock, return_value=db), \
-         patch("outreach.engine.voyager_client.VoyagerClient") as voyager, \
-         patch("outreach.core.rate_limiter.OutboundRateLimiter.check_and_increment_daily_limit", new_callable=AsyncMock, return_value=True):
-        voyager.return_value.is_mock = False
-        voyager.return_value.send_conversation_reply = AsyncMock(return_value={"status": "failed", "status_code": 500})
-        with pytest.raises(RuntimeError):
-            await _send_inbox_reply("job_a", "workspace_a", "account_a", "thread_a", "Hello")
-        db.outreach_inbox_threads.update_one.assert_not_awaited()
-
-        voyager.return_value.send_conversation_reply = AsyncMock(return_value={"status": "sent"})
-        result = await _send_inbox_reply("job_b", "workspace_a", "account_a", "thread_a", "Hello")
-        assert result["status"] == "sent"
-        assert db.outreach_inbox_threads.update_one.call_args.args[1]["$push"]["messages"]["body"] == "Hello"
+    with patch("celery_workers.tasks.outreach._inbox_db", new_callable=AsyncMock, return_value=db):
+        result = await _send_inbox_reply("legacy_job", "workspace_a", "account_a", "thread_a", "Unapproved broker body")
+    assert result["status"] == "unapproved_legacy_job"
+    db.outreach_inbox_threads.update_one.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -392,4 +384,3 @@ async def test_analytics_export_csv_streaming():
     lines = [line.strip() for line in csv_text.strip().split("\n") if line.strip()]
     assert lines[0] == "date,requests_sent,requests_accepted,messages_sent,messages_replied,profile_visits,post_engagements"
     assert len(lines) == 8  # 1 header + 7 days
-

@@ -83,6 +83,10 @@ async def test_cancel_schedules_end_of_paid_period_without_clearing_proxy():
 async def test_manual_payment_records_unique_invoice_and_clears_pending_cancel():
     db = MagicMock()
     db.outreach_payment_receipts.insert_one = AsyncMock()
+    db.outreach_payment_receipts.find_one = AsyncMock(return_value=None)
+    from outreach.core.authorization import canonical_hash
+    db.account_invoice_guards.with_options.return_value = MagicMock(update_one=AsyncMock(), find_one=AsyncMock(return_value={
+        "binding_digest": canonical_hash(["workspace-1", 1, NOW + timedelta(days=30)])}))
     db.outreach_entitlements.update_one = AsyncMock()
     db.outreach_access_requests.update_one = AsyncMock()
     db.outreach_access_requests.find_one = AsyncMock(return_value={"country_code": "IN", "seats": 1})
@@ -113,9 +117,19 @@ async def test_payment_rejects_missing_request_country():
     db.outreach_payment_receipts.insert_one.assert_not_called()
 
 
+def _mailbox_stop_fixture(db):
+    db.outreach_entitlements.find_one = AsyncMock(return_value=entitlement(paid_through=NOW, status="expired"))
+    cursor = MagicMock()
+    cursor.limit.return_value = cursor
+    cursor.to_list = AsyncMock(return_value=[{"_id": "state", "workspace_id": "workspace-1"}])
+    db.outreach_mailbox_oauth_states.find.return_value = cursor
+    db.outreach_mailbox_oauth_states.delete_one = AsyncMock()
+
+
 @pytest.mark.asyncio
 async def test_expiry_pauses_actions_but_keeps_paid_proxy_lease():
     db = MagicMock()
+    _mailbox_stop_fixture(db)
     db.outreach_entitlements.find = MagicMock(return_value=MagicMock(to_list=AsyncMock(return_value=[entitlement(paid_through=NOW)])))
     db.outreach_entitlements.update_one = AsyncMock(return_value=MagicMock(modified_count=1))
     db.outreach_campaigns.update_many = AsyncMock()
@@ -127,11 +141,16 @@ async def test_expiry_pauses_actions_but_keeps_paid_proxy_lease():
     db.outreach_connection_jobs.find = MagicMock(return_value=MagicMock(to_list=AsyncMock(return_value=[{
         "id": "job-1", "workspace_id": "workspace-1", "sender_id": "sender-1",
         "proxy_id": "iproyal:one", "new_proxy_reservation": True, "created_slot": True,
+        "status": "queued", "installation_protocol": 2,
     }])))
-    db.outreach_connection_jobs.update_one = AsyncMock(return_value=MagicMock(modified_count=1))
+    db.outreach_connection_jobs.update_one = AsyncMock(return_value=MagicMock(modified_count=1, matched_count=1))
     db.outreach_proxy_leases.delete_one = AsyncMock()
     db.outreach_sender_slots.delete_one = AsyncMock()
     db.outreach_connection_locks.delete_one = AsyncMock()
+    db.outreach_accounts.find_one = AsyncMock(return_value=None)
+    db.outreach_sender_execution.insert_one = AsyncMock()
+    db.outreach_sender_execution.update_one = AsyncMock()
+    db.outreach_execution_permissions.update_one = AsyncMock()
     count = await paid_access.expire_due_entitlements(db, now=NOW)
     assert count == 1
     assert db.outreach_accounts.update_many.await_args.args[1]["$unset"]["session_cookie_enc"] == ""
@@ -147,6 +166,7 @@ async def test_expiry_pauses_actions_but_keeps_paid_proxy_lease():
 @pytest.mark.asyncio
 async def test_expiry_revokes_mailbox_tokens_and_pending_connection_attempts():
     db = MagicMock()
+    _mailbox_stop_fixture(db)
     db.outreach_entitlements.find = MagicMock(return_value=MagicMock(
         to_list=AsyncMock(return_value=[entitlement(paid_through=NOW)]),
     ))
@@ -169,13 +189,14 @@ async def test_expiry_revokes_mailbox_tokens_and_pending_connection_attempts():
     job_filter, job_update = db.outreach_mailbox_connection_jobs.update_many.await_args.args
     assert job_filter == {"workspace_id": "workspace-1", "status": {"$in": ["pending", "queued", "running"]}}
     assert job_update["$set"]["status"] == "failed"
-    assert job_update["$unset"] == {"authorization_code_enc": "", "code_verifier_enc": ""}
-    db.outreach_mailbox_oauth_states.delete_many.assert_awaited_once_with({"workspace_id": "workspace-1"})
+    assert job_update["$unset"] == {"authorization_code_enc": "", "code_verifier_enc": "", "expires_at": ""}
+    db.outreach_mailbox_oauth_states.delete_one.assert_awaited_once_with({"workspace_id": "workspace-1", "_id": "state"})
 
 
 @pytest.mark.asyncio
 async def test_expiry_retries_incomplete_cleanup_after_status_is_expired():
     db = MagicMock()
+    _mailbox_stop_fixture(db)
     db.outreach_entitlements.find = MagicMock(return_value=MagicMock(
         to_list=AsyncMock(return_value=[entitlement(paid_through=NOW, status="expired")]),
     ))

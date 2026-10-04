@@ -5,11 +5,13 @@ messaging polling, post liking) without headless browser overhead.
 """
 import os
 import logging
+import hashlib
 from typing import Any
 from urllib.parse import urlparse, parse_qs
 import httpx
 from datetime import datetime, timezone, timedelta
 from outreach.core.crypto import decrypt_secret
+from outreach.core.request_guard import RequestEnvelope, RequestDenied
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +64,11 @@ class VoyagerClient:
         li_at: str | None = None,
         li_a: str | None = None,
         user_agent: str | None = None,
+        request_envelope: RequestEnvelope | None = None,
     ):
+        if any(value and value.startswith("uc1:") for value in (session_cookie_enc, jsession_id, li_at, li_a)):
+            from outreach.core.credential_custody import CustodyUnavailable
+            raise CustodyUnavailable("Scoped session opening is required before transport")
         raw_cookie = li_at or (decrypt_secret(session_cookie_enc) if session_cookie_enc else "")
         self.session_cookie = raw_cookie.removeprefix("li_at=")
         mock_mode = os.getenv("OUTREACH_MOCK_AUTH", "false").lower() in {"true", "1"}
@@ -76,6 +82,23 @@ class VoyagerClient:
         self.li_a = li_a
         self.user_agent = user_agent or "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         self.is_mock = mock_mode
+        self.request_envelope = request_envelope
+
+    async def _request(self, client, method: str, url: str, **kwargs):
+        """Every live Voyager subrequest enters the shared physical boundary."""
+        parsed = urlparse(url)
+        if (not self.request_envelope or not self.proxy_url or self.proxy_url != self.request_envelope.proxy_url
+                or parsed.scheme != "https" or parsed.hostname != "www.linkedin.com"
+                or not parsed.path.startswith("/voyager/api/")):
+            raise RequestDenied("request_scope_required")
+        action = kwargs.pop("action", "read")
+        if method != "GET" and action == "read":
+            path = parsed.path.lower()
+            action = ("invite" if "invitation" in path else "voice" if "audio" in path else
+                      "message" if "messaging" in path else "comment" if "comment" in path else
+                      "like" if "reaction" in path or "like" in path else "visit")
+        return await self.request_envelope.call(method, parsed.path,
+            lambda: getattr(client, method.lower())(url, **kwargs), action=action)
 
     def _get_headers(self) -> dict[str, str]:
         cookie_parts = [f"li_at={self.session_cookie}", f'JSESSIONID="{self.jsession_id}"']
@@ -154,7 +177,7 @@ class VoyagerClient:
         url = f"{VOYAGER_BASE_URL}/relationships/connections?count=1000"
         try:
             async with httpx.AsyncClient(proxy=self.proxy_url, timeout=12.0) as client:
-                resp = await client.get(url, headers=self._get_headers())
+                resp = await self._request(client, "GET", url, headers=self._get_headers())
                 if resp.status_code == 200:
                     data = resp.json()
                     elements = data.get("elements", []) if isinstance(data, dict) else []
@@ -172,8 +195,10 @@ class VoyagerClient:
                         if identifiers.intersection(value for value in candidate_values if isinstance(value, str)):
                             return True
                 return False
+        except RequestDenied:
+            raise
         except Exception as exc:
-            logger.error("Voyager check_connection_status error: %s", exc)
+            logger.error("Voyager check_connection_status error: %s", type(exc).__name__)
             return False
 
     async def check_connection_status_strict(self, profile_urn: str) -> bool | None:
@@ -191,7 +216,7 @@ class VoyagerClient:
         target_vanity = urlparse(profile_urn).path.rstrip("/").split("/")[-1] if "/in/" in profile_urn else ""
         try:
             async with httpx.AsyncClient(proxy=self.proxy_url, timeout=12.0) as client:
-                response = await client.get(
+                response = await self._request(client, "GET",
                     f"{VOYAGER_BASE_URL}/relationships/connections?count=1000",
                     headers=self._get_headers(),
                 )
@@ -218,6 +243,8 @@ class VoyagerClient:
             if isinstance(total, int) and total <= len(elements):
                 return False
             return None
+        except RequestDenied:
+            raise
         except Exception as exc:
             logger.warning("Voyager connection status uncertain (%s)", type(exc).__name__)
             return None
@@ -240,7 +267,7 @@ class VoyagerClient:
         url = f"{VOYAGER_BASE_URL}/identity/profiles/{vanity_name}/profileView"
         try:
             async with httpx.AsyncClient(proxy=self.proxy_url, timeout=12.0) as client:
-                resp = await client.get(url, headers=self._get_headers())
+                resp = await self._request(client, "GET", url, headers=self._get_headers())
                 if resp.status_code != 200:
                     return {
                         "full_name": "",
@@ -289,8 +316,10 @@ class VoyagerClient:
                     "job_title": current_position.get("title", "") or profile.get("occupation", ""),
                     "verified": bool(entity_urn and full_name),
                 }
+        except RequestDenied:
+            raise
         except Exception as exc:
-            logger.error("Voyager fetch_profile_info error for %s: %s", vanity_name, exc)
+            logger.error("Voyager fetch_profile_info error (%s)", type(exc).__name__)
             return {
                 "full_name": "",
                 "headline": "",
@@ -311,13 +340,15 @@ class VoyagerClient:
         url = f"{VOYAGER_BASE_URL}/identity/profiles/view"
         try:
             async with httpx.AsyncClient(proxy=self.proxy_url, timeout=12.0) as client:
-                resp = await client.post(url, headers=self._get_headers(), json={"profileUrl": profile_url})
+                resp = await self._request(client, "POST", url, headers=self._get_headers(), json={"profileUrl": profile_url})
                 if resp.status_code in (200, 201, 202, 204):
                     return {"status": "viewed", "http_status": resp.status_code}
                 return {"status": "failed", "http_status": resp.status_code, "text": resp.text[:200]}
+        except RequestDenied:
+            raise
         except Exception as exc:
-            logger.error("Voyager visit_profile error: %s", exc)
-            return {"status": "failed", "error": str(exc)}
+            logger.error("Voyager visit_profile error: %s", type(exc).__name__)
+            return {"status": "failed", "error": "LinkedIn request could not be confirmed", "status_code": getattr(exc, "status_code", None)}
 
     async def send_connection_invite(self, profile_urn: str, custom_note: str = "") -> dict[str, Any]:
         """
@@ -326,6 +357,10 @@ class VoyagerClient:
         if self.is_mock:
             logger.info("VoyagerClient [MOCK]: Dispatched connection invite to %s with note=%s", profile_urn, custom_note[:30])
             return {"status": "invite_sent", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+        if not self.request_envelope:
+            raise RequestDenied("content_approval_required")
+        self.request_envelope.assert_content("invite", profile_urn, {"body": custom_note})
 
         resolved_urn = await self._resolve_profile_urn(profile_urn)
         if not resolved_urn:
@@ -338,13 +373,15 @@ class VoyagerClient:
         }
         try:
             async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15.0) as client:
-                resp = await client.post(url, headers=self._get_headers(), json=payload)
+                resp = await self._request(client, "POST", url, headers=self._get_headers(), json=payload)
                 if resp.status_code in (200, 201):
                     return {"status": "invite_sent"}
                 return {"status": "failed", "status_code": resp.status_code, "text": resp.text[:200]}
+        except RequestDenied:
+            raise
         except Exception as exc:
-            logger.error("Voyager send_connection_invite error: %s", exc)
-            return {"status": "error", "error": str(exc)}
+            logger.error("Voyager send_connection_invite error: %s", type(exc).__name__)
+            return {"status": "error", "error": "LinkedIn request could not be confirmed", "status_code": getattr(exc, "status_code", None)}
 
     async def send_direct_message(self, recipient_urn: str, message_body: str) -> dict[str, Any]:
         """
@@ -353,6 +390,10 @@ class VoyagerClient:
         if self.is_mock:
             logger.info("VoyagerClient [MOCK]: Dispatched DM to %s: %s", recipient_urn, message_body[:40])
             return {"status": "message_sent", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+        if not self.request_envelope:
+            raise RequestDenied("content_approval_required")
+        self.request_envelope.assert_content("message", recipient_urn, {"body": message_body})
 
         resolved_urn = await self._resolve_profile_urn(recipient_urn)
         if not resolved_urn:
@@ -365,13 +406,15 @@ class VoyagerClient:
         }
         try:
             async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15.0) as client:
-                resp = await client.post(url, headers=self._get_headers(), json=payload)
+                resp = await self._request(client, "POST", url, headers=self._get_headers(), json=payload)
                 if resp.status_code in (200, 201):
                     return {"status": "message_sent"}
                 return {"status": "failed", "status_code": resp.status_code}
+        except RequestDenied:
+            raise
         except Exception as exc:
-            logger.error("Voyager send_direct_message error: %s", exc)
-            return {"status": "error", "error": str(exc)}
+            logger.error("Voyager send_direct_message error: %s", type(exc).__name__)
+            return {"status": "error", "error": "LinkedIn request could not be confirmed", "status_code": getattr(exc, "status_code", None)}
 
     async def like_last_post(self, profile_urn: str, max_age_days: int = 30) -> dict[str, Any]:
         """
@@ -420,6 +463,10 @@ class VoyagerClient:
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
+        if not self.request_envelope:
+            raise RequestDenied("content_approval_required")
+        self.request_envelope.assert_content("voice", recipient_urn, {"body": transcript, "audio_digest": hashlib.sha256(audio_bytes).hexdigest()})
+
         resolved_urn = await self._resolve_profile_urn(recipient_urn)
         if not resolved_urn:
             return {"status": "failed", "error": "Could not resolve this LinkedIn profile to a verified member ID."}
@@ -429,13 +476,15 @@ class VoyagerClient:
             async with httpx.AsyncClient(proxy=self.proxy_url, timeout=25.0) as client:
                 files = {"file": ("voicenote.wav", audio_bytes, "audio/wav")}
                 data = {"recipientUrn": resolved_urn, "messageType": "VOICE_NOTE"}
-                resp = await client.post(url, headers=self._get_headers(), data=data, files=files)
+                resp = await self._request(client, "POST", url, headers=self._get_headers(), data=data, files=files, action="voice")
                 if resp.status_code in (200, 201):
                     return {"status": "voice_note_sent"}
                 return {"status": "failed", "status_code": resp.status_code}
+        except RequestDenied:
+            raise
         except Exception as exc:
-            logger.error("Voyager send_voice_note error: %s", exc)
-            return {"status": "error", "error": str(exc)}
+            logger.error("Voyager send_voice_note error: %s", type(exc).__name__)
+            return {"status": "error", "error": "LinkedIn request could not be confirmed", "status_code": getattr(exc, "status_code", None)}
 
     async def fetch_conversations(self, count: int = 20, start: int = 0) -> list[dict[str, Any]]:
         """
@@ -475,7 +524,7 @@ class VoyagerClient:
         url = f"{VOYAGER_BASE_URL}/messaging/conversations?count={count}&start={start}"
         try:
             async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15.0) as client:
-                resp = await client.get(url, headers=self._get_headers())
+                resp = await self._request(client, "GET", url, headers=self._get_headers())
                 if resp.status_code == 200:
                     data = resp.json()
                     # In production Voyager returns elements in elements array
@@ -484,8 +533,10 @@ class VoyagerClient:
                         raise ValueError("LinkedIn returned an unexpected inbox response")
                     return elements
                 raise VoyagerRestrictionError(resp.status_code)
+        except RequestDenied:
+            raise
         except Exception as exc:
-            logger.error("Voyager fetch_conversations error: %s", exc)
+            logger.error("Voyager fetch_conversations error: %s", type(exc).__name__)
             raise
 
     async def send_conversation_reply(self, thread_urn: str, message_body: str) -> dict[str, Any]:
@@ -499,6 +550,10 @@ class VoyagerClient:
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
+        if not self.request_envelope:
+            raise RequestDenied("content_approval_required")
+        self.request_envelope.assert_content("reply", thread_urn, {"body": message_body})
+
         url = f"{VOYAGER_BASE_URL}/messaging/conversations/{thread_urn}/events"
         payload = {
             "eventCreate": {
@@ -511,13 +566,15 @@ class VoyagerClient:
         }
         try:
             async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15.0) as client:
-                resp = await client.post(url, headers=self._get_headers(), json=payload)
+                resp = await self._request(client, "POST", url, headers=self._get_headers(), json=payload)
                 if resp.status_code in (200, 201):
                     return {"status": "sent"}
                 return {"status": "failed", "status_code": resp.status_code}
+        except RequestDenied:
+            raise
         except Exception as exc:
-            logger.error("Voyager send_conversation_reply error: %s", exc)
-            return {"status": "error", "error": str(exc)}
+            logger.error("Voyager send_conversation_reply error: %s", type(exc).__name__)
+            return {"status": "error", "error": "LinkedIn request could not be confirmed", "status_code": getattr(exc, "status_code", None)}
 
     async def fetch_profile_recent_updates(self, profile_urn: str, count: int = 5) -> list[dict[str, Any]]:
         """
@@ -559,7 +616,7 @@ class VoyagerClient:
         url = f"{VOYAGER_BASE_URL}/identity/profileUpdatesV2?profileUrn={profile_urn}&count={count}"
         try:
             async with httpx.AsyncClient(proxy=self.proxy_url, timeout=20.0) as client:
-                resp = await client.get(url, headers=self._get_headers())
+                resp = await self._request(client, "GET", url, headers=self._get_headers())
                 if resp.status_code == 200:
                     data = resp.json()
                     elements = data.get("elements", [])
@@ -584,8 +641,10 @@ class VoyagerClient:
                 raise RuntimeError(f"LinkedIn post fetch failed with HTTP {resp.status_code}")
         except VoyagerRestrictionError:
             raise
+        except RequestDenied:
+            raise
         except Exception as exc:
-            logger.error("Voyager fetch_profile_recent_updates error: %s", exc)
+            logger.error("Voyager fetch_profile_recent_updates error: %s", type(exc).__name__)
             raise
 
     async def like_update(self, update_urn: str, reaction_type: str = "LIKE") -> dict[str, Any]:
@@ -596,6 +655,9 @@ class VoyagerClient:
             logger.info("VoyagerClient [MOCK]: Liked update %s (type=%s)", update_urn, reaction_type)
             return {"status": "liked", "update_urn": update_urn, "timestamp": datetime.now(timezone.utc).isoformat()}
 
+        if self.request_envelope:
+            self.request_envelope.assert_reaction(update_urn, reaction_type)
+
         url = f"{VOYAGER_BASE_URL}/feed/reactions"
         payload = {
             "root": update_urn,
@@ -603,13 +665,15 @@ class VoyagerClient:
         }
         try:
             async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15.0) as client:
-                resp = await client.post(url, headers=self._get_headers(), json=payload)
+                resp = await self._request(client, "POST", url, headers=self._get_headers(), json=payload)
                 if resp.status_code in (200, 201):
                     return {"status": "liked", "update_urn": update_urn}
                 return {"status": "failed", "status_code": resp.status_code}
+        except RequestDenied:
+            raise
         except Exception as exc:
-            logger.error("Voyager like_update error: %s", exc)
-            return {"status": "error", "error": str(exc)}
+            logger.error("Voyager like_update error: %s", type(exc).__name__)
+            return {"status": "error", "error": "LinkedIn request could not be confirmed", "status_code": getattr(exc, "status_code", None)}
 
     async def comment_on_update(self, update_urn: str, comment_text: str) -> dict[str, Any]:
         """
@@ -624,6 +688,10 @@ class VoyagerClient:
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
+        if not self.request_envelope:
+            raise RequestDenied("content_approval_required")
+        self.request_envelope.assert_content("comment", update_urn, {"body": comment_text})
+
         url = f"{VOYAGER_BASE_URL}/feed/comments"
         payload = {
             "root": update_urn,
@@ -633,13 +701,15 @@ class VoyagerClient:
         }
         try:
             async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15.0) as client:
-                resp = await client.post(url, headers=self._get_headers(), json=payload)
+                resp = await self._request(client, "POST", url, headers=self._get_headers(), json=payload)
                 if resp.status_code in (200, 201):
                     return {"status": "commented", "update_urn": update_urn}
                 return {"status": "failed", "status_code": resp.status_code}
+        except RequestDenied:
+            raise
         except Exception as exc:
-            logger.error("Voyager comment_on_update error: %s", exc)
-            return {"status": "error", "error": str(exc)}
+            logger.error("Voyager comment_on_update error: %s", type(exc).__name__)
+            return {"status": "error", "error": "LinkedIn request could not be confirmed", "status_code": getattr(exc, "status_code", None)}
 
     async def auto_like_and_comment(self, update_urn: str, comment_text: str) -> dict[str, Any]:
         """
@@ -802,7 +872,7 @@ class VoyagerClient:
         headers = self._get_headers()
         try:
             async with httpx.AsyncClient(proxy=self.proxy_url, timeout=20.0) as client:
-                resp = await client.get(endpoint, headers=headers, params=params)
+                resp = await self._request(client, "GET", endpoint, headers=headers, params=params)
 
                 if resp.status_code == 429:
                     return {
@@ -908,7 +978,7 @@ class VoyagerClient:
                     "status_code": 200,
                 }
         except httpx.RequestError as exc:
-            logger.error("Voyager search request error: %s", exc)
+            logger.error("Voyager search request error: %s", type(exc).__name__)
             return {
                 "entities": [],
                 "total_results": 0,
@@ -919,5 +989,3 @@ class VoyagerClient:
 
 
 LinkedInVoyagerClient = VoyagerClient
-
-

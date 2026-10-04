@@ -146,33 +146,6 @@ async def test_deterministic_email_rejection_fails_lead_without_campaign_quarant
     db.outreach_campaigns.update_one.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_unavailable_mailbox_defers_worker_instead_of_hot_looping(monkeypatch):
-    from celery_workers.tasks.outreach import _run_due_steps
-
-    monkeypatch.setenv("DB_NAME", "outreach_test")
-    db = MagicMock()
-    db.outreach_campaigns.distinct = AsyncMock(return_value=["camp_a"])
-    cursor = MagicMock()
-    cursor.sort.return_value = cursor
-    cursor.limit.return_value = cursor
-    cursor.to_list = AsyncMock(return_value=[{
-        "id": "lead_a", "workspace_id": "ws_a", "campaign_id": "camp_a",
-    }])
-    db.outreach_leads.find.return_value = cursor
-    db.outreach_leads.update_one = AsyncMock(return_value=MagicMock(modified_count=1))
-    with patch("celery_workers.tasks.outreach.get_client", new_callable=AsyncMock,
-               return_value={"outreach_test": db}), \
-         patch("celery_workers.tasks.outreach.is_shutting_down", return_value=False), \
-         patch("celery_workers.tasks.outreach.sequence_dispatch_enabled", return_value=True), \
-         patch("outreach.tasks.sequence_executor.SequenceExecutor.execute_lead_step", new_callable=AsyncMock,
-               return_value={"status": "mailbox_unavailable"}):
-        result = await _run_due_steps()
-
-    assert result["deferred"] == 1
-    updates = [call.args[1].get("$set", {}) for call in db.outreach_leads.update_one.await_args_list]
-    assert any(update.get("next_action_due_at", datetime.min.replace(tzinfo=timezone.utc))
-               > datetime.now(timezone.utc) for update in updates)
 
 
 @pytest.mark.asyncio

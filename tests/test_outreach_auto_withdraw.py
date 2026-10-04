@@ -315,26 +315,10 @@ async def test_auto_withdraw_stale_invites_within_rate_budget():
         workspace_id=workspace_id,
     )
 
-    # Should have withdrawn exactly 2 due to max_daily_withdrawals cap
-    assert count == 2
-
-    # Check outreach_withdrawn_invites records
-    withdrawn_records = db.outreach_withdrawn_invites.docs
-    assert len(withdrawn_records) == 2
-    for record in withdrawn_records:
-        assert record["workspace_id"] == workspace_id
-        assert record["account_id"] == account_id
-        # Reinvite blocked for 21 days
-        assert record["reinvite_blocked_until"] > now + timedelta(days=20)
-
-    # Fresh lead must remain unaffected
-    fresh_lead = await db.outreach_leads.find_one({"id": "lead-fresh"})
-    assert fresh_lead.get("invitation_withdrawn") is not True
-
-    # Withdrawn leads should have execution_state=finished
-    w1 = await db.outreach_leads.find_one({"id": "lead-stale-1"})
-    assert w1["invitation_withdrawn"] is True
-    assert w1["execution_state"] == LeadExecutionState.FINISHED.value
+    # No verified provider transport exists: leave every lead and cooldown unchanged.
+    assert count == 0
+    assert not db.outreach_withdrawn_invites.docs
+    assert all(not lead.get("invitation_withdrawn") for lead in db.outreach_leads.docs)
 
 
 @pytest.mark.asyncio
@@ -455,7 +439,7 @@ async def test_celery_periodic_worker_withdraw_stale_invitations():
 
     result = await _withdraw_stale_invitations(db=db)
     assert result["processed_senders"] == 1
-    assert result["total_withdrawn"] == 1
+    assert result["total_withdrawn"] == 0
 
 
 @pytest.mark.asyncio
@@ -491,7 +475,7 @@ async def test_rate_budget_off_peak_withdraw_permits_withdraw_blocks_outbound():
         action_type="withdraw",
         now=off_peak_time,
     )
-    assert allowed_w is True
-    assert reason_w == "ok"
-    assert retry_after_w == 0
+    assert allowed_w is False
+    assert reason_w == "budget_authority_unavailable"
+    assert retry_after_w > 0
 

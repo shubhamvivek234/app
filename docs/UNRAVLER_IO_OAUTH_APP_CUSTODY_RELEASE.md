@@ -1,0 +1,51 @@
+# Unravler.io — OAuth application secret custody
+Version: 2.17.0 | Updated: 2026-10-04 | Status: Local implementation; not deployed
+
+This sixteenth slice extends opt-in scoped custody to the application's Gmail and Microsoft OAuth client secrets. Customer mailbox access/refresh tokens and pending authorization code/PKCE retain their separate contexts and existing durable execution protocols. Default custody remains `legacy_fernet`; live, generation, connection, send and sync flags remain disabled by default. No commit, push, deployment, real AWS/provider call, purchase or production grant was made.
+
+## Application custody and source selection
+
+`outreach/core/oauth_app_custody.py` uses the existing KMS/AES-256-GCM envelope and bounded, pinned workload-key adapter. The distinct `oauth_app_secret` purpose binds a reserved application scope, provider/client-ID hash, server-owned secret generation and deployment environment. It does not pretend a shared OAuth application belongs to one customer workspace. Mailbox and pending-code purposes cannot open an application envelope, and application envelopes cannot cross provider, client ID, generation or environment.
+
+In `kms_v1`, each provider requires `OUTREACH_<PROVIDER>_CLIENT_SECRET_ENC` and `OUTREACH_<PROVIDER>_CLIENT_SECRET_GENERATION`, with the plaintext `CLIENT_SECRET` empty. Plaintext, missing generations, oversized envelopes, mixed sources and encrypted-to-legacy downgrade deny. Legacy mode preserves the existing plaintext environment-secret configuration and never calls KMS for this secret; it is compatibility behavior, not a claim of scoped protection. Configuration inspection checks storage format without decrypting it or contacting AWS. An envelope's cryptographic validity and actual workload identity are checked only when opened.
+
+`ProviderConfig` and prepared-secret representations hide secret material. Worker results, broker references, persisted job/mailbox metadata and customer responses contain no application secret. There is no unbounded application-secret/DEK cache. Python, crypto and SDK immutable copies cannot be guaranteed zeroized; drained process replacement remains necessary. The sealer output contains ciphertext and key metadata and must still be kept private.
+
+## Authorization, refresh and reconnect binding
+
+- New browser authorization jobs pin a private digest of the complete app configuration: provider/client ID, redirect URI, official authorization/token endpoints, scopes, encrypted-secret source, generation, custody mode/environment and KMS key/workload pins. API authorization prepares pending PKCE using its existing custody path; it never opens the application client secret. Config changes during PKCE sealing prevent job/state insertion.
+- Workers open application secrets outside Mongo transaction callbacks. Captured configuration and opened value are revalidated after key/code work, in the existing `possible` authorization transaction, immediately before physical POST, and before installation. The original code-use deadline, exact owner, paid access, workspace guard, budget and shutdown checks remain. Changes before possible authorization close only proven non-submission; changes after it preserve conservative review evidence and the charged allowance, even if no HTTP actually ran.
+- New installed mailboxes carry `oauth_app_identity_digest`, separate from the secret-generation/config digest. Provider, client ID and token-endpoint/tenant identity must match before refresh. Same-app secret rotation can use the new generation; replacing an app or Microsoft tenant requires reconnect. Refresh captures this identity in its exact credential/owner CAS, rechecks the prepared app after opening the refresh token and at possible/pre-POST/install boundaries, and preserves unknown refresh holds and replacement credentials. Existing sync-parent authorization continues to participate.
+- Reconnect may reuse an old refresh token only when the mailbox identity and its proven OAuth app identity match the current app. A same-user mailbox address does not prove the old token's app. Missing or different old app proof with no new refresh token leaves the old mailbox unchanged and holds the completed exchange for review. A newly received refresh token can establish the new app binding through the normal guarded installation.
+- Historical jobs/mailboxes missing app proof remain compatible with legacy execution, but KMS code exchange/refresh denies them. No proof is silently populated from current environment settings. Older mailboxes need a fresh successful authorization that returns offline access. Existing drained ciphertext migration preserves metadata and does not invent app identity. Bearer-only operations do not open application secrets; this slice does not retroactively reconstruct old app provenance.
+- The historical `material_digest` format is preserved so prior installation/migration receipts retain their meaning. Refresh app identity is fenced explicitly in the captured row query. Job cleanup/recovery CAS includes the new job app digest. Saved installation receipts recover without reopening secrets, resubmitting a code or granting campaign execution.
+
+These environment and policy rechecks are **process-local**. An older process can retain its old environment and consider it current. They do not provide instantaneous fleet-wide revocation or a shared Mongo app-config epoch. Drain all participating workers, writers and plaintext caches before changing configurations or enabling scoped custody. Existing authorization ordering also cannot retract a provider mutation already authorized before a later stop.
+
+## Private local sealer and cutover
+
+`outreach/ops/oauth_app_secret.py` prepares one envelope into a new exclusive mode-0600 file. Input comes from a hidden prompt or explicit `--stdin`, never a secret command-line argument. Input is bounded by UTF-8 bytes; multiline/truncated input and hidden-prompt fallback to echoing input deny. The command never prints plaintext or installs configuration. An existing file/symlink is not overwritten; failed writes remove only the same partial inode, preserving any replacement file. Errors and exit status are sanitized.
+
+After verifying a separately authorized real key policy/workload configuration, an operator can use:
+
+```bash
+.venv/bin/python -m outreach.ops.oauth_app_secret \
+  --provider gmail --generation UNIQUE_SERVER_OWNED_GENERATION \
+  --output /secure/private/gmail-client-secret.enc
+```
+
+The command requires `OUTREACH_CREDENTIAL_CUSTODY_MODE=kms_v1`, the matching environment/client ID and existing pinned KMS role/key settings. It contacts KMS only when explicitly run; local verification uses fake key services. Repeat separately for Microsoft with its own generation and file. Use an approved secret transport for `--stdin`; do not put the plaintext secret in shell arguments or history.
+
+For cutover, keep all action/generation/mailbox flags disabled, drain API/OAuth/refresh/sync/beat/publication/recovery/transport/paid-expiry/erasure and credential writers and replace processes holding old configuration. Resolve uncertain work through the existing drained review protocol, never by resetting held exchanges. Verify actual snapshot/majority transactions, strict indexes, workload IAM/trust/key policy and the new KMS purpose. Install the exact encrypted file content as `CLIENT_SECRET_ENC`, its matching generation, and remove plaintext `CLIENT_SECRET`. Compose maps both providers' encrypted/generation settings to API and workers; production Compose is a symlink to the development Compose file. New browser authorization jobs must be created after cutover. Renew unproven old mailboxes through consent returning a new refresh token. Application provider-side rotation/revocation, IAM changes, deployment and flag enablement are separate operational actions.
+
+## Verification
+
+The final broad run passes **1,307 backend checks**: 1,287 outreach and 20 account/auth companions; 44 historical opt-in broker/physical/voice drills are skipped. This slice adds **80 checks**: 71 unit/transport/sealer checks and nine actual replica-set transaction cases. The final 80-test focused run reports **97% combined statement coverage** (application custody 99%, private sealer 95%). Tests cover local cryptography, exact configuration and app-identity races, conservative unknown holds, lost receipt acknowledgements, reconnect provenance, worker-only key access, sealer byte/terminal/file bounds and deployment configuration. Compilation, medium/high Bandit, Compose configuration and whitespace checks pass. The independent Python review approved the bounded local release after correcting reconnect app provenance and duplicate Compose mappings; it independently passed 71 unit/sealer and nine actual-Mongo checks. Ruff/mypy/black were unavailable. Existing Starlette/fork and Compose unset-variable warnings remain. All provider/key operations use fakes or local keys. No real OAuth, AWS, purchased seat or mailbox result is implied.
+
+Frontend is unchanged; the prior fifteen-slice 90 frontend tests and production build remain historical evidence. This slice does not rerun or claim a new live browser/provider check.
+
+## Remaining work
+
+Voice Studio clone/sample/delete lifecycle and consent, vendor/shared-provider/Webshare secret custody, deployed workload IAM and memory isolation, process/kernel proxy-only egress, restore execution epochs, operational writer/cache drain and separately authorized purchased IPRoyal/mailbox pilot evidence remain. No automatic billing, provider orders, remote revocation/delivery proof or remote-copy erasure is added.
+
+Repo/Desktop specs and report match at v2.17 with 71 verified supporting links; pre-edit backup: `/tmp/unravler-docs-before-v2-17`. The first disposable-Mongo launch ended with its launcher, so affected runs were stopped and repeated with a retained server process. Final clean verification passed. Remaining test databases were removed and absence confirmed before shutdown; owned Mongo/storage are removed and ports 27028/6389 are closed. No Redis service/keyspace was created. Preexisting workspace changes and unrelated local services are preserved.

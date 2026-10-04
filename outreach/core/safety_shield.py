@@ -1,7 +1,7 @@
 """
 Phase 8: LinkedIn Anti-Ban Safety Shield & Algorithmic Warm-up Governor.
-Guarantees zero account bans through progressive warm-up ramps, automatic stale invite withdrawal,
-and instant circuit-breaker pauses upon detecting security checkpoints.
+Applies progressive quotas, stale invite withdrawal, and circuit-breaker
+pauses upon detecting security checkpoints. It cannot guarantee account safety.
 """
 import logging
 from datetime import datetime, timezone, timedelta
@@ -132,7 +132,8 @@ class SafetyShield:
         if hasattr(db, "outreach_campaigns") and hasattr(db.outreach_campaigns, "update_many"):
             paused_campaigns = await db.outreach_campaigns.update_many(
                 camp_query,
-                {"$set": {"status": CampaignStatus.PAUSED.value, "pause_reason": f"Safety circuit breaker on sender {account_id}"}},
+                {"$set": {"status": CampaignStatus.PAUSED.value, "pause_reason": f"Safety circuit breaker on sender {account_id}"},
+                 "$inc": {"authorization_revision": 1}, "$addToSet": {"pause_reasons": "sender_stopped"}},
             )
 
         if hasattr(db, "outreach_tasks") and hasattr(db.outreach_tasks, "update_many"):
@@ -160,130 +161,6 @@ class SafetyShield:
         max_withdrawals: int = 25,
         redis_client: Any = None,
     ) -> int:
-        """
-        Identifies and withdraws pending invitations older than max_age_days
-        strictly within the sender's shared rate budget.
-        Records withdrawn members in outreach_withdrawn_invites with a 21-day re-invitation block.
-        """
-        account = None
-        if hasattr(db, "outreach_accounts") and hasattr(db.outreach_accounts, "find_one"):
-            q = {"id": account_id}
-            if workspace_id:
-                q["workspace_id"] = workspace_id
-            account_doc = db.outreach_accounts.find_one(q)
-            account = await account_doc if hasattr(account_doc, "__await__") else account_doc
-
-        # If account is retrieved as a real document, enforce full opt-in check & rate budget pacing
-        if isinstance(account, dict):
-            if not account.get("auto_withdraw_enabled"):
-                return 0
-            if account.get("status") in {"checkpoint_detected", "checkpoint", "reauth_required", "error"}:
-                logger.info("SafetyShield: Skipping auto-withdraw for restricted/stopped sender %s", account_id)
-                return 0
-
-            effective_max_age = account.get("withdraw_after_days") or max_age_days
-            effective_max_withdrawals = account.get("max_daily_withdrawals") or max_withdrawals
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=effective_max_age)
-            ws_id = account.get("workspace_id") or workspace_id
-
-            lead_filter = {
-                "assigned_account_id": account_id,
-                "is_connected": {"$ne": True},
-                "invitation_withdrawn": {"$ne": True},
-                "$or": [
-                    {"waiting_for_connection_at": {"$lte": cutoff_date}},
-                    {
-                        "waiting_for_connection_at": None,
-                        "created_at": {"$lte": cutoff_date},
-                    },
-                ],
-            }
-            if ws_id:
-                lead_filter["workspace_id"] = ws_id
-
-            cursor = db.outreach_leads.find(lead_filter)
-            if hasattr(cursor, "limit"):
-                cursor = cursor.limit(effective_max_withdrawals)
-            stale_leads = await _fetch_cursor_docs(cursor, length=effective_max_withdrawals)
-            if not stale_leads:
-                return 0
-
-            withdrawn_count = 0
-            now = datetime.now(timezone.utc)
-
-            for lead in stale_leads:
-                if withdrawn_count >= effective_max_withdrawals:
-                    break
-
-                # Request rate budget token
-                allowed, retry_after, reason = await RateBudget.acquire_token(
-                    sender_id=account_id,
-                    sender_config=account,
-                    action_type="withdraw",
-                    redis_client=redis_client,
-                    now=now,
-                )
-                if not allowed:
-                    logger.info(
-                        "SafetyShield: Rate budget withheld token for sender %s (reason: %s, retry_after: %ds)",
-                        account_id, reason, retry_after
-                    )
-                    break
-
-                lead_id = lead.get("id")
-                ident = lead.get("identifiers") or {}
-
-                # Mark lead as withdrawn and finished
-                await db.outreach_leads.update_one(
-                    {"id": lead_id},
-                    {
-                        "$set": {
-                            "invitation_withdrawn": True,
-                            "invitation_withdrawn_at": now,
-                            "execution_state": LeadExecutionState.FINISHED.value,
-                            "updated_at": now,
-                        }
-                    },
-                )
-
-                # Record in outreach_withdrawn_invites with 21-day reinvite block
-                withdrawn_record = WithdrawnInvite(
-                    workspace_id=ws_id or "default_ws",
-                    account_id=account_id,
-                    lead_id=lead_id,
-                    member_urn=lead.get("linkedin_urn") or ident.get("member_urn"),
-                    vanity_name=lead.get("vanity_name") or ident.get("vanity_name"),
-                    linkedin_url=lead.get("linkedin_url") or ident.get("normalized_url"),
-                    withdrawn_at=now,
-                    reinvite_blocked_until=now + timedelta(days=21),
-                ).model_dump()
-
-                if hasattr(db, "outreach_withdrawn_invites") and hasattr(db.outreach_withdrawn_invites, "insert_one"):
-                    await db.outreach_withdrawn_invites.insert_one(withdrawn_record)
-
-                withdrawn_count += 1
-
-            logger.info(
-                "SafetyShield: Auto-withdrawn %d stale invites older than %d days for account %s",
-                withdrawn_count, effective_max_age, account_id,
-            )
-            return withdrawn_count
-
-        # Fallback for simple unit test / legacy mock where account doc is not populated
-        cutoff_date = datetime.now(timezone.utc) - timedelta(days=max_age_days)
-        if hasattr(db, "outreach_leads") and hasattr(db.outreach_leads, "update_many"):
-            res = await db.outreach_leads.update_many(
-                {
-                    "assigned_account_id": account_id,
-                    "has_connected": False,
-                    "created_at": {"$lte": cutoff_date},
-                },
-                {"$set": {"invitation_withdrawn": True, "invitation_withdrawn_at": datetime.now(timezone.utc)}},
-            )
-            count = getattr(res, "modified_count", 0) if res else 0
-            logger.info(
-                "SafetyShield: Auto-withdrawn %d stale invites older than %d days for account %s",
-                count, max_age_days, account_id,
-            )
-            return count
+        """Withdrawal has no verified transport; never invent provider completion."""
+        logger.info("Automatic withdrawal unavailable: provider execution is not implemented")
         return 0

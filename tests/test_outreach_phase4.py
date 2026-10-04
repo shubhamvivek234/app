@@ -105,7 +105,10 @@ async def test_sequence_api_endpoints():
     )
     save_res = await save_campaign_sequence(req=save_req, current_user=user, db=mock_db)
     assert save_res["status"] == "success"
-    mock_db.outreach_sequences.update_one.assert_awaited_once()
+    mock_db.outreach_sequence_versions.insert_one.assert_awaited_once()
+    mock_db.outreach_campaigns.update_one.assert_awaited_once()
+    published = mock_db.outreach_campaigns.update_one.call_args.args[1]["$set"]
+    assert published["sequence_version_id"] == mock_db.outreach_sequence_versions.insert_one.call_args.args[0]["_id"]
 
     # 4. Get default sequence when none exists
     seq_res = await get_campaign_sequence("camp_xyz", current_user=user, db=mock_db)

@@ -1,61 +1,38 @@
-"""Reply polling remains bounded as paid sender count grows."""
+"""Mailbox selection persists references and cannot broad-stale a reconnect."""
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
-
+from unittest.mock import AsyncMock
 import pytest
-
+from tests.test_outreach_durable_mailbox_sync import sync_db
+from tests.test_outreach_mailbox_job_lifecycle import lifecycle
 
 @pytest.mark.asyncio
-async def test_reply_polling_uses_bounded_concurrency(monkeypatch):
+async def test_reply_polling_uses_bounded_concurrency(sync_db, monkeypatch):
+    from copy import deepcopy
     from celery_workers.tasks.mailbox import _sync_replies
-
-    monkeypatch.setenv("OUTREACH_EMAIL_SYNC_ENABLED", "true")
-    db = MagicMock()
-    cursor = MagicMock()
-    cursor.sort.return_value = cursor
-    cursor.limit.return_value = cursor
-    cursor.to_list = AsyncMock(return_value=[
-        {"workspace_id": "ws", "sender_account_id": f"sender-{index}"}
-        for index in range(12)
-    ])
-    db.outreach_mailboxes.find.return_value = cursor
-    active = 0
-    peak = 0
-
-    async def sync_one(db_arg, *, workspace_id, sender_account_id):
+    from outreach.core import mailbox_sync_jobs as jobs, erasure
+    base = sync_db.outreach_mailboxes.docs[0]
+    sync_db.outreach_mailboxes.docs[:] = [{**deepcopy(base), 'sender_account_id': str(i)} for i in range(12)]
+    active = 0; peak = 0
+    async def ensure(*args):
         nonlocal active, peak
-        active += 1
-        peak = max(peak, active)
-        await asyncio.sleep(0.01)
-        active -= 1
-        return {"status": "healthy"}
-
-    with patch("celery_workers.tasks.mailbox.is_shutting_down", return_value=False), \
-         patch("celery_workers.tasks.mailbox.sync_mailbox_replies", new_callable=AsyncMock,
-               side_effect=sync_one):
-        result = await _sync_replies(db)
-    assert result == {"status": "completed", "checked": 12, "healthy": 12, "stale": 0}
+        active += 1; peak = max(peak, active)
+        await asyncio.sleep(.01); active -= 1
+        return {'_id': args[-1]}
+    async def control(db, workspace, operation): return await operation(db)
+    monkeypatch.setattr(jobs, 'ensure_job', ensure); monkeypatch.setattr(erasure, '_control', control)
+    assert await _sync_replies(sync_db) == {'status': 'completed', 'checked': 12, 'queued': 12}
     assert 1 < peak <= 5
-
+    assert all(row.get('next_sync_at') for row in sync_db.outreach_mailboxes.docs)
 
 @pytest.mark.asyncio
-async def test_unexpected_poll_failure_marks_only_that_mailbox_stale(monkeypatch):
+async def test_unexpected_selection_failure_cannot_stale_replacement(sync_db, monkeypatch):
     from celery_workers.tasks.mailbox import _sync_replies
-
-    monkeypatch.setenv("OUTREACH_EMAIL_SYNC_ENABLED", "true")
-    db = MagicMock()
-    cursor = MagicMock()
-    cursor.sort.return_value = cursor
-    cursor.limit.return_value = cursor
-    cursor.to_list = AsyncMock(return_value=[{"workspace_id": "ws", "sender_account_id": "sender"}])
-    db.outreach_mailboxes.find.return_value = cursor
-    db.outreach_mailboxes.update_one = AsyncMock()
-    with patch("celery_workers.tasks.mailbox.is_shutting_down", return_value=False), \
-         patch("celery_workers.tasks.mailbox.sync_mailbox_replies", new_callable=AsyncMock,
-               side_effect=RuntimeError("private provider response")):
-        result = await _sync_replies(db)
-    assert result["stale"] == 1
-    query, update = db.outreach_mailboxes.update_one.await_args.args
-    assert query == {"workspace_id": "ws", "sender_account_id": "sender", "status": "active"}
-    assert update["$set"]["sync_status"] == "stale"
-    assert "private provider response" not in str(update)
+    from outreach.core import mailbox_sync_jobs as jobs, erasure
+    async def ensure(*args):
+        sync_db.outreach_mailboxes.docs[0]['connection_job_id'] = 'replacement'
+        raise RuntimeError('private response')
+    async def control(db, workspace, operation): return await operation(db)
+    monkeypatch.setattr(jobs, 'ensure_job', ensure); monkeypatch.setattr(erasure, '_control', control)
+    assert await _sync_replies(sync_db) == {'status': 'completed', 'checked': 1, 'queued': 0}
+    mailbox = sync_db.outreach_mailboxes.docs[0]
+    assert mailbox['sync_status'] == 'healthy' and 'next_sync_at' not in mailbox

@@ -84,8 +84,8 @@ async def test_safety_shield_trip_and_withdraw():
     mock_db.outreach_leads.update_many = AsyncMock(return_value=withdraw_res)
 
     count = await SafetyShield.withdraw_stale_invitations("acc_123", mock_db, max_age_days=21)
-    assert count == 14
-    mock_db.outreach_leads.update_many.assert_called_once()
+    assert count == 0
+    mock_db.outreach_leads.update_many.assert_not_called()
 
 
 def test_paid_pilot_has_one_honest_monthly_price():

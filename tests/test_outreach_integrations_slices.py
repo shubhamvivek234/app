@@ -339,6 +339,7 @@ async def test_inbox_sync_emits_lead_replied_outbox_event(monkeypatch):
         "encrypted_session_cookie": enc_cookie,
     }
     mock_db.outreach_accounts.find_one = AsyncMock(return_value=mock_account)
+    mock_db.outreach_accounts.update_one = AsyncMock(return_value=MagicMock(matched_count=1, modified_count=1))
     mock_db.outreach_inbox_threads.find_one = AsyncMock(return_value=None)
     mock_db.outreach_inbox_threads.insert_one = AsyncMock()
     mock_db.outreach_inbox_threads.count_documents = AsyncMock(return_value=1)
@@ -350,6 +351,7 @@ async def test_inbox_sync_emits_lead_replied_outbox_event(monkeypatch):
         "linkedin_url": "https://linkedin.com/in/jordandavis",
     })
     mock_db.outreach_leads.update_one = AsyncMock(return_value=MagicMock(modified_count=1))
+    mock_db.outreach_leads.update_many = AsyncMock(return_value=MagicMock(matched_count=0, modified_count=0))
     mock_db.outreach_campaigns.update_one = AsyncMock()
     mock_db.outreach_event_outbox.insert_one = AsyncMock()
 
@@ -566,4 +568,3 @@ async def test_sequence_executor_emits_connection_accepted_outbox_event(monkeypa
     assert outbox_doc["type"] == "lead.connection_accepted"
     assert outbox_doc["aggregate_id"] == "lead_conn_test"
     assert outbox_doc["payload"]["data"]["lead_name"] == "Marcus Vance"
-

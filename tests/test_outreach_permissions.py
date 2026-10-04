@@ -353,6 +353,7 @@ async def test_launch_campaign_clears_pause_reason_when_resolved(monkeypatch):
         "is_deleted": False,
     })
     db.outreach_sequences.update_one = AsyncMock()
+    db.outreach_sequence_versions.insert_one = AsyncMock()
     db.outreach_campaigns.update_one = AsyncMock(return_value=MagicMock(matched_count=1, modified_count=1))
     db.outreach_leads.count_documents = AsyncMock(return_value=1)
 
@@ -385,8 +386,9 @@ async def test_launch_campaign_clears_pause_reason_when_resolved(monkeypatch):
         )
 
     assert result["status"] == "launched"
-    db.outreach_campaigns.update_one.assert_called_once()
-    call_args = db.outreach_campaigns.update_one.call_args[0]
-    update_doc = call_args[1]["$set"]
+    activation_updates = [call.args[1]["$set"] for call in db.outreach_campaigns.update_one.await_args_list
+                          if call.args[1].get("$set", {}).get("status") == "active"]
+    assert len(activation_updates) == 1
+    update_doc = activation_updates[0]
     assert update_doc["status"] == "active"
     assert update_doc["pause_reason"] is None

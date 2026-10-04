@@ -12,6 +12,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from api.deps import get_current_user, require_permission
 from db.mongo import get_db
 from outreach.core.dag_compiler import DAGCompiler, DAGValidationError
+from outreach.core.sequence_versions import load_sequence, publish_sequence
 from outreach.models import OutreachSequence, SequenceNode, SequenceEdge
 
 logger = logging.getLogger(__name__)
@@ -213,7 +214,7 @@ async def get_campaign_sequence(
     if not campaign:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
 
-    seq_doc = await db.outreach_sequences.find_one({"campaign_id": campaign_id, "workspace_id": _workspace_id(current_user), "is_deleted": {"$ne": True}})
+    seq_doc = await load_sequence(db, _workspace_id(current_user), campaign_id)
     if not seq_doc:
         # Return default template
         templates = DAGCompiler.get_prebuilt_templates()
@@ -263,10 +264,8 @@ async def save_campaign_sequence(
     if req.tree is not None:
         doc["tree"] = req.tree
 
-    await db.outreach_sequences.update_one(
-        {"campaign_id": req.campaign_id, "workspace_id": _workspace_id(current_user)},
-        {"$set": {**doc, "is_deleted": False}},
-        upsert=True,
-    )
+    if not await publish_sequence(db, _workspace_id(current_user), req.campaign_id, doc,
+                                  expected_revision=campaign.get("authorization_revision", 0)):
+        raise HTTPException(status_code=409, detail="Campaign changed while saving the sequence")
 
     return {"status": "success", "message": "Sequence saved and compiled successfully"}

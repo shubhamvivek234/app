@@ -19,24 +19,24 @@ const DataDeletion = () => {
         const data = await response.json();
         setStatusResult({
           code: data.confirmation_code,
-          status: data.status,
-          timestamp: data.created_at || new Date().toISOString(),
-          message: data.details || 'All associated OAuth access tokens and scheduled media have been permanently purged.'
+          status: data.status || 'unknown',
+          timestamp: data.created_at && Number.isFinite(Date.parse(data.created_at)) ? data.created_at : null,
+          message: data.details || 'No completion details have been recorded for this request.'
         });
         toast.success('Deletion status retrieved successfully.');
         setLoading(false);
         return;
       }
     } catch (err) {
-      console.warn('API lookup failed, falling back to confirmed status:', err);
+      console.warn('Deletion status lookup unavailable.');
     }
     setStatusResult({
       code: code,
-      status: 'Completed',
-      timestamp: new Date().toISOString(),
-      message: 'All associated OAuth access tokens and scheduled media for this deletion request have been permanently purged.'
+      status: 'unavailable',
+      timestamp: null,
+      message: 'We could not check this request. Please retry or contact support.'
     });
-    toast.success('Deletion request verified as completed.');
+    toast.error('Deletion status could not be checked.');
     setLoading(false);
   };
 
@@ -85,11 +85,11 @@ const DataDeletion = () => {
             User Data Deletion Instructions
           </h1>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">
-            Last Updated: September 04, 2026 &bull; Compliant with Meta Platform Terms &amp; GDPR / DPDP Act
+            Last Updated: October 03, 2026
           </p>
           <div className="mt-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
             <strong className="text-slate-900 dark:text-white font-semibold">Service Operator: </strong>
-            Unravler is operated by <strong>UNRAVLER TECHNOLOGIES</strong> (Government of India Udyam MSME: <strong>UDYAM-JH-20-0144275</strong>). We provide transparent, automated mechanisms for users to permanently erase their social tokens, media, and personal data.
+            Unravler is operated by <strong>UNRAVLER TECHNOLOGIES</strong> (Government of India Udyam MSME: <strong>UDYAM-JH-20-0144275</strong>). You can request account deletion and contact support about cleanup and retained records.
           </div>
         </div>
 
@@ -97,17 +97,17 @@ const DataDeletion = () => {
           <section>
             <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-3">1. Direct In-App Account &amp; Data Deletion</h2>
             <p className="mb-3">
-              The fastest way to permanently erase all data associated with your account is from inside your Unravler dashboard:
+              You can request account deletion from inside your Unravler dashboard:
             </p>
             <ol className="list-decimal pl-6 space-y-2">
               <li>Log in to your Unravler workspace at <a href="https://app.unravler.com" className="text-indigo-600 dark:text-indigo-400 underline font-medium">app.unravler.com</a>.</li>
               <li>Click on your profile avatar in the navigation bar and select <strong>Settings</strong>.</li>
-              <li>Navigate to the <strong>Privacy &amp; Data</strong> tab.</li>
-              <li>Under the <em>Delete Account</em> section, click <strong>Permanently Delete My Account</strong>.</li>
+              <li>Find the <strong>Privacy and data</strong> section.</li>
+              <li>Under <em>Delete account</em>, click the button and choose <strong>Permanently delete account</strong> after confirming.</li>
               <li>Confirm the deletion by typing <code>DELETE</code> into the security confirmation dialog.</li>
             </ol>
             <div className="mt-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs sm:text-sm">
-              &bull; <strong>Immediate Effect:</strong> Your account is logged out, all OAuth access and refresh tokens across all connected channels (Instagram, Facebook, LinkedIn, YouTube, TikTok, X, Threads) are instantly revoked and deleted, and scheduled content queues are removed.
+              &bull; <strong>After confirmation:</strong> Account access is blocked and outreach is stopped. Cleanup can await operator review and external services. Shared workspaces owned by others remain available to their members. Limited recovery, financial, provider-term and access-blocking records may remain under retention review.
             </div>
           </section>
 
@@ -187,16 +187,16 @@ const DataDeletion = () => {
             </form>
 
             {statusResult && (
-              <div className="mt-4 p-4 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-xs sm:text-sm space-y-1">
-                <div className="flex items-center gap-2 text-emerald-800 dark:text-emerald-200 font-bold">
-                  <FaCheckCircle /> Request ID: {statusResult.code} &bull; Status: {statusResult.status}
+              <div className="mt-4 p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-xs sm:text-sm space-y-1">
+                <div className="flex items-center gap-2 font-bold">
+                  {statusResult.status === 'completed' ? <FaCheckCircle /> : <FaSearch />} Request ID: {statusResult.code} &bull; Status: {statusResult.status}
                 </div>
-                <p className="text-emerald-900 dark:text-emerald-300">
+                <p>
                   {statusResult.message}
                 </p>
-                <span className="text-[11px] text-emerald-700 dark:text-emerald-400 block pt-1">
-                  Verified: {new Date(statusResult.timestamp).toLocaleString()}
-                </span>
+                {statusResult.timestamp && <span className="text-[11px] block pt-1">
+                  Request recorded: {new Date(statusResult.timestamp).toLocaleString()}
+                </span>}
               </div>
             )}
           </section>

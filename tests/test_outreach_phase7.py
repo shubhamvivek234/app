@@ -168,7 +168,7 @@ async def test_inbox_api_send_reply_and_update_intent():
     user = {"user_id": "ws_123"}
 
     # Send reply
-    with patch("celery_workers.tasks.outreach.send_inbox_reply.apply_async") as enqueue:
+    with patch("celery_workers.tasks.outreach.send_inbox_reply.apply_async") as enqueue, patch("outreach.core.manual_actions.ManualActions.queue", new_callable=AsyncMock):
         reply_res = await send_thread_reply(
             thread_id="thr_999",
             req=ReplyRequest(body="Perfect, sending over an invite now!"),

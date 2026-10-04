@@ -18,30 +18,30 @@ from outreach.api.prompts import router as prompts_router
 from outreach.api.analytics import router as analytics_router
 from outreach.api.mailboxes import router as mailboxes_router
 from outreach.api.action_reconciliation import router as action_reconciliation_router
+from outreach.api.content_approvals import router as content_approvals_router
 from outreach.api.integrations import router as integrations_router, public_router
-from api.deps import get_current_user
+from api.deps import get_current_user, CurrentUser, DB
 import os
 
 router = APIRouter(prefix="/outreach", tags=["LinkedIn Outreach Engine"])
-router.include_router(accounts_router)
-router.include_router(leads_router)
-router.include_router(sequences_router)
-router.include_router(campaigns_router)
-router.include_router(voice_router)
-router.include_router(inbox_router)
-router.include_router(billing_router)
-router.include_router(engage_router)
-router.include_router(styles_router)
-router.include_router(swipe_router)
-router.include_router(prompts_router)
-router.include_router(analytics_router)
-router.include_router(mailboxes_router)
-router.include_router(action_reconciliation_router)
+
+
+async def _open_workspace(current_user: CurrentUser, db: DB) -> None:
+    from outreach.core.erasure import require_open_workspace
+    await require_open_workspace(current_user, db)
+
+
+for child in (accounts_router, leads_router, sequences_router, campaigns_router,
+        voice_router, inbox_router, billing_router, engage_router, styles_router,
+        swipe_router, prompts_router, analytics_router,
+        action_reconciliation_router, content_approvals_router):
+    router.include_router(child, dependencies=[Depends(_open_workspace)])
+router.include_router(mailboxes_router)  # OAuth callback has state/browser binding, not app JWT.
 if os.getenv("OUTREACH_INTEGRATIONS_ENABLED", "false").strip().lower() in {"1", "true"}:
     # The experimental public API/webhook surface is not part of the email
     # pilot. Keep it inaccessible until its security and event delivery path
     # have been verified end to end.
-    router.include_router(integrations_router)
+    router.include_router(integrations_router, dependencies=[Depends(_open_workspace)])
     router.include_router(public_router)
 
 

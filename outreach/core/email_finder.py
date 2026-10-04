@@ -5,14 +5,13 @@ present is not proof of delivery; unknown/accept-all verification is not used.
 """
 from __future__ import annotations
 
-import os
 import re
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import httpx
 
-from utils.encryption import decrypt_strict
+from outreach.core.provider_custody import prepare_finder_key
 
 
 HUNTER_FOUND_URL = "https://api.hunter.io/v2/email-finder/found"
@@ -54,81 +53,129 @@ def _linkedin_handle(url: object) -> str | None:
     return pieces[1]
 
 
-async def _hunter_found_request(url: str, params: dict) -> dict:
-    # Fixed provider host; never fetch a user-controlled URL.
+async def _hunter_found_request(url: str, params: dict, *, envelope) -> dict:
     if url != HUNTER_FOUND_URL:
         raise ValueError("Unexpected email discovery endpoint")
+    envelope.assert_finder(params)
     async with httpx.AsyncClient(timeout=25) as client:
-        response = await client.get(url, params=params)
+        response = await envelope.call("GET", url, lambda: client.get(url, params=params), action="finder", side_effect=True)
     if response.status_code == 404:
         return {"data": {"email": None}}
     if response.status_code != 200:
-        raise RuntimeError("Email discovery provider is unavailable")
-    payload = response.json()
-    if not isinstance(payload, dict) or payload.get("errors") or payload.get("error"):
-        raise RuntimeError("Email discovery provider returned an error")
-    return payload
+        return {"errors": [{"reason": "Provider rejected lookup"}]}
+    return response.json()
 
 
-async def find_lead_email(db, *, workspace_id: str, lead_id: str) -> dict:
-    """Run from a worker; never interpret provider failures as no address."""
-    if os.getenv("OUTREACH_HUNTER_ENABLED", "false").strip().lower() not in {"true", "1"}:
-        return {"status": "unavailable", "reason": "Email discovery is not enabled"}
+async def _project_discovery(db, operation: dict, result: dict, *, recovering: bool = False) -> bool:
+    if result.get("status") != "found":
+        return False
+    ws, email = operation["workspace_id"], result["email"]
+    if await db.outreach_email_suppressions.find_one({"workspace_id": ws, "email": email}, {"_id": 1}):
+        return False
+    snapshot = dict(operation["lead_snapshot"])
+    if recovering:
+        snapshot["execution_state"] = {"$in": [snapshot.get("execution_state"), "waiting_trigger"]}
+    changed = await db.outreach_leads.update_one({"workspace_id": ws, "id": operation["lead_id"],
+        **snapshot, "has_replied": {"$ne": True}, "do_not_contact": {"$ne": True},
+        "is_suppressed": {"$ne": True}, "email_opted_out": {"$ne": True},
+        "$or": [{"email": None}, {"email": ""}, {"email": {"$exists": False}}]}, {
+        "$set": {"email": email, "email_source": "hunter_found", "email_verification_status": "valid",
+            "email_source_urls": result.get("source_urls") or [], "email_verified_at": datetime.now(timezone.utc),
+            "email_found_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc)}})
+    return bool(changed.matched_count)
+
+
+async def find_lead_email(db, *, workspace_id: str, lead_id: str,
+                         sender_account_id: str | None = None, operation_id: str | None = None) -> dict:
+    from outreach.core.provider_boundary import create_provider_envelope
+    from outreach.core.provider_operations import ProviderOperations
+    from outreach.core.request_guard import RequestDenied, current_request_parent
+
     lead = await db.outreach_leads.find_one({"workspace_id": workspace_id, "id": lead_id})
     if not lead:
-        return {"status": "unavailable", "reason": "Lead was not found"}
+        raise RequestDenied("lead_changed")
     if await is_lead_email_available(db, workspace_id, lead):
         return {"status": "found", "email": normalize_email(lead["email"]),
-                "source": lead.get("email_source") or "provided", "verification": lead.get("email_verification_status") or "not_verified"}
+            "source": lead.get("email_source") or "provided", "verification": lead.get("email_verification_status") or "not_verified"}
     if normalize_email(lead.get("email")):
-        return {"status": "unavailable", "reason": "Lead email is suppressed or unverified"}
+        raise RequestDenied("lead_suppressed")
+    if not sender_account_id or lead.get("assigned_account_id") != sender_account_id or not operation_id or len(operation_id) > 200:
+        raise RequestDenied("provider_context_missing")
+    operations = ProviderOperations(db, "outreach_email_discoveries")
+    key = f"finder:{workspace_id}:{operation_id}"
+    prior = await operations.prior(workspace_id, key)
+    if prior and prior.get("status") != "not_submitted":
+        if prior.get("status") in {"dispatching", "uncertain"}:
+            result = await operations.repair(prior)
+            if not result:
+                return {"status": "uncertain", "reason": "Previous lookup requires reconciliation"}
+        else:
+            result = {key: prior[key] for key in ("status", "email", "verification", "source_urls") if key in prior}
+        if result.get("status") == "found":
+            await _project_discovery(db, prior, result)
+        return result
     handle = _linkedin_handle(lead.get("linkedin_url"))
     if not handle:
-        return {"status": "unavailable", "reason": "Lead has no usable LinkedIn profile handle"}
+        raise RequestDenied("lookup_target_invalid")
     credential = await db.outreach_hunter_credentials.find_one({"workspace_id": workspace_id})
     if not credential or not credential.get("api_key_enc"):
-        return {"status": "unavailable", "reason": "Connect a Hunter API key first"}
+        raise RequestDenied("finder_unavailable")
+    envelope = await create_provider_envelope(db, workspace_id, sender_account_id, "email_find", credential, operation_id, lead_id)
+    prepared = await prepare_finder_key(credential, workspace_id)
+    envelope.bind_finder(prepared)
+    envelope.finder_handle = handle
+    snapshot = {name: lead.get(name) for name in ("campaign_id", "assigned_account_id", "enrollment_id", "current_node_id",
+        "authorized_revision", "sequence_version", "execution_state", "linkedin_url")}
+    op = {"_id": key, "workspace_id": workspace_id, "sender_account_id": sender_account_id,
+        "lead_id": lead_id, "source": "email_find", "logical_operation_id": operation_id,
+        "credential_generation": envelope.generation, "account_generation": envelope.account_generation, "lead_snapshot": snapshot}
+    if not await operations.claim(op):
+        return {"status": "uncertain", "reason": "Previous lookup requires reconciliation"}
     try:
         payload = await _hunter_found_request(HUNTER_FOUND_URL, {
-            "linkedin_handle": handle, "api_key": decrypt_strict(credential["api_key_enc"]),
-        })
+            "linkedin_handle": handle, "api_key": prepared.value}, envelope=envelope)
+        data = payload.get("data") or {}
+        email = normalize_email(data.get("email")) if isinstance(data, dict) else None
+        verification = data.get("verification") or {} if isinstance(data, dict) else {}
+        found = bool(email and data.get("source_type") == "found" and isinstance(verification, dict) and verification.get("status") == "valid")
+        sources = data.get("sources") or [] if isinstance(data, dict) else []
+        urls = [item["uri"][:2048] for item in sources[:3] if isinstance(item, dict) and isinstance(item.get("uri"), str)] if isinstance(sources, list) else []
+        result = {"status": "failed" if payload.get("error") or payload.get("errors") else "found" if found else "not_found",
+            "email": email if found else None, "verification": "valid" if found else None, "source_urls": urls if found else []}
+        if not await operations.finish(workspace_id, key, result):
+            return {"status": "uncertain", "reason": "Lookup confirmation needs reconciliation"}
+        if found:
+            await _project_discovery(db, op, result)
+        return result
+    except RequestDenied as exc:
+        parent = current_request_parent()
+        if parent and not parent.mutation_attempted:
+            await operations.finish(workspace_id, key, {"status": "not_submitted", "reason": exc.reason})
+            raise
+        await operations.finish(workspace_id, key, {"status": "uncertain"})
+        return {"status": "uncertain"}
     except Exception:
-        return {"status": "unavailable", "reason": "Email discovery could not be completed"}
-    data = payload.get("data") or {}
-    if not isinstance(data, dict) or data.get("error"):
-        return {"status": "unavailable", "reason": "Email discovery returned invalid data"}
-    email = normalize_email(data.get("email"))
-    if not email:
-        return {"status": "not_found"}
-    verification = data.get("verification") or {}
-    verification_status = verification.get("status") if isinstance(verification, dict) else None
-    if data.get("source_type") != "found" or verification_status != "valid":
-        return {"status": "not_found", "reason": "No verified public-source address"}
-    if await db.outreach_email_suppressions.find_one({"workspace_id": workspace_id, "email": email}, {"_id": 1}):
-        return {"status": "unavailable", "reason": "Email is on the workspace suppression list"}
-    sources = data.get("sources") or []
-    source_urls = [source.get("uri") for source in sources[:3]
-                   if isinstance(source, dict) and isinstance(source.get("uri"), str)]
-    now = datetime.now(timezone.utc)
-    changed = await db.outreach_leads.update_one(
-        {"workspace_id": workspace_id, "id": lead_id, "$or": [{"email": None}, {"email": ""}, {"email": {"$exists": False}}]},
-        {"$set": {"email": email, "email_source": "hunter_found", "email_verification_status": "valid",
-                  "email_source_urls": source_urls, "email_verified_at": now,
-                  "email_found_at": now, "updated_at": now}},
-    )
-    if not getattr(changed, "modified_count", 0):
-        return {"status": "unavailable", "reason": "Lead email changed during discovery"}
-    return {"status": "found", "email": email, "source": "hunter_found", "verification": "valid"}
+        parent = current_request_parent()
+        possible = bool(parent and parent.mutation_attempted)
+        try:
+            await operations.finish(workspace_id, key, {"status": "uncertain" if possible else "not_submitted"})
+        except Exception:
+            pass
+        if not possible:
+            raise RequestDenied("finder_unavailable") from None
+        return {"status": "uncertain", "reason": "Provider lookup outcome is unknown"}
 
 
 async def suppress_email(db, *, workspace_id: str, email: str, reason: str, lead_id: str | None = None) -> bool:
+    from outreach.core.suppression import mutate_suppression
     normalized = normalize_email(email)
     if not normalized:
         return False
     now = datetime.now(timezone.utc)
-    await db.outreach_email_suppressions.update_one(
-        {"workspace_id": workspace_id, "email": normalized},
-        {"$set": {"reason": reason, "updated_at": now},
-         "$setOnInsert": {"lead_id": lead_id, "created_at": now}}, upsert=True,
-    )
+    async def save(current):
+        await current.outreach_email_suppressions.update_one(
+            {"workspace_id": workspace_id, "email": normalized},
+            {"$set": {"reason": reason, "updated_at": now},
+             "$setOnInsert": {"lead_id": lead_id, "created_at": now}}, upsert=True)
+    await mutate_suppression(db, workspace_id, save)
     return True

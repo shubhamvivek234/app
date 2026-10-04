@@ -10,7 +10,7 @@ from typing import Any
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from outreach.models import OutreachLead, LeadExecutionState, LeadIdentifiers
+from outreach.models import OutreachLead, LeadExecutionState, LeadIdentifiers, generate_uuid
 from outreach.core.name_cleaner import clean_first_name
 
 logger = logging.getLogger(__name__)
@@ -201,6 +201,17 @@ async def check_compound_suppression(
         else:
             candidate_ids.append(LeadIdentifiers())
 
+    # Discovery/reconnection may update current fields after import. Keep both
+    # the saved identity aliases and current fields in the exclusion query.
+    candidate_owners = list(range(len(candidate_ids)))
+    for idx, candidate in enumerate(candidates):
+        if isinstance(candidate, dict) and isinstance(candidate.get("identifiers"), (dict, LeadIdentifiers)):
+            candidate_ids.append(build_lead_identifiers(
+                raw_url=candidate.get("linkedin_url") or candidate.get("raw_url"), email=candidate.get("email"),
+                member_urn=candidate.get("member_urn") or candidate.get("linkedin_urn"),
+                sales_lead_urn=candidate.get("sales_lead_urn"), vanity_name=candidate.get("vanity_name")))
+            candidate_owners.append(idx)
+
     all_urls: set[str] = set()
     all_vanities: set[str] = set()
     all_members: set[str] = set()
@@ -323,7 +334,10 @@ async def check_compound_suppression(
                 doc_reasons[f"email:{em}"] = reason
 
     suppressed: dict[int, dict[str, str]] = {}
-    for idx, ident in enumerate(candidate_ids):
+    for position, ident in enumerate(candidate_ids):
+        idx = candidate_owners[position]
+        if idx in suppressed:
+            continue
         if ident.normalized_url and _dedupe_key(ident.normalized_url) in found_urls:
             key = f"url:{_dedupe_key(ident.normalized_url)}"
             suppressed[idx] = {
@@ -850,15 +864,14 @@ class LeadImporter:
         if active_senders:
             count_res = db.outreach_leads.count_documents({
                 "campaign_id": campaign_id,
+                "workspace_id": workspace_id,
                 "assigned_account_id": {"$in": active_senders},
             })
             if hasattr(count_res, "__await__"):
                 count_res = await count_res
             assigned_offset = count_res if isinstance(count_res, (int, float)) else 0
-            sequence = await db.outreach_sequences.find_one({
-                "campaign_id": campaign_id,
-                "is_deleted": {"$ne": True},
-            })
+            from outreach.core.sequence_versions import load_sequence
+            sequence = await load_sequence(db, workspace_id, campaign_id, campaign=campaign)
             root_ids = (sequence or {}).get("compiled_dag", {}).get("root_node_ids", [])
             root_node_id = root_ids[0] if root_ids else None
 
@@ -1017,6 +1030,7 @@ class LeadImporter:
             lead_doc = OutreachLead(
                 campaign_id=campaign_id,
                 workspace_id=workspace_id,
+                enrollment_id=generate_uuid(),
                 assigned_account_id=assigned_account_id,
                 current_node_id=root_node_id,
                 linkedin_url=url,
@@ -1038,6 +1052,9 @@ class LeadImporter:
                 created_at=datetime.now(timezone.utc),
             ).model_dump()
 
+            if active_senders:
+                lead_doc["authorized_revision"] = campaign.get("authorization_revision", 0)
+                lead_doc["sequence_version"] = (sequence or {}).get("version", 1)
             to_insert.append(lead_doc)
 
         if to_insert:

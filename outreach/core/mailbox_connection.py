@@ -9,17 +9,25 @@ import base64
 import hashlib
 import os
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 import httpx
 from fastapi import HTTPException
-from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from outreach.core.paid_access import _utc, get_active_entitlement
-from utils.encryption import decrypt_strict, encrypt
+from outreach.core import suppression
+from outreach.core.dispatch_authority import AuthorityDatabase
+from outreach.core.credential_custody import CustodyUnavailable
+from outreach.core.provider_custody import seal_oauth_secret, open_oauth_secret, seal_mailbox_tokens, open_mailbox_refresh, MailboxAccess, custody_stamp
+from outreach.core.session_custody import custody_mode
+from celery_workers.shutdown_handler import is_shutting_down
+from outreach.core.mailbox_jobs import ACTIVE_JOB_STATES, expire_sender_jobs, claim_job, fail_owned_job, reserve_exchange_budget
+from outreach.core.provider_custody import material_digest
+from outreach.core.oauth_app_custody import (app_configuration_digest, app_configuration_matches,
+    app_identity_digest, validate_app_storage, prepare_app_secret)
 
 
 GMAIL_SCOPES = (
@@ -28,7 +36,6 @@ GMAIL_SCOPES = (
 )
 MICROSOFT_SCOPES = ("openid", "offline_access", "User.Read", "Mail.Send", "Mail.Read")
 STATE_LIFETIME = timedelta(minutes=10)
-JOB_STALE_LIFETIME = timedelta(minutes=15)
 SYNC_FRESHNESS = timedelta(minutes=10)
 
 
@@ -37,22 +44,27 @@ class MailboxUnavailable(Exception):
 
 
 class MailboxTransientError(MailboxUnavailable):
-    """A provider or refresh failure may be retried without sending mail."""
+    """A proven pre-submission failure may be retried without sending mail."""
 
 
 class MailboxIdentityConflict(MailboxUnavailable):
     """Changing mailboxes requires human review of prior accepted sends."""
 
 
+class OAuthRejected(MailboxUnavailable):
+    """A received OAuth error definitively rejected this authorization code."""
+
+
 @dataclass(frozen=True)
 class ProviderConfig:
     provider: str
     client_id: str
-    client_secret: str
+    client_secret: str = field(repr=False)
     redirect_uri: str
     authorization_url: str
     token_url: str
     scopes: tuple[str, ...]
+    app_generation: str = ""
 
 
 def _enabled(name: str) -> bool:
@@ -76,6 +88,14 @@ def is_mailbox_pilot_allowed(workspace_id: str | None = None) -> bool:
         return True
     allowed_ids = {ws.strip() for ws in allowlist.split(",") if ws.strip()}
     return bool(workspace_id and workspace_id in allowed_ids)
+
+
+def _control_allowed(workspace: str) -> bool:
+    return is_mailbox_pilot_allowed(workspace) and not is_shutting_down()
+
+
+def _deadlines_live(deadlines: list) -> bool:
+    return all(_utc(value) and _utc(value) > datetime.now(timezone.utc) for value in deadlines)
 
 
 def is_email_send_pilot_allowed(workspace_id: str | None = None) -> bool:
@@ -109,14 +129,28 @@ def _provider_config(provider: str) -> ProviderConfig:
     else:
         raise HTTPException(status_code=404, detail="Unsupported email provider")
     client_id = os.getenv(f"{prefix}_CLIENT_ID", "").strip()
-    client_secret = os.getenv(f"{prefix}_CLIENT_SECRET", "").strip()
+    plaintext = os.getenv(f"{prefix}_CLIENT_SECRET", "").strip()
+    encrypted = os.getenv(f"{prefix}_CLIENT_SECRET_ENC", "").strip()
+    generation = os.getenv(f"{prefix}_CLIENT_SECRET_GENERATION", "").strip()
+    try:
+        mode = custody_mode()
+        if (mode == "kms_v1" and plaintext) or (mode == "legacy_fernet" and encrypted):
+            raise CustodyUnavailable("OAuth application secret source is ambiguous or incompatible")
+        client_secret = encrypted if mode == "kms_v1" else plaintext
+    except CustodyUnavailable:
+        raise MailboxUnavailable("Mailbox OAuth application custody is unavailable") from None
     redirect_uri = os.getenv(f"{prefix}_REDIRECT_URI", "").strip()
     if not (client_id and client_secret and redirect_uri.startswith("https://")):
         raise MailboxUnavailable(f"{provider.title()} mailbox OAuth is not configured")
     if not redirect_uri.endswith(f"/outreach/mailboxes/{provider}/callback"):
         raise MailboxUnavailable("Mailbox OAuth callback configuration is invalid")
-    return ProviderConfig(provider, client_id, client_secret, redirect_uri,
-                          authorization_url, token_url, scopes)
+    config = ProviderConfig(provider, client_id, client_secret, redirect_uri,
+                            authorization_url, token_url, scopes, generation)
+    try:
+        validate_app_storage(config)
+    except CustodyUnavailable:
+        raise MailboxUnavailable("Mailbox OAuth application custody is unavailable") from None
+    return config
 
 
 def _pkce_challenge(verifier: str) -> str:
@@ -148,25 +182,8 @@ async def _paid_sender(db, workspace_id: str, sender_account_id: str) -> bool:
 
 
 async def _expire_abandoned_connection_jobs(db, workspace_id: str, sender_account_id: str, now: datetime) -> None:
-    """Release the unique sender job slot when authorization or a worker stalled.
-
-    Mongo TTL removal is asynchronous and must not be relied on to unblock a
-    new attempt. The compare-and-set status filter keeps a live callback or
-    worker from being overwritten after it advances the job.
-    """
-    await db.outreach_mailbox_connection_jobs.update_many(
-        {"workspace_id": workspace_id, "sender_account_id": sender_account_id,
-         "$or": [
-             {"status": "pending", "authorization_expires_at": {"$lte": now}},
-             {"status": "pending", "authorization_expires_at": {"$exists": False},
-              "created_at": {"$lte": now - STATE_LIFETIME}},
-             {"status": "queued", "updated_at": {"$lte": now - JOB_STALE_LIFETIME}},
-             {"status": "running", "started_at": {"$lte": now - JOB_STALE_LIFETIME}},
-         ]},
-        {"$set": {"status": "failed", "error": "Mailbox connection expired; please try again",
-                  "updated_at": now},
-         "$unset": {"authorization_code_enc": "", "code_verifier_enc": ""}},
-    )
+    """Expire unused codes, reclaim proven preparation and hold ambiguous workers."""
+    await expire_sender_jobs(db, workspace_id, sender_account_id)
 
 
 async def start_mailbox_connection(
@@ -186,7 +203,7 @@ async def start_mailbox_connection(
     await _expire_abandoned_connection_jobs(db, workspace_id, sender_account_id, now)
     in_progress = await db.outreach_mailbox_connection_jobs.find_one({
         "workspace_id": workspace_id, "sender_account_id": sender_account_id,
-        "status": {"$in": ["pending", "queued", "running"]},
+        "status": {"$in": list(ACTIVE_JOB_STATES)},
     }, {"_id": 1})
     if in_progress:
         raise HTTPException(status_code=409, detail="This sender already has a mailbox connection in progress")
@@ -194,29 +211,35 @@ async def start_mailbox_connection(
     verifier = secrets.token_urlsafe(64)
     browser_nonce = secrets.token_urlsafe(32)
     job_id = f"mbx_{secrets.token_urlsafe(18)}"
+    job = {"id": job_id, "workspace_id": workspace_id, "sender_account_id": sender_account_id,
+        "user_id": user_id, "provider": provider, "status": "pending", "created_at": now,
+        "protocol_version": 2, "exchange_state": "pending", "app_config_digest": app_configuration_digest(config),
+        "authorization_expires_at": now + STATE_LIFETIME, "next_recovery_at": now + STATE_LIFETIME}
     try:
-        await db.outreach_mailbox_connection_jobs.insert_one({
-            "id": job_id, "workspace_id": workspace_id, "sender_account_id": sender_account_id,
-            "user_id": user_id, "provider": provider, "status": "pending", "created_at": now,
-            "authorization_expires_at": now + STATE_LIFETIME,
-            "expires_at": now + timedelta(days=1),
-        })
+        async def preflight(current):
+            fenced = AuthorityDatabase(current.database, current.session, job_id) if isinstance(current, suppression.SuppressionDatabase) else current
+            if (not app_configuration_matches(config, job['app_config_digest'])
+                    or not await _paid_sender(fenced, workspace_id, sender_account_id)):
+                raise MailboxUnavailable("Paid sender changed before mailbox authorization")
+        await suppression.mutate_suppression(db, workspace_id, preflight)
+        sealed = await seal_oauth_secret(verifier, job, workspace_id, sender_account_id, "oauth_pkce")
+        async def save(current):
+            await preflight(current)
+            if await current.outreach_mailbox_connection_jobs.find_one({"workspace_id": workspace_id,
+                    "sender_account_id": sender_account_id, "status": {"$in": list(ACTIVE_JOB_STATES)}}):
+                raise HTTPException(409, "This sender already has a mailbox connection in progress or review")
+            if datetime.now(timezone.utc) >= job["authorization_expires_at"]:
+                raise MailboxUnavailable("Mailbox authorization expired before storage")
+            await current.outreach_mailbox_connection_jobs.insert_one(job)
+            await current.outreach_mailbox_oauth_states.insert_one({"_id": _state_hash(state), "job_id": job_id,
+                "workspace_id": workspace_id, "sender_account_id": sender_account_id, "user_id": user_id,
+                "provider": provider, "code_verifier_enc": sealed, "browser_binding_hash": _state_hash(browser_nonce),
+                "created_at": now, "expires_at": job["authorization_expires_at"]})
+        await suppression.mutate_suppression(db, workspace_id, save)
     except DuplicateKeyError:
-        raise HTTPException(status_code=409, detail="This sender already has a mailbox connection in progress") from None
-    try:
-        await db.outreach_mailbox_oauth_states.insert_one({
-            "_id": _state_hash(state), "job_id": job_id, "workspace_id": workspace_id,
-            "sender_account_id": sender_account_id, "user_id": user_id,
-            "provider": provider, "code_verifier_enc": encrypt(verifier),
-            "browser_binding_hash": _state_hash(browser_nonce),
-            "created_at": now, "expires_at": now + STATE_LIFETIME,
-        })
-    except Exception:
-        await db.outreach_mailbox_connection_jobs.update_one(
-            {"workspace_id": workspace_id, "id": job_id, "status": "pending"},
-            {"$set": {"status": "failed", "error": "Mailbox authorization could not be started", "updated_at": datetime.now(timezone.utc)}},
-        )
-        raise
+        raise HTTPException(409, "This sender already has a mailbox connection in progress") from None
+    except (CustodyUnavailable, suppression.SuppressionUnavailable, MailboxUnavailable):
+        raise HTTPException(503, "Encrypted mailbox authorization is unavailable; retry after review") from None
     params = {
         "client_id": config.client_id, "redirect_uri": config.redirect_uri,
         "response_type": "code", "scope": " ".join(config.scopes), "state": state,
@@ -248,54 +271,101 @@ async def consume_oauth_callback(
     if not state or provider not in {"gmail", "microsoft"} or not browser_binding_nonce:
         raise HTTPException(status_code=400, detail="Invalid mailbox authorization")
     now = datetime.now(timezone.utc)
-    state_doc = await db.outreach_mailbox_oauth_states.find_one_and_delete({
-        "_id": _state_hash(state), "provider": provider, "expires_at": {"$gt": now},
-        "browser_binding_hash": _state_hash(browser_binding_nonce),
-    })
+    lookup = {"_id": _state_hash(state), "provider": provider, "expires_at": {"$gt": now},
+        "browser_binding_hash": _state_hash(browser_binding_nonce)}
+    state_doc = await db.outreach_mailbox_oauth_states.find_one(lookup)
     if not state_doc:
-        raise HTTPException(status_code=400, detail="Mailbox authorization expired or was already used")
-    job_id, workspace_id = state_doc["job_id"], state_doc["workspace_id"]
-    if error or not code:
-        await db.outreach_mailbox_connection_jobs.update_one(
-            {"workspace_id": workspace_id, "id": job_id, "status": "pending"},
-            {"$set": {"status": "failed", "error": "Mailbox authorization was declined or incomplete", "updated_at": now}},
-        )
-        return job_id
-    changed = await db.outreach_mailbox_connection_jobs.update_one(
-        {"workspace_id": workspace_id, "id": job_id, "status": "pending"},
-        {"$set": {"authorization_code_enc": encrypt(code),
-                  "code_verifier_enc": state_doc["code_verifier_enc"],
-                  "status": "queued", "updated_at": now}},
-    )
-    if not getattr(changed, "modified_count", 0):
-        raise HTTPException(status_code=400, detail="Mailbox authorization could not be claimed")
+        raise HTTPException(400, "Mailbox authorization expired or was already used")
+    from outreach.core.erasure import require_open_workspace
+    workspace_id = state_doc.get('workspace_id')
+    await require_open_workspace({'default_workspace_id': workspace_id}, db)
+    job_id, sender = state_doc.get('job_id'), state_doc.get('sender_account_id')
+    if not all(isinstance(value, str) and value for value in (workspace_id, job_id, sender)):
+        raise HTTPException(400, 'Mailbox authorization context is unavailable')
+    metadata = {**state_doc, "id": job_id}
+    try:
+        async def verify(current):
+            if not _control_allowed(workspace_id): raise CustodyUnavailable('Mailbox configuration changed')
+        await suppression.mutate_suppression(db, workspace_id, verify)
+        custody = custody_stamp()
+        encrypted = await seal_oauth_secret(code, metadata, workspace_id, sender, "oauth_code") if code and not error else None
+        async def consume(current):
+            await verify(current)
+            if custody_stamp() != custody: raise CustodyUnavailable('OAuth custody configuration changed')
+            fenced = AuthorityDatabase(current.database, current.session, job_id) if isinstance(current, suppression.SuppressionDatabase) else current
+            fresh = await fenced.outreach_mailbox_oauth_states.find_one({**lookup, "workspace_id": workspace_id,
+                "expires_at": {"$gt": datetime.now(timezone.utc)}})
+            job = await fenced.outreach_mailbox_connection_jobs.find_one({"workspace_id": workspace_id, "id": job_id,
+                "sender_account_id": sender, "provider": provider, "status": "pending"})
+            if not fresh or not job or fresh.get("code_verifier_enc") != state_doc.get("code_verifier_enc"):
+                raise HTTPException(400, "Mailbox authorization expired or was already used")
+            deleted = await current.outreach_mailbox_oauth_states.delete_one({**lookup, "workspace_id": workspace_id})
+            if deleted.deleted_count != 1: raise HTTPException(400, "Mailbox authorization could not be consumed")
+            changes = {"status": "queued", "authorization_code_enc": encrypted,
+                "code_verifier_enc": state_doc["code_verifier_enc"], "protocol_version": 2, "exchange_state": "pending",
+                "next_publish_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc)} if encrypted else {
+                "status": "failed", "error": "Mailbox authorization was declined or incomplete", "updated_at": datetime.now(timezone.utc)}
+            changed = await current.outreach_mailbox_connection_jobs.update_one({"workspace_id": workspace_id, "id": job_id,
+                "status": "pending"}, {"$set": changes})
+            if changed.matched_count != 1: raise HTTPException(400, "Mailbox authorization could not be claimed")
+        await suppression.mutate_suppression(db, workspace_id, consume)
+    except (CustodyUnavailable, suppression.SuppressionUnavailable):
+        raise HTTPException(503, "Encrypted mailbox authorization is unavailable") from None
+    if not encrypted: return job_id
     try:
         enqueue_connection_job(job_id, workspace_id)
     except Exception:
-        await db.outreach_mailbox_connection_jobs.update_one(
-            {"workspace_id": workspace_id, "id": job_id, "status": "queued"},
-            {"$set": {"status": "failed", "error": "Mailbox connection could not be queued", "updated_at": now},
-             "$unset": {"authorization_code_enc": "", "code_verifier_enc": ""}},
-        )
+        # The committed due reference survives broker failure; beat republishes.
+        # Codes stay encrypted and still obey their original use deadline.
+        pass
     return job_id
 
 
-async def _token_exchange(config: ProviderConfig, job: dict) -> dict:
+async def _token_exchange(config: ProviderConfig, job: dict, *, preflight=None) -> dict:
+    custody = custody_stamp()
+    app_secret = await prepare_app_secret(config, job=job)
     data = {
-        "client_id": config.client_id, "client_secret": config.client_secret,
+        "client_id": config.client_id, "client_secret": app_secret.value,
         "redirect_uri": config.redirect_uri, "grant_type": "authorization_code",
-        "code": decrypt_strict(job["authorization_code_enc"]),
-        "code_verifier": decrypt_strict(job["code_verifier_enc"]),
+        "code": await open_oauth_secret(job["authorization_code_enc"], job, job.get("workspace_id"), job.get("sender_account_id"), "oauth_code"),
+        "code_verifier": await open_oauth_secret(job["code_verifier_enc"], job, job.get("workspace_id"), job.get("sender_account_id"), "oauth_pkce"),
     }
     if config.provider == "microsoft":
         data["scope"] = " ".join(config.scopes)
+    deadline = _utc(job.get("authorization_expires_at"))
+    if custody_mode() == "kms_v1" and (not deadline or deadline <= datetime.now(timezone.utc) or not preflight):
+        raise MailboxUnavailable("Mailbox authorization custody expired or is unguarded")
+    if not app_secret.matches():
+        raise MailboxUnavailable('Mailbox OAuth application changed before authorization')
+    deadlines = (await preflight() or []) if preflight else []
     async with httpx.AsyncClient(timeout=20) as client:
+        if not app_secret.matches() or custody_stamp() != custody or preflight and (not _deadlines_live(deadlines) or not _control_allowed(job['workspace_id']) or deadline and deadline <= datetime.now(timezone.utc)):
+            raise MailboxUnavailable('Mailbox authorization changed before transport')
         response = await client.post(config.token_url, data=data)
     if response.status_code != 200:
+        if response.status_code in {400, 401}:
+            try:
+                rejected = response.json()
+            except ValueError:
+                rejected = None
+            if isinstance(rejected, dict) and isinstance(rejected.get("error"), str) and rejected["error"]:
+                raise OAuthRejected("Provider rejected mailbox authorization; reconnect")
         raise MailboxUnavailable("Provider authorization failed; reconnect this mailbox")
     payload = response.json()
-    if not isinstance(payload, dict) or payload.get("error") or not payload.get("access_token"):
+    if (not isinstance(payload, dict) or payload.get("error") or not isinstance(payload.get("access_token"), str)
+            or not payload["access_token"]):
         raise MailboxUnavailable("Provider did not grant mailbox access")
+    if payload.get("refresh_token") is not None and (
+            not isinstance(payload["refresh_token"], str) or not payload["refresh_token"]):
+        raise MailboxUnavailable("Provider returned invalid offline mailbox access")
+    lifetime = payload.get("expires_in", 3600)
+    try:
+        seconds = int(lifetime)
+    except (ValueError, TypeError, OverflowError):
+        raise MailboxUnavailable("Provider returned invalid mailbox token lifetime") from None
+    if isinstance(lifetime, bool) or not 0 < seconds <= 86400:
+        raise MailboxUnavailable("Provider returned invalid mailbox token lifetime")
+    payload["expires_in"] = seconds
     granted = set(str(payload.get("scope") or "").lower().split())
     required = ({"https://www.googleapis.com/auth/gmail.send", "https://www.googleapis.com/auth/gmail.readonly"}
                 if config.provider == "gmail" else {"mail.send", "mail.read"})
@@ -304,10 +374,11 @@ async def _token_exchange(config: ProviderConfig, job: dict) -> dict:
     return payload
 
 
-async def _mailbox_identity(provider: str, access_token: str) -> dict:
+async def _mailbox_identity(provider: str, access_token: str, *, preflight=None) -> dict:
     url = ("https://gmail.googleapis.com/gmail/v1/users/me/profile" if provider == "gmail"
            else "https://graph.microsoft.com/v1.0/me?$select=id,mail,userPrincipalName")
     async with httpx.AsyncClient(timeout=20) as client:
+        if preflight: await preflight()
         response = await client.get(url, headers={"Authorization": f"Bearer {access_token}"})
     if response.status_code != 200:
         raise MailboxUnavailable("Mailbox identity could not be verified")
@@ -324,22 +395,49 @@ async def _mailbox_identity(provider: str, access_token: str) -> dict:
 
 async def complete_connection_job(db, workspace_id: str, job_id: str) -> dict:
     """Worker-side code exchange; secrets never appear in task arguments/results."""
-    now = datetime.now(timezone.utc)
-    claimed = await db.outreach_mailbox_connection_jobs.update_one(
-        {"workspace_id": workspace_id, "id": job_id, "status": "queued"},
-        {"$set": {"status": "running", "started_at": now}},
-    )
-    if not getattr(claimed, "modified_count", 0):
-        return {"status": "already_claimed"}
-    job = await db.outreach_mailbox_connection_jobs.find_one({"workspace_id": workspace_id, "id": job_id})
+    owner = secrets.token_urlsafe(18)
+    job = await claim_job(db, workspace_id, job_id, owner)
     if not job:
-        return {"status": "missing"}
+        return {"status": "already_claimed"}
+    if job.get("status") == "failed": return {"status": "failed"}
+    install_generation = None
+    custody = custody_stamp()
     try:
         if not await _paid_sender(db, workspace_id, job["sender_account_id"]):
             raise MailboxUnavailable("Paid sender access is unavailable")
         config = _provider_config(job["provider"])
-        tokens = await _token_exchange(config, job)
-        identity = await _mailbox_identity(config.provider, tokens["access_token"])
+        app_digest = app_configuration_digest(config)
+        if (job.get('app_config_digest') and job['app_config_digest'] != app_digest
+                or custody_mode() == 'kms_v1' and not job.get('app_config_digest')):
+            raise MailboxUnavailable('Mailbox authorization application changed or is unproven')
+        async def exchange_preflight(*, authorize=False):
+            async def check(current):
+                fenced = AuthorityDatabase(current.database, current.session, owner) if isinstance(current, suppression.SuppressionDatabase) else current
+                live = await fenced.outreach_mailbox_connection_jobs.find_one({"workspace_id": workspace_id, "id": job_id,
+                    "status": "running", "connection_owner": owner})
+                if (not live or not app_configuration_matches(config, app_digest) or custody_stamp() != custody or not _control_allowed(workspace_id)
+                        or any(live.get(name) != job.get(name) for name in ('app_config_digest', 'authorization_code_enc', 'code_verifier_enc', 'provider', 'sender_account_id'))
+                        or not _utc(live.get('authorization_expires_at')) or _utc(live['authorization_expires_at']) <= datetime.now(timezone.utc)
+                        or not _utc(live.get('lease_until')) or _utc(live['lease_until']) <= datetime.now(timezone.utc)
+                        or not await _paid_sender(fenced, workspace_id, job["sender_account_id"])):
+                    raise MailboxUnavailable("Mailbox authorization owner changed")
+                if authorize:
+                    await reserve_exchange_budget(current, workspace_id, job['sender_account_id'], datetime.now(timezone.utc))
+                    changed = await current.outreach_mailbox_connection_jobs.update_one({"workspace_id": workspace_id,
+                        "id": job_id, "status": "running", "connection_owner": owner, "exchange_state": "preparing"},
+                        {"$set": {"exchange_state": "possible", "exchange_submitted_at": datetime.now(timezone.utc)}})
+                    if changed.matched_count != 1: raise MailboxUnavailable("Mailbox exchange is already submitted or held")
+                return [*(list(fenced.deadlines) if isinstance(fenced, AuthorityDatabase) else []),
+                    live['lease_until'], live['authorization_expires_at']]
+            deadlines = await suppression.mutate_suppression(db, workspace_id, check)
+            if not app_configuration_matches(config, app_digest) or not _deadlines_live(deadlines) or custody_stamp() != custody or not _control_allowed(workspace_id):
+                raise MailboxUnavailable('Mailbox authorization expired after commit')
+            return deadlines
+        async def authorize_exchange():
+            return await exchange_preflight(authorize=True)
+        tokens = await _token_exchange(config, job, preflight=authorize_exchange)
+        await exchange_preflight()
+        identity = await _mailbox_identity(config.provider, tokens["access_token"], preflight=exchange_preflight)
         old = await db.outreach_mailboxes.find_one({
             "workspace_id": workspace_id, "sender_account_id": job["sender_account_id"],
         })
@@ -361,28 +459,32 @@ async def complete_connection_job(db, workspace_id: str, job_id: str) -> dict:
         if old and not same_mailbox and old.get("status") == "active":
             raise MailboxIdentityConflict("Disconnect the existing mailbox before switching accounts")
         if not tokens.get("refresh_token"):
-            if not same_mailbox or not old.get("refresh_token_enc"):
+            if (not same_mailbox or not old.get("refresh_token_enc")
+                    or old.get('oauth_app_identity_digest') != app_identity_digest(config)):
                 raise MailboxUnavailable("Offline mailbox access was not granted; reconnect and approve access")
-            refresh_enc = old["refresh_token_enc"]
+            refresh_value = await open_mailbox_refresh(old, workspace_id, job["sender_account_id"])
         else:
-            refresh_enc = encrypt(tokens["refresh_token"])
+            refresh_value = tokens["refresh_token"]
         if not await _paid_sender(db, workspace_id, job["sender_account_id"]):
             raise MailboxUnavailable("Paid sender access ended during mailbox connection")
         current_job = await db.outreach_mailbox_connection_jobs.find_one({
-            "workspace_id": workspace_id, "id": job_id, "status": "running",
+            "workspace_id": workspace_id, "id": job_id, "status": "running", "connection_owner": owner,
         }, {"_id": 1})
         if not current_job:
             raise MailboxUnavailable("Mailbox connection was canceled")
         now = datetime.now(timezone.utc)
         updates = {
             "provider": config.provider, "provider_user_id": identity["provider_user_id"],
-            "email": identity["email"], "status": "active", "access_token_enc": encrypt(tokens["access_token"]),
-            "refresh_token_enc": refresh_enc, "token_expires_at": now + timedelta(seconds=max(60, int(tokens.get("expires_in") or 3600))),
+            "oauth_app_identity_digest": app_identity_digest(config),
+            "email": identity["email"], "status": "active", "token_expires_at": _utc(job['started_at']) + timedelta(seconds=int(tokens.get("expires_in") or 3600)),
             "scopes": str(tokens.get("scope") or "").split(),
             "sync_status": "reconnecting" if saved_cursor else "initializing",
             "last_sync_at": None,
             "connected_at": now, "updated_at": now, "connection_job_id": job_id,
         }
+        updates.update(await seal_mailbox_tokens({"access_token": tokens["access_token"], "refresh_token": refresh_value},
+            {"workspace_id": workspace_id, "sender_account_id": job["sender_account_id"], **updates}, workspace_id, job["sender_account_id"]))
+        install_generation = updates['custody_generation']
         if config.provider == "gmail":
             updates["history_id"] = saved_cursor or identity.get("history_id")
             obsolete_cursor = "delta_url"
@@ -390,67 +492,42 @@ async def complete_connection_job(db, workspace_id: str, job_id: str) -> dict:
             if saved_cursor:
                 updates["delta_url"] = saved_cursor
             obsolete_cursor = "history_id"
-        unset_fields = {obsolete_cursor: ""}
+        unset_fields = {obsolete_cursor: "", "refresh_lease_nonce": "", "refresh_lease_until": ""}
         if config.provider == "microsoft" and not saved_cursor:
             unset_fields["delta_url"] = ""
-        await db.outreach_mailboxes.update_one(
-            {"workspace_id": workspace_id, "sender_account_id": job["sender_account_id"]},
-            {"$set": updates, "$unset": unset_fields,
-             "$setOnInsert": {"created_at": now}}, upsert=True,
-        )
-        # A reconnect MUST process the old cursor before becoming ready.
-        # Rebootstrapping at the provider's current cursor would skip every
-        # reply received while the sender was disconnected.
-        from outreach.core.mailbox_sync import _sync_enabled, bootstrap_mailbox_sync, sync_mailbox_replies
-
-        if saved_cursor:
-            if _sync_enabled():
-                caught_up = await sync_mailbox_replies(
-                    db, workspace_id=workspace_id, sender_account_id=job["sender_account_id"],
-                )
-                if caught_up.get("status") != "healthy":
-                    raise MailboxUnavailable("Reply catch-up did not complete; reconnect after review")
-            # If reply sync is disabled, leave 'reconnecting' in place; no
-            # sending is possible, and the old cursor is retained for later.
-        else:
-            await bootstrap_mailbox_sync(db, workspace_id, job["sender_account_id"])
-        if not await _paid_sender(db, workspace_id, job["sender_account_id"]) or not await db.outreach_mailbox_connection_jobs.find_one({
-            "workspace_id": workspace_id, "id": job_id, "status": "running",
-        }, {"_id": 1}):
-            await db.outreach_mailboxes.update_one(
-                {"workspace_id": workspace_id, "sender_account_id": job["sender_account_id"], "connection_job_id": job_id},
-                {"$set": {"status": "reauth_required"},
-                 "$unset": {"access_token_enc": "", "refresh_token_enc": ""}},
-            )
-            raise MailboxUnavailable("Paid sender access ended during mailbox connection")
-        completed = await db.outreach_mailbox_connection_jobs.update_one(
-            {"workspace_id": workspace_id, "id": job_id, "status": "running"},
-            {"$set": {"status": "connected", "updated_at": datetime.now(timezone.utc)},
-             "$unset": {"authorization_code_enc": "", "code_verifier_enc": ""}},
-        )
-        if not getattr(completed, "modified_count", 0):
-            raise MailboxUnavailable("Mailbox connection was canceled")
+        async def install(current):
+            from outreach.core.credential_migration import _stable
+            fenced = AuthorityDatabase(current.database, current.session, owner) if isinstance(current, suppression.SuppressionDatabase) else current
+            live = await fenced.outreach_mailbox_connection_jobs.find_one({"workspace_id": workspace_id, "id": job_id,
+                "status": "running", "connection_owner": owner})
+            prior = await fenced.outreach_mailboxes.find_one({"workspace_id": workspace_id, "sender_account_id": job["sender_account_id"]})
+            if (not live or not app_configuration_matches(config, app_digest) or custody_stamp() != custody or not _control_allowed(workspace_id) or not await _paid_sender(fenced, workspace_id, job["sender_account_id"])
+                    or live.get('exchange_state') not in {'preparing', 'possible'}
+                    or any(live.get(name) != job.get(name) for name in ('app_config_digest', 'authorization_code_enc', 'code_verifier_enc', 'provider', 'sender_account_id'))
+                    or not _utc(live.get('authorization_expires_at')) or _utc(live['authorization_expires_at']) <= datetime.now(timezone.utc)
+                    or not _utc(live.get('lease_until')) or _utc(live['lease_until']) <= datetime.now(timezone.utc)
+                    or _stable(prior) != _stable(old)):
+                raise MailboxUnavailable("Mailbox owner changed before credential installation")
+            await current.outreach_mailboxes.update_one({"workspace_id": workspace_id, "sender_account_id": job["sender_account_id"]},
+                {"$set": updates, "$unset": {**unset_fields, "refresh_state": "", "refresh_submitted_at": ""},
+                    "$setOnInsert": {"created_at": now}}, upsert=True)
+            receipt = await current.outreach_mailbox_connection_jobs.update_one({"workspace_id": workspace_id, "id": job_id,
+                "status": "running", "connection_owner": owner}, {"$set": {"status": "connected", "exchange_state": "installed",
+                    "installed_generation": install_generation, "installed_material_digest": material_digest(
+                        {"workspace_id": workspace_id, "sender_account_id": job["sender_account_id"], **updates}, "mailbox"),
+                    "installed_at": now, "updated_at": now}, "$unset": {"authorization_code_enc": "", "code_verifier_enc": "",
+                        "expires_at": "", "lease_until": ""}})
+            if receipt.matched_count != 1: raise MailboxUnavailable("Mailbox installation receipt owner changed")
+        await suppression.mutate_suppression(db, workspace_id, install)
+        # OAuth installation is complete. Independent polling initializes or
+        # catches up from the preserved cursor; healthy freshness still gates send.
         return {"status": "connected"}
     except Exception as exc:
-        # A provider cursor must be initialized before sending. If any step
-        # fails after token persistence, revoke our local ability to use it.
-        await db.outreach_mailboxes.update_one(
-            {"workspace_id": workspace_id, "sender_account_id": job["sender_account_id"],
-             "connection_job_id": job_id},
-            {"$set": {"status": "reauth_required", "sync_status": "stale", "updated_at": datetime.now(timezone.utc)},
-             "$unset": {"access_token_enc": "", "refresh_token_enc": ""}},
-        )
-        await db.outreach_mailbox_connection_jobs.update_one(
-            {"workspace_id": workspace_id, "id": job_id, "status": "running"},
-            {"$set": {"status": "failed", "error": (
-                "Mailbox replacement needs manual review of prior sends and reply monitoring"
-                if isinstance(exc, MailboxIdentityConflict)
-                else "Mailbox connection failed. Check permissions and reconnect."
-            ),
-                      "updated_at": datetime.now(timezone.utc)},
-             "$unset": {"authorization_code_enc": "", "code_verifier_enc": ""}},
-        )
-        return {"status": "failed"}
+        # A lost commit acknowledgement cannot revoke a committed installation.
+        saved = await db.outreach_mailbox_connection_jobs.find_one({"workspace_id": workspace_id, "id": job_id,
+            "status": "connected", "connection_owner": owner, "exchange_state": "installed"})
+        if saved: return {"status": "connected"}
+        return await fail_owned_job(db, job, rejected=isinstance(exc, OAuthRejected))
 
 
 async def get_ready_mailbox(db, workspace_id: str, sender_account_id: str) -> dict | None:
@@ -461,84 +538,17 @@ async def get_ready_mailbox(db, workspace_id: str, sender_account_id: str) -> di
         "workspace_id": workspace_id, "sender_account_id": sender_account_id,
         "status": "active", "sync_status": "healthy",
     })
-    if not mailbox or not mailbox.get("access_token_enc") or not mailbox.get("refresh_token_enc"):
+    if (not mailbox or not mailbox.get("access_token_enc") or not mailbox.get("refresh_token_enc")
+            or mailbox.get("refresh_state") in {"possible", "unknown"}):
         return None
     synced_at = _utc(mailbox.get("last_sync_at"))
-    if not synced_at or datetime.now(timezone.utc) - synced_at > SYNC_FRESHNESS:
+    now = datetime.now(timezone.utc)
+    if not synced_at or synced_at > now or now - synced_at > SYNC_FRESHNESS:
         return None
     return mailbox
 
 
-async def get_mailbox_access_token(db, mailbox: dict) -> str:
-    """Worker-only refresh with a Mongo lease to prevent refresh-token races."""
-    now = datetime.now(timezone.utc)
-    workspace_id, sender_id = mailbox["workspace_id"], mailbox["sender_account_id"]
-    if not await _paid_sender(db, workspace_id, sender_id):
-        raise MailboxUnavailable("Paid sender access is unavailable")
-    current = await db.outreach_mailboxes.find_one({
-        "workspace_id": workspace_id, "sender_account_id": sender_id, "status": "active",
-    })
-    if (not current or current.get("connection_job_id") != mailbox.get("connection_job_id")
-            or not current.get("access_token_enc") or not current.get("refresh_token_enc")):
-        raise MailboxUnavailable("Mailbox is no longer active")
-    mailbox = current
-    expiry = _utc(mailbox.get("token_expires_at"))
-    if expiry and expiry > now + timedelta(minutes=5):
-        return decrypt_strict(mailbox["access_token_enc"])
-    nonce = secrets.token_urlsafe(12)
-    connection_job_id = mailbox.get("connection_job_id")
-    query = {"workspace_id": workspace_id, "sender_account_id": sender_id, "status": "active",
-             "connection_job_id": connection_job_id if connection_job_id else {"$exists": False},
-             "$or": [{"refresh_lease_until": {"$lt": now}}, {"refresh_lease_until": {"$exists": False}}]}
-    claimed = await db.outreach_mailboxes.find_one_and_update(
-        query, {"$set": {"refresh_lease_until": now + timedelta(seconds=45), "refresh_lease_nonce": nonce}},
-        return_document=ReturnDocument.AFTER,
-    )
-    if not claimed:
-        raise MailboxTransientError("Mailbox token refresh is already in progress")
-    try:
-        # Another worker may have refreshed between the caller's read and our lease.
-        expiry = _utc(claimed.get("token_expires_at"))
-        if expiry and expiry > now + timedelta(minutes=5):
-            return decrypt_strict(claimed["access_token_enc"])
-        config = _provider_config(claimed["provider"])
-        payload = {"client_id": config.client_id, "client_secret": config.client_secret,
-                   "refresh_token": decrypt_strict(claimed["refresh_token_enc"]), "grant_type": "refresh_token"}
-        if config.provider == "microsoft":
-            payload["scope"] = " ".join(config.scopes)
-        async with httpx.AsyncClient(timeout=20) as client:
-            response = await client.post(config.token_url, data=payload)
-        if response.status_code in {400, 401}:
-            await db.outreach_mailboxes.update_one(
-                {"workspace_id": workspace_id, "sender_account_id": sender_id, "refresh_lease_nonce": nonce},
-                {"$set": {"status": "reauth_required", "updated_at": datetime.now(timezone.utc)},
-                 "$unset": {"access_token_enc": "", "refresh_token_enc": "",
-                            "refresh_lease_nonce": "", "refresh_lease_until": ""}},
-            )
-            raise MailboxUnavailable("Mailbox authorization expired; reconnect")
-        if response.status_code != 200:
-            raise MailboxTransientError("Mailbox provider is temporarily unavailable")
-        data = response.json()
-        if not isinstance(data, dict) or data.get("error") or not data.get("access_token"):
-            raise MailboxTransientError("Mailbox token refresh returned no access token")
-        now = datetime.now(timezone.utc)
-        updates = {"access_token_enc": encrypt(data["access_token"]),
-                   "token_expires_at": now + timedelta(seconds=max(60, int(data.get("expires_in") or 3600))),
-                   "updated_at": now}
-        if data.get("refresh_token"):
-            updates["refresh_token_enc"] = encrypt(data["refresh_token"])
-        if not await _paid_sender(db, workspace_id, sender_id):
-            raise MailboxUnavailable("Paid sender access ended during token refresh")
-        result = await db.outreach_mailboxes.update_one(
-            {"workspace_id": workspace_id, "sender_account_id": sender_id, "status": "active",
-             "refresh_lease_nonce": nonce},
-            {"$set": updates},
-        )
-        if not result.modified_count:
-            raise MailboxTransientError("Mailbox state changed during token refresh")
-        return data["access_token"]
-    finally:
-        await db.outreach_mailboxes.update_one(
-            {"workspace_id": workspace_id, "sender_account_id": sender_id, "refresh_lease_nonce": nonce},
-            {"$unset": {"refresh_lease_nonce": "", "refresh_lease_until": ""}},
-        )
+async def get_mailbox_access_token(db, mailbox: dict, *, parent_preflight=None, parent_allowed=None) -> str | MailboxAccess:
+    """Worker-only access preparation; uncertain refreshes remain held."""
+    from outreach.core.mailbox_refresh import get_access
+    return await get_access(db, mailbox, parent_preflight=parent_preflight, parent_allowed=parent_allowed)

@@ -17,10 +17,16 @@ from outreach.core.mailbox_connection import (
     mailbox_connection_enabled, email_send_enabled, browser_binding_cookie_name,
     is_mailbox_pilot_allowed, is_email_send_pilot_allowed,
 )
-from utils.encryption import encrypt
 
 
 router = APIRouter(prefix="/mailboxes", tags=["Outreach Email Mailboxes"])
+
+
+async def _open_mailbox_workspace(current_user: dict = Depends(get_current_user),
+                                  db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
+    from outreach.core.erasure import require_open_workspace
+    await require_open_workspace(current_user, db)
+    return current_user
 
 
 def _workspace_id(user: dict) -> str:
@@ -44,7 +50,7 @@ class HunterKeyRequest(BaseModel):
 
 @router.get("")
 async def list_mailboxes(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(_open_mailbox_workspace),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     workspace_id = _workspace_id(current_user)
@@ -64,7 +70,7 @@ async def list_mailboxes(
 
 @router.get("/hunter-key")
 async def hunter_key_status(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(_open_mailbox_workspace),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     doc = await db.outreach_hunter_credentials.find_one(
@@ -77,33 +83,47 @@ async def hunter_key_status(
 @router.put("/hunter-key", dependencies=[require_permission("account:connect")])
 async def put_hunter_key(
     request: HunterKeyRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(_open_mailbox_workspace),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     if not _enabled("OUTREACH_HUNTER_ENABLED"):
         raise HTTPException(status_code=503, detail="Email discovery is not enabled")
     now = datetime.now(timezone.utc)
-    await db.outreach_hunter_credentials.update_one(
-        {"workspace_id": _workspace_id(current_user)},
-        {"$set": {"api_key_enc": encrypt(request.api_key.strip()), "updated_at": now},
-         "$setOnInsert": {"created_at": now}}, upsert=True,
-    )
+    from outreach.core.provider_custody import seal_finder_key
+    from outreach.core.suppression import mutate_suppression, SuppressionUnavailable
+    from outreach.core.credential_custody import CustodyUnavailable
+    workspace = _workspace_id(current_user)
+    try:
+        async def verify(current):
+            if not _enabled('OUTREACH_HUNTER_ENABLED'):
+                raise CustodyUnavailable('Finder configuration changed')
+        await mutate_suppression(db, workspace, verify)
+        encrypted = await seal_finder_key(request.api_key.strip(), workspace)
+        async def save(current):
+            await verify(current)
+            await current.outreach_hunter_credentials.update_one({"workspace_id": workspace},
+                {"$set": {**encrypted, "updated_at": now}, "$setOnInsert": {"created_at": now}}, upsert=True)
+        await mutate_suppression(db, workspace, save)
+    except (CustodyUnavailable, SuppressionUnavailable):
+        raise HTTPException(503, "Encrypted finder credentials are unavailable") from None
     return {"configured": True, "enabled": True}
 
 
 @router.delete("/hunter-key", dependencies=[require_permission("account:connect")])
 async def delete_hunter_key(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(_open_mailbox_workspace),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    await db.outreach_hunter_credentials.delete_one({"workspace_id": _workspace_id(current_user)})
+    from outreach.core.suppression import mutate_suppression
+    workspace = _workspace_id(current_user)
+    await mutate_suppression(db, workspace, lambda current: current.outreach_hunter_credentials.delete_one({"workspace_id": workspace}))
     return {"configured": False, "enabled": _enabled("OUTREACH_HUNTER_ENABLED")}
 
 
 @router.get("/connection-jobs/{job_id}")
 async def get_mailbox_connection_job(
     job_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(_open_mailbox_workspace),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     job = await db.outreach_mailbox_connection_jobs.find_one({
@@ -112,8 +132,12 @@ async def get_mailbox_connection_job(
     if not job:
         raise HTTPException(status_code=404, detail="Mailbox connection job was not found")
     result = {"connection_job_id": job_id, "status": job.get("status", "pending")}
-    if job.get("status") == "failed":
-        result["error"] = job.get("error") or "Mailbox connection failed. Reconnect and try again."
+    if job.get('status') == 'review_stopped':
+        result['error'] = 'Mailbox authorization was stopped after operator review.'
+    if job.get("status") in {"failed", "review_required"}:
+        from outreach.core.mailbox_jobs import REVIEW_ERROR
+        result["error"] = job.get("error") or (REVIEW_ERROR if job.get("status") == "review_required"
+            else "Mailbox connection failed. Reconnect and try again.")
     return result
 
 
@@ -122,7 +146,7 @@ async def authorize_mailbox(
     provider: str,
     request: AuthorizeMailboxRequest,
     response: Response,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(_open_mailbox_workspace),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     workspace_id = _workspace_id(current_user)
@@ -171,27 +195,27 @@ async def mailbox_oauth_callback(
 @router.delete("/{sender_account_id}", dependencies=[require_permission("account:disconnect")])
 async def disconnect_mailbox(
     sender_account_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(_open_mailbox_workspace),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     workspace_id = _workspace_id(current_user)
     now = datetime.now(timezone.utc)
-    result = await db.outreach_mailboxes.update_one(
-        {"workspace_id": workspace_id, "sender_account_id": sender_account_id,
-         "status": {"$ne": "disconnected"}},
-        {"$set": {"status": "disconnected", "sync_status": "disabled", "updated_at": now},
-         "$unset": {"access_token_enc": "", "refresh_token_enc": "", "refresh_lease_nonce": "",
-                    "refresh_lease_until": "", "sync_lease_until": "", "sync_lease_id": ""}},
-    )
-    if not getattr(result, "matched_count", 0):
-        raise HTTPException(status_code=404, detail="Mailbox was not found")
-    await db.outreach_mailbox_connection_jobs.update_many(
-        {"workspace_id": workspace_id, "sender_account_id": sender_account_id,
-         "status": {"$in": ["pending", "queued", "running"]}},
-        {"$set": {"status": "failed", "error": "Mailbox was disconnected", "updated_at": now},
-         "$unset": {"authorization_code_enc": "", "code_verifier_enc": ""}},
-    )
-    await db.outreach_mailbox_oauth_states.delete_many({
-        "workspace_id": workspace_id, "sender_account_id": sender_account_id,
-    })
+    from outreach.core.suppression import mutate_suppression
+    from outreach.core.mailbox_jobs import stop_connection_jobs
+    async def stop(current):
+        result = await current.outreach_mailboxes.update_one(
+            {"workspace_id": workspace_id, "sender_account_id": sender_account_id,
+             "status": {"$ne": "disconnected"}},
+            {"$set": {"status": "disconnected", "sync_status": "disabled", "updated_at": now},
+             "$unset": {"access_token_enc": "", "refresh_token_enc": "", "refresh_lease_nonce": "",
+                        "refresh_lease_until": "", "sync_lease_until": "", "sync_lease_id": ""}},
+        )
+        if not getattr(result, "matched_count", 0):
+            raise HTTPException(status_code=404, detail="Mailbox was not found")
+        scope = {"workspace_id": workspace_id, "sender_account_id": sender_account_id}
+        await stop_connection_jobs(current, workspace_id, sender=sender_account_id, now=now, error="Mailbox was disconnected")
+        states = await current.outreach_mailbox_oauth_states.find(scope).limit(6).to_list(length=6)
+        for state in states:
+            await current.outreach_mailbox_oauth_states.delete_one({**scope, "_id": state["_id"]})
+    await mutate_suppression(db, workspace_id, stop)
     return {"status": "disconnected"}

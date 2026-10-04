@@ -9,6 +9,10 @@ import logging
 from collections.abc import Mapping, Sequence
 
 _PATTERNS = [
+    (re.compile(r'([\'\"]?(?:xi-api-key|elevenlabs_api_key)[\'\"]?[\s:=]+[\'\"]?)[^\s\"\',&}]+', re.IGNORECASE), r'\1[REDACTED]'),
+    # httpx emits credential-bearing URLs as strings/URL arguments. Match short
+    # values and percent-encoded keys/separators before they reach handlers.
+    (re.compile(r'((?:api(?:_|%5f)key|client(?:_|%5f)secret|access(?:_|%5f)token|refresh(?:_|%5f)token)(?:=|%3d))[^\s\"\'&#]+', re.IGNORECASE), r'\1[REDACTED]'),
     # OAuth tokens (key=value style)
     (re.compile(r'([\'"]?access_token[\'"]?[\s:=]+)[^\s"\',&}]{10,}', re.IGNORECASE), r'\1[REDACTED]'),
     (re.compile(r'([\'"]?refresh_token[\'"]?[\s:=]+)[^\s"\',&}]{10,}', re.IGNORECASE), r'\1[REDACTED]'),
@@ -33,6 +37,9 @@ _SENSITIVE_KEYS = {
     "client_secret",
     "api_key",
     "key",
+    "xi-api-key",
+    "elevenlabs_api_key",
+    "outreach_elevenlabs_api_key_enc",
 }
 
 
@@ -75,7 +82,7 @@ class LogScrubFilter(logging.Filter):
         if not args:
             return args
         if isinstance(args, dict):
-            return {k: cls._scrub_value(v) for k, v in args.items()}
+            return cls._scrub_value(args)
         if isinstance(args, tuple):
             return tuple(cls._scrub_value(a) for a in args)
         return args

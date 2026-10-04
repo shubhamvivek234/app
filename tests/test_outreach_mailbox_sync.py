@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from tests.test_outreach_durable_mailbox_sync import sync_db
+from tests.test_outreach_mailbox_job_lifecycle import lifecycle
 
 from outreach.core.mailbox_sync import (
     _apply_inbound, _dsn_failed_recipient, _gmail_dsn_recipient, _gmail_messages,
@@ -51,6 +53,10 @@ async def test_unreferenced_inbound_pauses_without_counting_a_reply():
 @pytest.mark.asyncio
 async def test_message_reference_confirms_reply_without_claiming_opt_out():
     db = MagicMock()
+    db.outreach_leads.find_one = AsyncMock(return_value=None)
+    db.outreach_inbox_threads.find_one = AsyncMock(return_value=None)
+    db.outreach_inbox_threads.insert_one = AsyncMock()
+    db.outreach_event_outbox.insert_one = AsyncMock()
     db.outreach_email_inbound_events.find_one = AsyncMock(return_value=None)
     db.outreach_email_inbound_events.update_one = AsyncMock()
     db.outreach_email_operations.find_one = AsyncMock(return_value={
@@ -76,6 +82,10 @@ async def test_message_reference_confirms_reply_without_claiming_opt_out():
 @pytest.mark.asyncio
 async def test_alias_reply_matches_original_message_reference_before_sender_address():
     db = MagicMock()
+    db.outreach_leads.find_one = AsyncMock(return_value=None)
+    db.outreach_inbox_threads.find_one = AsyncMock(return_value=None)
+    db.outreach_inbox_threads.insert_one = AsyncMock()
+    db.outreach_event_outbox.insert_one = AsyncMock()
     db.outreach_email_inbound_events.find_one = AsyncMock(return_value=None)
     db.outreach_email_inbound_events.update_one = AsyncMock()
     db.outreach_email_operations.find_one = AsyncMock(return_value={
@@ -97,31 +107,18 @@ async def test_alias_reply_matches_original_message_reference_before_sender_addr
 
 
 @pytest.mark.asyncio
-async def test_old_sync_cannot_mark_reconnected_mailbox_healthy(monkeypatch):
-    monkeypatch.setenv("OUTREACH_EMAIL_SYNC_ENABLED", "true")
-    db = MagicMock()
-    mailbox = {
-        "workspace_id": "ws", "sender_account_id": "sender", "status": "active",
-        "provider": "gmail", "history_id": "old-100", "connection_job_id": "old-job",
-        "sync_status": "healthy", "email": "sender@example.com",
-    }
-    db.outreach_mailboxes.find_one = AsyncMock(return_value=mailbox)
-    db.outreach_mailboxes.update_one = AsyncMock(side_effect=[
-        MagicMock(modified_count=1),  # old cycle takes the lease
-        MagicMock(modified_count=0),  # new connection rejects old cursor update
-        MagicMock(modified_count=0),  # cannot mark new connection stale
-        MagicMock(modified_count=1),  # release only old lease owner
-    ])
-    with patch("outreach.core.mailbox_sync._paid_sender", new_callable=AsyncMock, return_value=True), \
-         patch("outreach.core.mailbox_sync.get_mailbox_access_token", new_callable=AsyncMock,
-               return_value="access"), \
-         patch("outreach.core.mailbox_sync._gmail_messages", new_callable=AsyncMock,
-               return_value=([], "new-101")):
-        result = await sync_mailbox_replies(db, workspace_id="ws", sender_account_id="sender")
-    assert result == {"status": "stale"}
-    final_query = db.outreach_mailboxes.update_one.await_args_list[1].args[0]
-    assert final_query["connection_job_id"] == "old-job"
-    assert final_query["history_id"] == "old-100"
+async def test_old_sync_cannot_mark_reconnected_mailbox_healthy(sync_db, monkeypatch):
+    from outreach.core import mailbox_sync_jobs as jobs
+    from tests.test_outreach_durable_mailbox_sync import http_reads
+    client = http_reads(monkeypatch)
+    async def provider_get(*args, **kw):
+        sync_db.outreach_mailboxes.docs[0]['connection_job_id'] = 'replacement'
+        return httpx.Response(200, json={'historyId': '101'})
+    client.get.side_effect = provider_get
+    result = await sync_mailbox_replies(sync_db, workspace_id='w', sender_account_id='a')
+    assert result == {'status': 'stale'}
+    assert sync_db.outreach_mailboxes.docs[0]['history_id'] == '100'
+    assert sync_db.outreach_mailboxes.docs[0]['sync_status'] == 'healthy'
 
 
 @pytest.mark.asyncio
@@ -177,72 +174,37 @@ async def test_microsoft_delta_requires_complete_link_and_maps_reply_headers():
 
 
 @pytest.mark.asyncio
-async def test_gmail_bootstrap_persists_cursor_only_for_same_connection(monkeypatch):
-    monkeypatch.setenv("OUTREACH_EMAIL_SYNC_ENABLED", "true")
-    db = MagicMock()
-    mailbox = {
-        "workspace_id": "ws", "sender_account_id": "sender", "status": "active",
-        "provider": "gmail", "connection_job_id": "job-1", "history_id": None,
-    }
-    db.outreach_mailboxes.find_one = AsyncMock(return_value=mailbox)
-    db.outreach_mailboxes.update_one = AsyncMock(return_value=MagicMock(modified_count=1))
-    with patch("outreach.core.mailbox_sync._paid_sender", new_callable=AsyncMock, return_value=True), \
-         patch("outreach.core.mailbox_sync.get_mailbox_access_token", new_callable=AsyncMock,
-               return_value="access"), \
-         patch("outreach.core.mailbox_sync._provider_get", new_callable=AsyncMock,
-               return_value=httpx.Response(200, json={"historyId": "123"})):
-        result = await bootstrap_mailbox_sync(db, "ws", "sender")
-    assert result == {"status": "healthy"}
-    query, update = db.outreach_mailboxes.update_one.await_args.args
-    assert query["connection_job_id"] == "job-1"
-    assert query["history_id"] is None
-    assert update["$set"]["history_id"] == "123"
+async def test_gmail_bootstrap_persists_cursor_only_for_same_connection(sync_db, monkeypatch):
+    from tests.test_outreach_durable_mailbox_sync import http_reads
+    mailbox = sync_db.outreach_mailboxes.docs[0]; mailbox['history_id'] = None
+    client = http_reads(monkeypatch)
+    client.get.return_value = httpx.Response(200, json={'historyId': '123'})
+    result = await bootstrap_mailbox_sync(sync_db, 'w', 'a', expected_connection_job_id='installed')
+    assert result['status'] == 'healthy' and mailbox['history_id'] == '123'
+    assert sync_db.outreach_mailbox_sync_jobs.docs[0]['bootstrap'] is True
 
 
 @pytest.mark.asyncio
-async def test_completed_gmail_sync_advances_cursor_and_counts_confirmed_reply(monkeypatch):
-    monkeypatch.setenv("OUTREACH_EMAIL_SYNC_ENABLED", "true")
-    db = MagicMock()
-    mailbox = {
-        "workspace_id": "ws", "sender_account_id": "sender", "status": "active",
-        "provider": "gmail", "connection_job_id": "job-1", "history_id": "100",
-        "sync_status": "healthy", "email": "sender@example.com",
-    }
-    db.outreach_mailboxes.find_one = AsyncMock(return_value=mailbox)
-    db.outreach_mailboxes.update_one = AsyncMock(return_value=MagicMock(modified_count=1))
-    with patch("outreach.core.mailbox_sync._paid_sender", new_callable=AsyncMock, return_value=True), \
-         patch("outreach.core.mailbox_sync.get_mailbox_access_token", new_callable=AsyncMock,
-               return_value="access"), \
-         patch("outreach.core.mailbox_sync._gmail_messages", new_callable=AsyncMock,
-               return_value=([{"id": "reply-1", "from": "lead@example.com"}], "101")), \
-         patch("outreach.core.mailbox_sync._mark_inbound", new_callable=AsyncMock,
-               return_value={"status": "reply"}):
-        result = await sync_mailbox_replies(db, workspace_id="ws", sender_account_id="sender")
-    assert result == {"status": "healthy", "replies": 1, "bounces": 0}
-    final_update = db.outreach_mailboxes.update_one.await_args_list[1].args[1]["$set"]
-    assert final_update["history_id"] == "101"
-    assert final_update["sync_status"] == "healthy"
+async def test_completed_gmail_sync_advances_cursor_and_counts_confirmed_reply(sync_db, monkeypatch):
+    from tests.test_outreach_durable_mailbox_sync import http_reads
+    http_reads(monkeypatch)
+    monkeypatch.setattr('outreach.core.mailbox_sync._gmail_messages', AsyncMock(return_value=([{'id': 'reply', 'from': 'lead@example.com'}], '101')))
+    monkeypatch.setattr('outreach.core.mailbox_sync._mark_inbound', AsyncMock(return_value={'status': 'reply'}))
+    assert await sync_mailbox_replies(sync_db, workspace_id='w', sender_account_id='a') == {'status': 'healthy', 'replies': 1, 'bounces': 0}
+    assert sync_db.outreach_mailboxes.docs[0]['history_id'] == '101'
+    assert sync_db.outreach_mailbox_sync_jobs.docs[0]['projected'] == 1
 
 
 @pytest.mark.asyncio
-async def test_microsoft_bootstrap_obtains_a_complete_inbox_delta(monkeypatch):
-    monkeypatch.setenv("OUTREACH_EMAIL_SYNC_ENABLED", "true")
-    db = MagicMock()
-    mailbox = {"workspace_id": "ws", "sender_account_id": "sender", "status": "active",
-               "provider": "microsoft", "connection_job_id": "job-graph", "delta_url": None}
-    db.outreach_mailboxes.find_one = AsyncMock(return_value=mailbox)
-    db.outreach_mailboxes.update_one = AsyncMock(return_value=MagicMock(modified_count=1))
-    delta = "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$deltatoken=complete"
-    with patch("outreach.core.mailbox_sync._paid_sender", new_callable=AsyncMock, return_value=True), \
-         patch("outreach.core.mailbox_sync.get_mailbox_access_token", new_callable=AsyncMock,
-               return_value="access"), \
-         patch("outreach.core.mailbox_sync._provider_get", new_callable=AsyncMock,
-               return_value=httpx.Response(200, json={"value": [], "@odata.deltaLink": delta})) as get:
-        result = await bootstrap_mailbox_sync(db, "ws", "sender")
-    assert result == {"status": "healthy"}
-    assert get.await_args.args[0].endswith("/mailFolders/inbox/messages/delta")
-    assert get.await_args.kwargs["params"]["changeType"] == "created"
-    assert db.outreach_mailboxes.update_one.await_args.args[1]["$set"]["delta_url"] == delta
+async def test_microsoft_bootstrap_obtains_a_complete_inbox_delta(sync_db, monkeypatch):
+    from tests.test_outreach_durable_mailbox_sync import http_reads
+    mailbox = sync_db.outreach_mailboxes.docs[0]; mailbox.update(provider='microsoft', delta_url=None)
+    client = http_reads(monkeypatch)
+    delta = 'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$deltatoken=complete'
+    client.get.return_value = httpx.Response(200, json={'value': [], '@odata.deltaLink': delta})
+    result = await bootstrap_mailbox_sync(sync_db, 'w', 'a')
+    assert result['status'] == 'healthy' and mailbox['delta_url'] == delta
+    assert client.get.await_args.kwargs['params']['changeType'] == 'created'
 
 
 @pytest.mark.asyncio

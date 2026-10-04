@@ -15,11 +15,13 @@ pytestmark = pytest.mark.usefixtures("outreach_paid_gate_stub")
 @pytest.fixture(autouse=True)
 def sandbox_linkedin_sessions(monkeypatch):
     monkeypatch.setenv("OUTREACH_MOCK_AUTH", "true")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "mock")
 from unittest.mock import AsyncMock
 from fastapi import UploadFile
 import io
 
 from outreach.core.voice_cloner import VoiceCloner
+from tests.test_outreach_voice_studio import studio_db, clone
 from outreach.api.voice import (
     clone_voice,
     list_voices,
@@ -56,88 +58,40 @@ async def test_voice_cloner_mock_lifecycle():
 
 
 @pytest.mark.asyncio
-async def test_voice_api_create_and_list():
-    """Verify voice cloning API endpoint and quota listing."""
-    mock_db = AsyncMock()
-    mock_db.outreach_voices.find = lambda q: AsyncMock(to_list=AsyncMock(return_value=[]))
-    mock_db.outreach_voices.insert_one = AsyncMock()
-
-    user = {"user_id": "test_user_789"}
-    file_content = b"RIFF" + b"\x00" * 300
-    upload = UploadFile(filename="sample.wav", file=io.BytesIO(file_content))
-
-    result = await clone_voice(
-        file=upload,
-        name="Founder Voice Note",
-        current_user=user,
-        db=mock_db,
-    )
-
-    assert result["name"] == "Founder Voice Note"
-    assert result["workspace_id"] == "test_user_789"
-    assert "elevenlabs_voice_id" in result
-    mock_db.outreach_voices.insert_one.assert_called_once()
-
-    # Test listing
-    mock_db.outreach_voices.find = lambda q: AsyncMock(to_list=AsyncMock(return_value=[result]))
-    listing = await list_voices(current_user=user, db=mock_db)
-    assert listing["used_count"] == 1
-    assert listing["max_voices"] == 5
-    assert len(listing["voices"]) == 1
+async def test_voice_api_create_and_list(studio_db):
+    from outreach.core.voice_cloner import generate_mock_voice_wav
+    from outreach.core.voice_studio import VoiceStudio
+    user = {'user_id': 'actor', 'default_workspace_id': 'w'}
+    upload = UploadFile(filename='sample.wav', file=io.BytesIO(generate_mock_voice_wav(duration_s=20)))
+    job = await clone_voice(file=upload, name='Founder voice', consent=True, request_id='api-clone-1', current_user=user, db=studio_db)
+    assert job['status'] == 'queued' and 'input_enc' not in job
+    listing = await list_voices(user, studio_db)
+    assert listing['used_count'] == 1 and listing['voices'][0]['status'] == 'creating'
+    assert 'elevenlabs_voice_id' not in listing['voices'][0]
 
 
 @pytest.mark.asyncio
-async def test_voice_api_preview_synthesis():
-    """Verify voice note preview endpoint interpolates lead variables and returns base64 audio."""
-    mock_db = AsyncMock()
-    mock_db.outreach_voices.find_one = AsyncMock(return_value={
-        "id": "v_123",
-        "workspace_id": "test_user_789",
-        "name": "Outbound Voice",
-        "elevenlabs_voice_id": "voice_mock_abcdef1234",
-    })
-
-    user = {"user_id": "test_user_789"}
-    req = VoicePreviewRequest(
-        voice_id="v_123",
-        template_text="Hello {{first_name}} from {{company_name}}!",
-        lead_sample={"first_name": "Elena", "company_name": "Linear"},
-    )
-
-    preview_res = await preview_voice_note(req=req, current_user=user, db=mock_db)
-    assert preview_res["voice_id"] == "v_123"
-    assert "audio_base64" in preview_res
-    assert len(preview_res["audio_base64"]) > 10
+async def test_voice_api_preview_synthesis(studio_db):
+    from outreach.core.voice_studio import VoiceStudio
+    service = VoiceStudio(studio_db); job = await clone(service)
+    await service.run('w', job['_id'], provider=AsyncMock(return_value={'voice_id': 'provider_voice'}))
+    profile = studio_db.outreach_voices.docs[0]
+    req = VoicePreviewRequest(voice_id=profile['id'], request_id='api-preview-1', template_text='Hi {{first_name}}', lead_sample={'first_name': 'Alex'})
+    preview = await preview_voice_note(req, {'user_id': 'actor', 'default_workspace_id': 'w'}, studio_db)
+    assert preview['status'] == 'queued' and 'audio_base64' not in preview
 
 
 @pytest.mark.asyncio
-async def test_voice_api_assignment_and_deletion():
-    """Verify assigning voices to senders and deleting voice profiles."""
-    mock_db = AsyncMock()
-    mock_db.outreach_voices.update_one = AsyncMock(return_value=AsyncMock(matched_count=1))
-    mock_db.outreach_voices.find_one = AsyncMock(return_value={
-        "id": "v_123",
-        "workspace_id": "test_user_789",
-        "elevenlabs_voice_id": "voice_mock_123",
-    })
-    mock_db.outreach_voices.delete_one = AsyncMock()
-
-    user = {"user_id": "test_user_789"}
-
-    # Assignment
-    assign_res = await assign_voice(
-        voice_id="v_123",
-        req=AssignVoiceRequest(account_ids=["acc_1", "acc_2"]),
-        current_user=user,
-        db=mock_db,
-    )
-    assert assign_res["status"] == "success"
-    assert assign_res["assigned_account_ids"] == ["acc_1", "acc_2"]
-
-    # Deletion
-    del_res = await delete_voice(voice_id="v_123", current_user=user, db=mock_db)
-    assert del_res["status"] == "deleted"
-    mock_db.outreach_voices.delete_one.assert_called_once()
+async def test_voice_api_assignment_and_deletion(studio_db):
+    from outreach.core.voice_studio import VoiceStudio
+    service = VoiceStudio(studio_db); job = await clone(service)
+    await service.run('w', job['_id'], provider=AsyncMock(return_value={'voice_id': 'provider_voice'}))
+    profile = studio_db.outreach_voices.docs[0]
+    studio_db.outreach_accounts.docs.append({'id': 'a', 'workspace_id': 'w'})
+    user = {'user_id': 'actor', 'default_workspace_id': 'w'}
+    assert (await assign_voice(profile['id'], AssignVoiceRequest(account_ids=['a']), user, studio_db))['status'] == 'success'
+    deletion = await delete_voice(profile['id'], 'api-delete-1', user, studio_db)
+    assert deletion['status'] == 'queued' and len(studio_db.outreach_voices.docs) == 1
 
 
 @pytest.mark.asyncio
@@ -150,7 +104,7 @@ async def test_voice_cloner_synthesizes_playable_wav():
 
 
 @pytest.mark.asyncio
-async def test_sequence_executor_handles_voice_note_step():
+async def test_sequence_executor_handles_voice_note_step(monkeypatch):
     """Verify SequenceExecutor dispatches voice notes through Voyager and checks daily limits."""
     from outreach.tasks.sequence_executor import SequenceExecutor
     from outreach.models import SequenceNodeType
@@ -165,6 +119,7 @@ async def test_sequence_executor_handles_voice_note_step():
         "first_name": "Alex",
         "company_name": "TechVentures",
         "execution_state": "queued",
+        "current_node_id": "step_vn_1",
     })
     mock_db.outreach_campaigns.find_one = AsyncMock(return_value={
         "id": "camp_voice_1",
@@ -193,7 +148,12 @@ async def test_sequence_executor_handles_voice_note_step():
             }
         }
     })
+    from outreach.core.voice_studio import source_digest
+    from datetime import datetime, timezone
+    monkeypatch.setenv('ELEVENLABS_API_KEY', 'local-provider-key')
     mock_db.outreach_voices.find_one = AsyncMock(return_value={
+        'status': 'active', 'provider_source_digest': source_digest(),
+        'consent': {'actor': 'actor', 'version': 1, 'asserted_at': datetime.now(timezone.utc), 'assertion_digest': 'test-consent'},
         "id": "v_voice_1",
         "workspace_id": "ws_123",
         "elevenlabs_voice_id": "voice_mock_custom",

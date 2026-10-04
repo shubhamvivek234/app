@@ -58,6 +58,7 @@ def _sanitize_account(acc: dict[str, Any]) -> dict[str, Any]:
     clean.pop("li_a_enc", None)
     clean.pop("jsession_id", None)
     clean.pop("li_at_enc", None)
+    clean.pop("jsession_id_enc", None)
     clean.pop("_id", None)
     if clean.get("proxy"):
         clean["proxy"] = dict(clean["proxy"])
@@ -185,12 +186,13 @@ async def disconnect_account(
         {"id": account_id, "workspace_id": ws_id},
         {"$set": {"status": AccountStatus.DISCONNECTED, "updated_at": now},
          "$unset": {"session_cookie_enc": "", "encrypted_session_cookie": "",
-                    "jsession_id": "", "li_a_enc": ""}},
+                    "jsession_id": "", "li_a_enc": "", "li_at_enc": "", "jsession_id_enc": ""}},
     )
     # Relational Cascade: Unbind account from campaign sender pools
     await db.outreach_campaigns.update_many(
         {"workspace_id": ws_id, "sender_account_ids": account_id},
-        {"$pull": {"sender_account_ids": account_id}, "$set": {"updated_at": now, "status": "paused"}}
+        {"$pull": {"sender_account_ids": account_id}, "$set": {"updated_at": now, "status": "paused"},
+         "$inc": {"authorization_revision": 1}, "$addToSet": {"pause_reasons": "sender_unavailable"}}
     )
 
     # Relational Cascade: Cancel queued/pending tasks scheduled on this account

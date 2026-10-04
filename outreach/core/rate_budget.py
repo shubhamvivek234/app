@@ -1,24 +1,15 @@
-"""
-Dynamic Redis Token-Bucket Rate Budget for Outreach Pacing.
-Eliminates arbitrary time.sleep() loops.
-Driven dynamically by sender account settings:
-- Daily action cap
-- Hourly action cap
-- Timezone-aware working hours & days
-- Min / Max interval bounds
+"""Legacy pacing facade backed by the shared MongoDB physical-request budget.
+
+Working hours and sender pacing remain supported; storage failures deny requests.
+Live adapters reserve at their transport boundary instead of using this facade.
 """
 import logging
-import random
-import time
 from datetime import datetime, time as dtime, timedelta, timezone
 from typing import Any, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 logger = logging.getLogger(__name__)
 
-# Fallback in-memory storage for test suites or offline Redis
-_MEMORY_COUNTERS: dict[str, int] = {}
-_MEMORY_TIMESTAMPS: dict[str, float] = {}
 
 
 def _to_utc(dt: Any) -> datetime:
@@ -55,6 +46,7 @@ class RateBudget:
         action_type: str = "generic",
         redis_client: Any = None,
         now: Optional[datetime] = None,
+        db: Any = None,
     ) -> tuple[bool, int, str]:
         """
         Requests an execution token for the sender.
@@ -67,7 +59,6 @@ class RateBudget:
         now = now or datetime.now(timezone.utc)
         if now.tzinfo is None:
             now = now.replace(tzinfo=timezone.utc)
-        now_ts = now.timestamp()
 
         # 1. Circuit Breaker / Account Status Check
         status = sender_config.get("status", "active")
@@ -130,104 +121,25 @@ class RateBudget:
                 wait_sec = int((next_start_dt - sender_now).total_seconds()) + 1
                 return False, max(wait_sec, 60), "after_working_hours"
 
-        # 3. Minimum Interval / Pacing Cooldown Check
-        min_sec = sender_config.get("min_interval_seconds")
-        min_interval = int(min_sec) if min_sec is not None else 45
-        max_sec = sender_config.get("max_interval_seconds")
-        max_interval = int(max_sec) if max_sec is not None else 180
-        ts_key = f"outreach:budget:{sender_id}:last_action_ts"
-
-        last_action_ts = await cls._get_timestamp(redis_client, ts_key)
-        if last_action_ts and min_interval > 0:
-            elapsed = now_ts - last_action_ts
-            if elapsed < min_interval:
-                retry_countdown = int(min_interval - elapsed) + 1
-                return False, max(retry_countdown, 5), "min_interval_cooldown"
-
-        # 4. Hourly Action Cap Check
-        hourly_cap = int(sender_config.get("hourly_action_cap") or 8)
-        hour_key = f"outreach:budget:{sender_id}:hourly:{sender_now.strftime('%Y%m%d%H')}"
-        hourly_count = await cls._get_counter(redis_client, hour_key)
-        if hourly_count >= hourly_cap:
-            sec_until_next_hour = (60 - sender_now.minute) * 60 - sender_now.second + 5
-            return False, max(sec_until_next_hour, 60), "hourly_cap_reached"
-
-        # 5. Daily Action Cap Check
-        daily_cap = int(sender_config.get("daily_action_cap") or 50)
-        day_key = f"outreach:budget:{sender_id}:daily:{sender_now.strftime('%Y%m%d')}"
-        daily_count = await cls._get_counter(redis_client, day_key)
-        if daily_count >= daily_cap:
-            # Time until midnight in sender's timezone
-            sec_until_midnight = ((23 - sender_now.hour) * 3600) + ((59 - sender_now.minute) * 60) + (60 - sender_now.second) + 5
-            return False, max(sec_until_midnight, 300), "daily_cap_reached"
-
-        # 6. Action-Specific Limit Check (e.g. connection_invites, messages)
-        limits = sender_config.get("limits") or {}
-        if isinstance(limits, dict) and action_type in limits:
-            action_cap = int(limits[action_type])
-            action_day_key = f"outreach:budget:{sender_id}:{action_type}:daily:{sender_now.strftime('%Y%m%d')}"
-            action_count = await cls._get_counter(redis_client, action_day_key)
-            if action_count >= action_cap:
-                sec_until_midnight = ((23 - sender_now.hour) * 3600) + ((59 - sender_now.minute) * 60) + (60 - sender_now.second) + 5
-                return False, max(sec_until_midnight, 300), f"{action_type}_daily_cap_reached"
-
-        # 7. Grant Token: Increment counters and record timestamp
-        await cls._incr_counter(redis_client, hour_key, ttl=7200)
-        await cls._incr_counter(redis_client, day_key, ttl=172800)
-        if isinstance(limits, dict) and action_type in limits:
-            await cls._incr_counter(redis_client, f"outreach:budget:{sender_id}:{action_type}:daily:{sender_now.strftime('%Y%m%d')}", ttl=172800)
-
-        await cls._set_timestamp(redis_client, ts_key, now_ts, ttl=86400)
-        return True, 0, "ok"
-
-    # ── Helpers for Redis / In-Memory Fallback ───────────────────────────────
-
-    @classmethod
-    async def _get_counter(cls, redis_client: Any, key: str) -> int:
-        if redis_client is not None:
-            try:
-                val = await redis_client.get(key)
-                return int(val) if val else 0
-            except Exception as e:
-                logger.debug("Redis error reading counter %s, falling back to memory: %s", key, e)
-        return _MEMORY_COUNTERS.get(key, 0)
-
-    @classmethod
-    async def _incr_counter(cls, redis_client: Any, key: str, ttl: int = 86400) -> int:
-        if redis_client is not None:
-            try:
-                pipe = redis_client.pipeline()
-                pipe.incr(key)
-                pipe.expire(key, ttl)
-                res = await pipe.execute()
-                return int(res[0])
-            except Exception as e:
-                logger.debug("Redis error incrementing %s, falling back to memory: %s", key, e)
-        _MEMORY_COUNTERS[key] = _MEMORY_COUNTERS.get(key, 0) + 1
-        return _MEMORY_COUNTERS[key]
-
-    @classmethod
-    async def _get_timestamp(cls, redis_client: Any, key: str) -> Optional[float]:
-        if redis_client is not None:
-            try:
-                val = await redis_client.get(key)
-                return float(val) if val else None
-            except Exception as e:
-                logger.debug("Redis error reading ts %s, falling back to memory: %s", key, e)
-        return _MEMORY_TIMESTAMPS.get(key)
-
-    @classmethod
-    async def _set_timestamp(cls, redis_client: Any, key: str, val: float, ttl: int = 86400) -> None:
-        if redis_client is not None:
-            try:
-                await redis_client.set(key, str(val), ex=ttl)
-                return
-            except Exception as e:
-                logger.debug("Redis error writing ts %s, falling back to memory: %s", key, e)
-        _MEMORY_TIMESTAMPS[key] = val
+        # Compatibility facade: physical requests use RequestEnvelope directly.
+        # There is no Redis/process-memory authority or silent offline grant.
+        from outreach.core.request_guard import PhysicalBudget
+        workspace_id = sender_config.get("workspace_id")
+        if db is None or not workspace_id:
+            return False, 30, "budget_authority_unavailable"
+        if action_type == "withdraw":
+            return False, 30, "withdrawal_unavailable"
+        policy = dict(sender_config.get("request_budget") or {})
+        policy.setdefault("hourly_cap", int(sender_config.get("hourly_action_cap") or 8))
+        policy.setdefault("daily_cap", int(sender_config.get("daily_action_cap") or 50))
+        policy.setdefault("reserved_hourly", 0)
+        policy.setdefault("reserved_daily", 0)
+        policy.setdefault("min_interval_seconds", int(sender_config.get("min_interval_seconds", 45)))
+        allowed, wait, reason = await PhysicalBudget(db).reserve(workspace_id, sender_id, "search", "read",
+            {"request_budget": policy}, now=now)
+        reason = {"physical_hourly_cap": "hourly_cap_reached", "physical_daily_cap": "daily_cap_reached"}.get(reason, reason)
+        return allowed, wait, reason
 
     @classmethod
     def reset_memory(cls) -> None:
-        """Utility for test suites to clear in-memory state."""
-        _MEMORY_COUNTERS.clear()
-        _MEMORY_TIMESTAMPS.clear()
+        """Deprecated compatibility hook: execution has no process-local budget."""

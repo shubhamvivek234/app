@@ -17,6 +17,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 import uuid
 from api.deps import get_current_user, require_permission
 from db.mongo import get_db
+from outreach.core.sequence_versions import load_sequence
 from outreach.core.lead_importer import (
     LeadImporter,
     normalize_linkedin_url,
@@ -235,9 +236,7 @@ async def import_leads_urls(
             "workspace_id": workspace_id,
             "status": "active",
         })
-        sequence = await db.outreach_sequences.find_one({
-            "campaign_id": req.campaign_id, "is_deleted": {"$ne": True},
-        })
+        sequence = await load_sequence(db, workspace_id, req.campaign_id, campaign=campaign)
         if not sender_count or not (sequence or {}).get("compiled_dag", {}).get("root_node_ids"):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -300,9 +299,7 @@ async def import_leads_csv(
             "workspace_id": workspace_id,
             "status": "active",
         })
-        sequence = await db.outreach_sequences.find_one({
-            "campaign_id": req.campaign_id, "is_deleted": {"$ne": True},
-        })
+        sequence = await load_sequence(db, workspace_id, req.campaign_id, campaign=campaign)
         if not sender_count or not (sequence or {}).get("compiled_dag", {}).get("root_node_ids"):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -364,9 +361,7 @@ async def import_leads_staged(
             "workspace_id": workspace_id,
             "status": "active",
         })
-        sequence = await db.outreach_sequences.find_one({
-            "campaign_id": req.campaign_id, "is_deleted": {"$ne": True},
-        })
+        sequence = await load_sequence(db, workspace_id, req.campaign_id, campaign=campaign)
         if not sender_count or not (sequence or {}).get("compiled_dag", {}).get("root_node_ids"):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -503,7 +498,10 @@ async def import_search_url(
 
     # 8. Dispatch page 1 task
     from celery_workers.tasks.outreach import crawl_page
-    crawl_page.delay(job.id, 0, job.lease_token)
+    try:
+        crawl_page.delay(job.id, 0, job.lease_token)
+    except Exception as exc:
+        logger.warning("Search job saved; initial page publication deferred (%s)", type(exc).__name__)
 
     if "_id" in job_dict:
         del job_dict["_id"]
@@ -837,30 +835,19 @@ async def add_do_not_contact(
         "created_at": datetime.now(timezone.utc),
     }
 
-    or_clauses = []
-    if identifiers.normalized_url:
-        or_clauses.append({"identifiers.normalized_url": identifiers.normalized_url})
-        or_clauses.append({"linkedin_url": identifiers.normalized_url})
-    if identifiers.email:
-        or_clauses.append({"identifiers.email": identifiers.email})
-        or_clauses.append({"email": identifiers.email})
-    if identifiers.member_urn:
-        or_clauses.append({"identifiers.member_urn": identifiers.member_urn})
-        or_clauses.append({"member_urn": identifiers.member_urn})
-    if identifiers.sales_lead_urn:
-        or_clauses.append({"identifiers.sales_lead_urn": identifiers.sales_lead_urn})
-        or_clauses.append({"sales_lead_urn": identifiers.sales_lead_urn})
-    if identifiers.vanity_name:
-        or_clauses.append({"identifiers.vanity_name": identifiers.vanity_name})
-        or_clauses.append({"vanity_name": identifiers.vanity_name})
+    from outreach.core.authorization import canonical_hash
+    query = {"workspace_id": workspace_id, "_id": canonical_hash([workspace_id, "dnc", identifiers.model_dump()])}
 
-    query = {"workspace_id": workspace_id, "$or": or_clauses} if or_clauses else {"workspace_id": workspace_id, "linkedin_url": primary_key}
-
-    await db.outreach_do_not_contact.update_one(
-        query,
-        {"$set": doc},
-        upsert=True,
-    )
+    from outreach.core.suppression import mutate_suppression, SuppressionUnavailable
+    async def save(current):
+        created_at = doc["created_at"]
+        values = {key: value for key, value in doc.items() if key != "created_at"}
+        await current.outreach_do_not_contact.update_one(query,
+            {"$set": values, "$setOnInsert": {"created_at": created_at}}, upsert=True)
+    try:
+        await mutate_suppression(db, workspace_id, save)
+    except SuppressionUnavailable:
+        raise HTTPException(status_code=503, detail="Do-Not-Contact could not be saved. Please retry.") from None
 
     return {"status": "success", "message": f"{primary_key} added to Do-Not-Contact list"}
 
@@ -1271,7 +1258,7 @@ async def resume_lead(
         count_res = db.outreach_tasks.count_documents({
             "lead_id": lead_id,
             "workspace_id": workspace_id,
-            "status": "uncertain",
+            "status": {"$in": ["uncertain", "resolving"]},
         })
         if hasattr(count_res, "__await__"):
             count_res = await count_res
@@ -1308,4 +1295,3 @@ async def resume_lead(
     )
 
     return {"status": "resumed", "lead_id": lead_id, "execution_state": "queued"}
-

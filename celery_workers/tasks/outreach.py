@@ -15,11 +15,16 @@ from outreach.api.campaigns import (
 from outreach.core.rate_limiter import OutboundRateLimiter
 from outreach.core.proxy_manager import JITProxyManager
 from outreach.engine.session_authenticator import SessionAuthenticator, InvalidSessionError
-from outreach.core.crypto import decrypt_secret
+from outreach.core.session_custody import pending_session, account_session, seal_installed, custody_mode
+from outreach.core.proxy_custody import prepare_proxy
 from outreach.core.paid_access import get_active_entitlement, live_actions_enabled, sender_is_ready, _utc
 from outreach.core.sequence_capabilities import sequence_dispatch_enabled
 from outreach.core.managed_proxy import _proxy_from_inventory, release_sender_reservation
-from outreach.models import AccountAuthMode, AccountStatus, DailyLimits, OutreachAccount
+from outreach.models import AccountAuthMode, AccountStatus
+from outreach.core.connection_repair import ConnectionRepair, credential_deadline
+from outreach.core.request_guard import RequestEnvelope, RequestDenied
+from outreach.core.execution_permission import ExecutionPermission
+from outreach.core.inbox_freshness import credential_generation
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +39,14 @@ async def _verify_sender_connection(job_id: str, workspace_id: str, trace_id: st
     if is_shutting_down():
         return {"status": "shutting_down"}
     db = db or await _inbox_db()
+    now = datetime.now(timezone.utc)
+    owner = str(uuid.uuid4())
     claimed = await db.outreach_connection_jobs.update_one(
-        {"id": job_id, "workspace_id": workspace_id, "status": "queued"},
-        {"$set": {"status": "running", "started_at": datetime.now(timezone.utc)}},
+        {"id": job_id, "workspace_id": workspace_id, "status": "queued", "$and": [
+            {"$or": [{"next_verification_due_at": {"$lte": now}}, {"next_verification_due_at": {"$exists": False}}]},
+            {"$or": [{"created_at": {"$gte": now - timedelta(minutes=15)}}, {"created_at": {"$exists": False}}]},
+        ]},
+        {"$set": {"status": "running", "started_at": now, "verification_owner_token": owner}},
     )
     if not claimed.modified_count:
         return {"status": "already_claimed"}
@@ -45,8 +55,13 @@ async def _verify_sender_connection(job_id: str, workspace_id: str, trace_id: st
         return {"status": "job_missing"}
 
     sender_id = job["sender_id"]
+    job_scope = {"id": job_id, "workspace_id": workspace_id, "status": "running", "verification_owner_token": owner}
+    deferred = False
+    finalizing = False
     error = "Sender verification failed. Check your session and proxy, then try again."
     try:
+        if not credential_deadline(job) or credential_deadline(job) <= datetime.now(timezone.utc):
+            raise ValueError("connection_job_expired")
         if (not live_actions_enabled()
                 or os.getenv("OUTREACH_MOCK_AUTH", "false").lower() in {"true", "1"}
                 or not await get_active_entitlement(db, workspace_id)):
@@ -65,15 +80,22 @@ async def _verify_sender_connection(job_id: str, workspace_id: str, trace_id: st
         if (inventory.get("country_code") != job["country_code"] or not expires_at
                 or expires_at <= datetime.now(timezone.utc)):
             raise ValueError("provider_term_expired")
+        if not await ExecutionPermission(db).allowed(workspace_id, sender_id, "pending:" + job_id, "verify"):
+            raise RequestDenied("execution_permission_required", 15)
         proxy = _proxy_from_inventory(inventory)
-        if not await JITProxyManager().test_proxy_health(proxy):
+        prepared = await prepare_proxy(proxy, workspace_id)
+        health_options = {"prepared_proxy": prepared} if prepared.scoped else {}
+        if not await JITProxyManager().test_proxy_health(proxy, **health_options):
             raise ValueError("proxy_health_failed")
+        material = await pending_session(job)
+        if credential_deadline(job) <= datetime.now(timezone.utc):
+            raise ValueError("connection_job_expired")
         profile = await SessionAuthenticator.validate_session_cookie(
-            li_at=decrypt_secret(job["li_at_enc"]),
-            jsession_id=decrypt_secret(job["jsession_id_enc"]),
-            li_a=decrypt_secret(job["li_a_enc"]) if job.get("li_a_enc") else None,
-            proxy_url=JITProxyManager.format_proxy_url(proxy),
+            **material,
+            proxy_url=prepared.url,
             user_agent=job.get("user_agent"),
+            request_envelope=RequestEnvelope(db, workspace_id, sender_id, "pending:" + job_id, "verify",
+                prepared.url, connection_job_id=job_id, prepared_proxy=prepared),
         )
         linkedin_urn = profile.get("linkedin_urn")
         if not linkedin_urn:
@@ -93,78 +115,171 @@ async def _verify_sender_connection(job_id: str, workspace_id: str, trace_id: st
         # Payment and provider term may have changed during the network call.
         if not await get_active_entitlement(db, workspace_id):
             raise ValueError("paid_access_unavailable")
-        current_job = await db.outreach_connection_jobs.find_one({
-            "id": job_id, "workspace_id": workspace_id, "status": "running",
-        })
+        current_job = await db.outreach_connection_jobs.find_one(job_scope)
         if not current_job:
             raise ValueError("connection_job_expired")
         refreshed = await db.outreach_proxy_inventory.find_one({"_id": job["proxy_id"]})
         if not refreshed or not _utc(refreshed.get("expires_at")) or _utc(refreshed["expires_at"]) <= datetime.now(timezone.utc):
             raise ValueError("provider_term_expired")
+        fresh_lease = await db.outreach_proxy_leases.find_one({
+            "_id": job["proxy_id"], "workspace_id": workspace_id, "sender_id": sender_id})
+        fresh_slot = await db.outreach_sender_slots.find_one({"workspace_id": workspace_id, "sender_id": sender_id})
+        if (not fresh_lease or not fresh_slot or refreshed.get("status") != "available"
+                or refreshed.get("last_workspace_id") != workspace_id
+                or refreshed.get("country_code") != job["country_code"]):
+            raise ValueError("sender_capacity_unavailable")
 
         now = datetime.now(timezone.utc)
+        generation = str(uuid.uuid4())
+        installed = (await seal_installed(material, workspace_id, sender_id, generation)
+            if custody_mode() == "kms_v1" else {"session_cookie_enc": job["li_at_enc"],
+                "jsession_id": job["jsession_id_enc"], "li_a_enc": job.get("li_a_enc") or ""})
+        now = datetime.now(timezone.utc)
+        if credential_deadline(job) <= now:
+            raise ValueError("connection_job_expired")
+        # From preparation onward an uncertain acknowledgement is quarantined.
+        finalizing = True
+        repair = ConnectionRepair(db)
+        await repair.prepare(job, owner, generation, profile, now=now)
+        # Credential writes can commit even if the acknowledgement is lost.
+        # The ordinary timeout/paid cleanup may only release pre-activation jobs.
+        final_claim = await db.outreach_connection_jobs.update_one({**job_scope, "custody_expires_at": {"$gt": now}}, {"$set": {
+            "status": "finalizing", "finalizing_at": now, "credential_generation": generation,
+            "custody_started_at": job.get("custody_started_at") or job.get("created_at"),
+            "expected_linkedin_urn": linkedin_urn}, "$unset": {"created_at": ""}})
+        if not final_claim.modified_count:
+            return {"status": "connection_job_expired"}
+        job_scope = {**job_scope, "status": "finalizing"}
         updates = {
             "account_name": profile.get("account_name") or "LinkedIn sender",
             "avatar_url": profile.get("avatar_url"),
             "linkedin_urn": linkedin_urn,
             "vanity_name": profile.get("vanity_name"),
             "auth_mode": AccountAuthMode.COOKIE,
-            "session_cookie_enc": job["li_at_enc"],
-            "jsession_id": job["jsession_id_enc"],
-            "li_a_enc": job.get("li_a_enc") or "",
+            **installed,
             "premium_product": job.get("premium_product") or "classic",
             "user_agent": job.get("user_agent") or "",
             "country_code": job["country_code"],
             "proxy": proxy.model_dump(), "status": AccountStatus.ACTIVE,
+            "credential_generation": generation, "inbox_sync": {"status": "required"},
             "updated_at": now,
         }
-        if existing:
-            await db.outreach_accounts.update_one(
-                {"id": sender_id, "workspace_id": workspace_id},
-                {"$set": updates, "$unset": {"encrypted_session_cookie": "", "proxy_config": ""}},
-            )
-        else:
-            account = OutreachAccount(
-                id=sender_id, workspace_id=workspace_id, user_id=job["user_id"],
-                limits=DailyLimits(), created_at=now, **updates,
-            ).model_dump()
-            await db.outreach_accounts.insert_one(account)
+        if not await get_active_entitlement(db, workspace_id) or not await repair.install(job, owner, generation, updates):
+            raise ValueError("connection_installation_stopped")
         # The paid period may end while identity verification or the DB write
         # is in flight. Never leave a newly usable session behind in that case.
         if not await get_active_entitlement(db, workspace_id):
-            await db.outreach_accounts.update_one(
-                {"id": sender_id, "workspace_id": workspace_id},
-                {"$set": {"status": "reauth_required", "updated_at": datetime.now(timezone.utc)},
-                 "$unset": {"session_cookie_enc": "", "encrypted_session_cookie": "", "jsession_id": "", "li_a_enc": ""}},
-            )
+            await repair.close_fence(job)
             raise ValueError("paid_access_unavailable")
-        await db.outreach_connection_jobs.update_one(
-            {"id": job_id, "workspace_id": workspace_id},
-            {"$set": {"status": "completed", "account_id": sender_id, "updated_at": now},
-             "$unset": {"li_at_enc": "", "jsession_id_enc": "", "li_a_enc": ""}},
+        # Mark the account fence closed without renewing or copying credentials.
+        closed = await db.outreach_accounts.update_one({"id": sender_id, "workspace_id": workspace_id,
+            "credential_generation": generation, "connection_finalization.job_id": job_id,
+            "connection_finalization.owner_token": owner, "connection_finalization.state": "installed"}, {
+            "$set": {"connection_finalization.state": "closed", "connection_finalization.completion": "verified_install"}})
+        if not closed.matched_count:
+            raise ValueError("connection_installation_stopped")
+        completed = await db.outreach_connection_jobs.update_one(
+            {**job_scope, "custody_expired_at": {"$exists": False},
+             "$expr": {"$gt": ["$custody_expires_at", "$$NOW"]}},
+            {"$set": {"status": "completed", "account_id": sender_id, "updated_at": now,
+                      "connection_cleanup_complete": False},
+             "$unset": {"li_at_enc": "", "jsession_id_enc": "", "li_a_enc": "", "verification_owner_token": ""}},
         )
+        if not completed.modified_count:
+            raise RuntimeError("Connection finalization ownership changed")
+        finalizing = False
         return {"status": "completed", "account_id": sender_id}
+    except RequestDenied as exc:
+        # Known non-calls wait for operator permission/capacity without losing
+        # encrypted pending values. The existing 15-minute reaper bounds custody.
+        changed = await db.outreach_connection_jobs.update_one(job_scope, {
+            "$set": {"status": "queued", "deferred_reason": exc.reason,
+                      "next_verification_due_at": datetime.now(timezone.utc) + timedelta(seconds=max(5, exc.retry_after)),
+                      "updated_at": datetime.now(timezone.utc)},
+            "$unset": {"verification_owner_token": ""},
+        })
+        deferred = bool(changed.modified_count)
+        return {"status": "deferred" if deferred else "connection_job_expired", "reason": exc.reason}
     except Exception as exc:
         # Never write exception strings: network errors may contain proxy credentials.
         logger.error("Sender verification failed trace=%s reason=%s", trace_id, type(exc).__name__)
+        if finalizing:
+            current = await db.outreach_connection_jobs.find_one({"id": job_id, "workspace_id": workspace_id})
+            if current and current.get("status") == "failed" and not current.get("finalization_prepared"):
+                # Another cleanup owns the job. No account fence was prepared.
+                deferred = True
+                finalizing = False
+                return {"status": "connection_job_expired"}
+            if current and current.get("status") == "completed" and current.get("credential_generation") == generation:
+                finalizing = False
+                return {"status": "completed", "account_id": sender_id}
+            # Preserve reservations/lock after a possible credential activation.
+            # A drained operator repair must inspect the exact new generation.
+            await ExecutionPermission(db).revoke(workspace_id, sender_id, "connection_guard", "connection_finalization_unknown")
+            await db.outreach_connection_jobs.update_one({"id": job_id, "workspace_id": workspace_id,
+                "verification_owner_token": owner, "status": {"$in": ["running", "finalizing"]}}, {"$set": {
+                "status": "finalizing", "custody_started_at": job.get("custody_started_at") or job.get("created_at"),
+                "error": "Connection finalization requires operator review.", "needs_operator_repair": True,
+                "updated_at": datetime.now(timezone.utc)},
+                "$unset": {"li_at_enc": "", "jsession_id_enc": "", "li_a_enc": "", "created_at": ""}})
+            return {"status": "finalization_review_required"}
         if isinstance(exc, InvalidSessionError):
             error = "LinkedIn session was rejected or belongs to another sender. Recheck the session values."
         elif isinstance(exc, ValueError) and str(exc) == "paid_access_unavailable":
             error = "Paid sender access is no longer active."
         elif isinstance(exc, ValueError) and str(exc) in {"provider_term_expired", "proxy_health_failed", "sender_capacity_unavailable"}:
             error = "The assigned provider IP is unavailable. Contact support before retrying."
-        await db.outreach_connection_jobs.update_one(
-            {"id": job_id, "workspace_id": workspace_id},
+        stopped = await db.outreach_connection_jobs.update_one(
+            job_scope,
             {"$set": {"status": "failed", "error": error, "updated_at": datetime.now(timezone.utc)},
-             "$unset": {"li_at_enc": "", "jsession_id_enc": "", "li_a_enc": ""}},
+             "$unset": {"li_at_enc": "", "jsession_id_enc": "", "li_a_enc": "", "verification_owner_token": ""}},
         )
+        if not stopped.modified_count:
+            return {"status": "connection_job_expired"}
         if job.get("new_proxy_reservation"):
             await release_sender_reservation(db, workspace_id, sender_id, job["proxy_id"])
         if job.get("created_slot"):
             await db.outreach_sender_slots.delete_one({"workspace_id": workspace_id, "sender_id": sender_id})
         return {"status": "failed"}
     finally:
-        await db.outreach_connection_locks.delete_one({"_id": sender_id, "job_id": job_id})
+        if not deferred and not finalizing:
+            await db.outreach_connection_locks.delete_one({"_id": sender_id, "job_id": job_id})
+            await db.outreach_connection_jobs.update_one({"id": job_id, "workspace_id": workspace_id,
+                "status": "completed", "connection_cleanup_complete": False}, {"$set": {
+                "connection_cleanup_complete": True, "created_at": datetime.now(timezone.utc)}})
+
+
+@celery_app.task(name="celery_workers.tasks.outreach.dispatch_due_verifications", queue="outreach", acks_late=True)
+def dispatch_due_verifications() -> dict:
+    return run_async(_dispatch_due_verifications())
+
+
+async def _dispatch_due_verifications(db=None) -> dict:
+    """Publish durable pending references, never credentials; worker CAS fences duplicates."""
+    if is_shutting_down() or not live_actions_enabled():
+        return {"disabled": True, "published": 0}
+    db = db or await _inbox_db()
+    now = datetime.now(timezone.utc)
+    jobs = await db.outreach_connection_jobs.find({"status": "queued", "$and": [
+        {"$or": [{"next_verification_due_at": {"$lte": now}}, {"next_verification_due_at": {"$exists": False}}]},
+        {"$or": [{"created_at": {"$gte": now - timedelta(minutes=15)}}, {"created_at": {"$exists": False}}]},
+    ]}).limit(50).to_list(length=50)
+    published = 0
+    for job in jobs:
+        if is_shutting_down():
+            break
+        try:
+            verify_sender_connection.delay(job["id"], job["workspace_id"], job.get("trace_id") or job["id"])
+            published += 1
+        except Exception as exc:
+            logger.warning("Due verification publication failed (%s)", type(exc).__name__)
+    return {"published": published}
+
+
+celery_app.conf.beat_schedule["dispatch-due-outreach-verifications"] = {
+    "task": "celery_workers.tasks.outreach.dispatch_due_verifications", "schedule": 30.0,
+    "options": {"queue": "outreach"},
+}
 
 
 async def _inbox_db():
@@ -207,76 +322,32 @@ async def _sync_inbox(job_id: str, workspace_id: str, user_id: str, account_id: 
 
 
 @celery_app.task(name="celery_workers.tasks.outreach.send_inbox_reply", queue="outreach", acks_late=True)
-def send_inbox_reply(job_id: str, workspace_id: str, account_id: str, thread_id: str, body: str) -> dict:
+def send_inbox_reply(job_id: str, workspace_id: str, account_id: str, thread_id: str, body: str | None = None) -> dict:
     return run_async(_send_inbox_reply(job_id, workspace_id, account_id, thread_id, body))
 
 
-async def _send_inbox_reply(job_id: str, workspace_id: str, account_id: str, thread_id: str, body: str) -> dict:
-    from outreach.core.proxy_manager import JITProxyManager
-    from outreach.core.rate_limiter import OutboundRateLimiter
-    from outreach.core.safety_shield import SafetyShield
-    from outreach.engine.voyager_client import VoyagerClient
-    from outreach.models import MessageSenderType, OutreachInboxMessage
+async def _send_inbox_reply(job_id: str, workspace_id: str, account_id: str, thread_id: str, body: str | None = None) -> dict:
+    from outreach.core.manual_actions import ManualActions
 
     db = await _inbox_db()
-    if is_shutting_down() or not live_actions_enabled():
-        await _set_inbox_job(db, job_id, workspace_id, "failed", error="Outreach sending is unavailable")
-        return {"status": "unavailable"}
-    claim = await db.outreach_inbox_jobs.update_one(
-        {"id": job_id, "workspace_id": workspace_id, "status": "queued"},
-        {"$set": {"status": "running", "updated_at": datetime.now(timezone.utc)}},
-    )
-    if not claim.modified_count:
-        return {"status": "already_claimed"}
-    try:
-        thread = await db.outreach_inbox_threads.find_one({"id": thread_id, "workspace_id": workspace_id, "account_id": account_id})
-        account = await db.outreach_accounts.find_one({"id": account_id, "workspace_id": workspace_id, "status": "active"})
-        if not thread or not account or not thread.get("conversation_urn"):
-            raise ValueError("The conversation or its assigned sender is unavailable")
-        if not await sender_is_ready(db, workspace_id, account):
-            raise ValueError("Paid sender access or provider IP is unavailable")
-        if thread.get("is_demo"):
-            raise ValueError("Sample conversations cannot be sent to LinkedIn")
-        cookie_enc = account.get("session_cookie_enc") or account.get("encrypted_session_cookie")
-        if not cookie_enc:
-            raise ValueError("Sender account has no LinkedIn session")
-        proxy_config = account.get("proxy_config") or account.get("proxy")
-        proxy_url = JITProxyManager.format_proxy_url(proxy_config) if proxy_config else None
-        client = VoyagerClient(cookie_enc, jsession_id=account.get("jsession_id", ""), proxy_url=proxy_url)
-        if client.is_mock and os.getenv("OUTREACH_MOCK_AUTH", "false").lower() not in {"true", "1"}:
-            raise ValueError("Mock sender sessions cannot send real replies")
-        allowed = await OutboundRateLimiter.check_and_increment_daily_limit(account, "messages", db)
-        if not allowed:
-            raise ValueError("Sender account has reached its daily message limit")
-        response = await client.send_conversation_reply(thread["conversation_urn"], body)
-        code = response.get("status_code")
-        if code and SafetyShield.should_trip_circuit_breaker(code):
-            await SafetyShield.trip_circuit_breaker(account_id, f"Inbox reply triggered HTTP {code}", db, workspace_id)
-        if response.get("status") != "sent":
-            raise RuntimeError("LinkedIn did not confirm the reply")
-        now = datetime.now(timezone.utc)
-        message = OutreachInboxMessage(
-            sender_type=MessageSenderType.USER,
-            sender_name=account.get("account_name") or account.get("name") or "You",
-            body=body,
-            timestamp=now,
-        ).model_dump()
-        await db.outreach_inbox_threads.update_one(
-            {"id": thread_id, "workspace_id": workspace_id, "account_id": account_id},
-            {"$push": {"messages": message}, "$set": {"last_message_snippet": body[:120], "last_message_at": now}},
-        )
-        await _set_inbox_job(db, job_id, workspace_id, "completed", result={"message": message})
-        return {"status": "sent", "message": message}
-    except Exception as exc:
-        logger.error("Inbox reply job %s failed (%s)", job_id, type(exc).__name__)
-        await _set_inbox_job(db, job_id, workspace_id, "failed", error="The reply could not be sent. Recheck the sender and try again.")
-        raise
+    job = await db.outreach_manual_actions.find_one({"_id": job_id, "workspace_id": workspace_id})
+    if not job or job.get("source") != "inbox_reply" or job.get("account_id") != account_id or job.get("target_id") != thread_id:
+        return {"status": "unapproved_legacy_job"}
+    return await ManualActions(db).run(workspace_id, job_id)
 
 _SCAN_INTERVAL_SECONDS = max(10, int(os.environ.get("OUTREACH_SCAN_INTERVAL_SECONDS", "30")))
 _BATCH_SIZE = max(1, int(os.environ.get("OUTREACH_SCAN_BATCH_SIZE", "50")))
-_CLAIM_TIMEOUT_SECONDS = max(60, int(os.environ.get("OUTREACH_CLAIM_TIMEOUT_SECONDS", "600")))
 
 celery_app.conf.beat_schedule.update({
+    "publish-durable-sequence-jobs": {
+        "task": "celery_workers.tasks.outreach.publish_sequence_jobs", "schedule": 30.0, "options": {"queue": "outreach"},
+    },
+    "publish-durable-manual-outreach-actions": {
+        "task": "celery_workers.tasks.outreach.publish_manual_actions", "schedule": 30.0, "options": {"queue": "outreach"},
+    },
+    "recover-durable-manual-outreach-actions": {
+        "task": "celery_workers.tasks.outreach.recover_manual_actions", "schedule": 30.0, "options": {"queue": "outreach"},
+    },
     "expire-paid-outreach-entitlements": {
         "task": "celery_workers.tasks.outreach.expire_entitlements",
         "schedule": 60.0,
@@ -284,7 +355,7 @@ celery_app.conf.beat_schedule.update({
     },
     "clean-stale-outreach-connections": {
         "task": "celery_workers.tasks.outreach.clean_stale_connections",
-        "schedule": 300.0,
+        "schedule": 60.0,
         "options": {"queue": "outreach"},
     },
     "run-due-linkedin-outreach-steps": {
@@ -312,6 +383,16 @@ celery_app.conf.beat_schedule.update({
         "schedule": 300.0,
         "options": {"queue": "outreach"},
     },
+    "sync-priority-linkedin-inboxes": {
+        "task": "celery_workers.tasks.outreach.sync_priority_inboxes",
+        "schedule": 30.0,
+        "options": {"queue": "outreach"},
+    },
+    "recover-outreach-execution-evidence": {
+        "task": "celery_workers.tasks.outreach.recover_execution_intents",
+        "schedule": 30.0,
+        "options": {"queue": "outreach"},
+    },
     "withdraw-stale-outreach-invitations": {
         "task": "celery_workers.tasks.outreach.withdraw_stale_invitations",
         "schedule": 3600.0,
@@ -323,6 +404,30 @@ celery_app.conf.beat_schedule.update({
         "options": {"queue": "outreach"},
     },
 })
+
+
+@celery_app.task(name="celery_workers.tasks.outreach.publish_manual_actions", queue="outreach", acks_late=True)
+def publish_manual_actions() -> dict:
+    return run_async(_publish_manual_actions())
+
+
+async def _publish_manual_actions() -> dict:
+    from outreach.tasks.manual_actions import publish_due
+    if is_shutting_down():
+        return {"status": "shutting_down"}
+    return await publish_due(await _inbox_db(), celery_app.send_task)
+
+
+@celery_app.task(name="celery_workers.tasks.outreach.recover_manual_actions", queue="outreach", acks_late=True)
+def recover_manual_actions() -> dict:
+    return run_async(_recover_manual_actions())
+
+
+async def _recover_manual_actions() -> dict:
+    from outreach.tasks.manual_actions import recover_due
+    if is_shutting_down():
+        return {"status": "shutting_down"}
+    return await recover_due(await _inbox_db())
 
 
 @celery_app.task(name="celery_workers.tasks.outreach.expire_entitlements", queue="outreach", acks_late=True)
@@ -347,29 +452,54 @@ async def _clean_stale_connections(db=None) -> dict:
     if is_shutting_down():
         return {"status": "shutting_down"}
     db = db or await _inbox_db()
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
-    stale = await db.outreach_connection_jobs.find({
-        "status": {"$in": ["queued", "running"]}, "created_at": {"$lt": cutoff},
-    }).to_list(length=100)
+    await ConnectionRepair(db).sweep()
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(minutes=15)
+    overdue = {"$or": [{"created_at": {"$lt": cutoff}}, {"custody_expires_at": {"$lte": now}},
+        {"created_at": {"$exists": False}, "custody_expires_at": {"$exists": False}}]}
+    stale = await db.outreach_connection_jobs.find({"$and": [{"$or": [
+        {"status": {"$in": ["queued", "running"]}, **overdue},
+        {"status": "failed", "pending_cleanup_complete": False}]},
+        {"$or": [{"next_custody_check_at": {"$exists": False}}, {"next_custody_check_at": {"$lte": now}}]}]
+    }).sort([("next_custody_check_at", 1), ("id", 1)]).limit(100).to_list(length=100)
     count = 0
     for job in stale:
-        claimed = await db.outreach_connection_jobs.update_one(
-            {"id": job["id"], "workspace_id": job["workspace_id"],
-             "status": {"$in": ["queued", "running"]}},
-            {"$set": {"status": "failed", "error": "Verification timed out. Please retry.",
-                      "updated_at": datetime.now(timezone.utc)},
-             "$unset": {"li_at_enc": "", "jsession_id_enc": "", "li_a_enc": ""}},
-        )
-        if not claimed.modified_count:
-            continue
-        count += 1
-        if job.get("new_proxy_reservation"):
-            await release_sender_reservation(db, job["workspace_id"], job["sender_id"], job["proxy_id"])
-        if job.get("created_slot"):
-            await db.outreach_sender_slots.delete_one({
-                "workspace_id": job["workspace_id"], "sender_id": job["sender_id"],
-            })
-        await db.outreach_connection_locks.delete_one({"_id": job["sender_id"], "job_id": job["id"]})
+        scope = {"id": job["id"], "workspace_id": job["workspace_id"]}
+        try:
+            if job["status"] != "failed":
+                claimed = await db.outreach_connection_jobs.update_one({**scope, **overdue, "status": job["status"],
+                    "verification_owner_token": job.get("verification_owner_token"), "finalization_prepared": job.get("finalization_prepared")}, {
+                    "$set": {"status": "failed", "pending_cleanup_complete": False,
+                        "custody_started_at": job.get("custody_started_at") or job.get("created_at"),
+                        "custody_expired_at": now, "error": "Verification timed out. Please retry.", "updated_at": now},
+                    "$unset": {"li_at_enc": "", "jsession_id_enc": "", "li_a_enc": "", "created_at": ""}})
+                if not claimed.matched_count:
+                    continue
+            await ExecutionPermission(db).revoke(job["workspace_id"], job["sender_id"], "custody_guard", "connection_custody_expired")
+            try:
+                outcome = await ConnectionRepair(db).close_fence(job)
+                proven = outcome.get("proven_uninstalled") or (outcome.get("account_absent")
+                    and job.get("installation_protocol") == 2 and not job.get("finalization_prepared"))
+                if not proven:
+                    raise ValueError("Unproven legacy installation requires drained repair")
+            except ValueError:
+                await db.outreach_connection_jobs.update_one({**scope, "status": "failed", "pending_cleanup_complete": False}, {
+                    "$set": {"status": "finalizing", "needs_operator_repair": True}, "$unset": {"created_at": ""}})
+                continue
+            if job.get("new_proxy_reservation"):
+                await release_sender_reservation(db, job["workspace_id"], job["sender_id"], job["proxy_id"],
+                    reservation_job_id=job["id"])
+            if job.get("created_slot"):
+                await db.outreach_sender_slots.delete_one({"workspace_id": job["workspace_id"], "sender_id": job["sender_id"],
+                    "reservation_job_id": job["id"]})
+            await db.outreach_connection_locks.delete_one({"_id": job["sender_id"], "workspace_id": job["workspace_id"], "job_id": job["id"]})
+            await db.outreach_connection_jobs.update_one({**scope, "status": "failed", "pending_cleanup_complete": False}, {
+                "$set": {"pending_cleanup_complete": True, "created_at": now}})
+            count += 1
+        except Exception as exc:
+            logger.warning("Connection custody cleanup retained (%s)", type(exc).__name__)
+        finally:
+            await db.outreach_connection_jobs.update_one(scope, {"$set": {"next_custody_check_at": now + timedelta(minutes=1)}})
     return {"cleaned": count}
 
 
@@ -380,7 +510,6 @@ def run_warmup_launches() -> dict:
 
 async def _verify_auto_launch_senders(campaign: dict, db) -> None:
     """At the trigger, verify the selected session through its configured proxy."""
-    from outreach.core.crypto import decrypt_secret
     from outreach.core.proxy_manager import JITProxyManager
     from outreach.engine.session_authenticator import SessionAuthenticator
 
@@ -394,15 +523,14 @@ async def _verify_auto_launch_senders(campaign: dict, db) -> None:
         proxy = account.get("proxy") or {}
         if not proxy.get("host") and os.getenv("OUTREACH_MOCK_AUTH", "false").lower() != "true":
             raise RuntimeError("A selected sender has no connected proxy")
-        li_at = decrypt_secret(account.get("session_cookie_enc") or account.get("encrypted_session_cookie") or "")
-        csrf = account.get("jsession_id") or ""
-        if csrf.startswith("gAAAAA"):
-            csrf = decrypt_secret(csrf)
-        li_a = decrypt_secret(account["li_a_enc"]) if account.get("li_a_enc") else None
+        material = await account_session(account)
+        prepared = await prepare_proxy(proxy, workspace_id) if proxy.get("host") else None
         profile = await SessionAuthenticator.validate_session_cookie(
-            li_at=li_at, jsession_id=csrf,
-            proxy_url=JITProxyManager.format_proxy_url(proxy) if proxy.get("host") else None,
-            user_agent=account.get("user_agent"), li_a=li_a,
+            **material,
+            proxy_url=prepared.url if prepared else None,
+            user_agent=account.get("user_agent"),
+            request_envelope=RequestEnvelope(db, workspace_id, account_id, credential_generation(account), "verify",
+                prepared.url if prepared else None, prepared_proxy=prepared),
         )
         if not profile.get("linkedin_urn") or profile["linkedin_urn"] != account.get("linkedin_urn"):
             raise RuntimeError("LinkedIn sender identity could not be re-verified")
@@ -472,9 +600,8 @@ async def _run_warmup_launches(db=None) -> dict:
             leads = await _fetch_cursor_docs(db.outreach_leads.find({
                 "campaign_id": campaign_id, "workspace_id": workspace_id,
             }), length=10000)
-            sequence = await db.outreach_sequences.find_one({
-                "campaign_id": campaign_id, "workspace_id": workspace_id, "is_deleted": {"$ne": True},
-            })
+            from outreach.core.sequence_versions import load_sequence
+            sequence = await load_sequence(db, workspace_id, campaign_id, campaign=campaign)
             if (sorted(str(lead["id"]) for lead in leads) != campaign.get("auto_launch_lead_ids")
                     or not sequence or sequence.get("updated_at") != campaign.get("auto_launch_sequence_updated_at")):
                 await db.outreach_campaigns.update_one(scoped, {"$set": {
@@ -507,137 +634,106 @@ async def _run_warmup_launches(db=None) -> dict:
 
 @celery_app.task(name="celery_workers.tasks.outreach.run_due_steps", queue="outreach", acks_late=True)
 def run_due_steps() -> dict:
-    """Claim and execute a bounded batch of due steps for active campaigns."""
+    """Persist a bounded batch of due steps for active campaigns."""
     return run_async(_run_due_steps())
 
 
 async def _run_due_steps() -> dict:
-    from outreach.models import LeadExecutionState
-    from outreach.tasks.sequence_executor import SequenceExecutor
+    """Persist selection only; provider work belongs to per-job workers."""
+    from outreach.tasks.sequence_dispatch import prepare_due
+    return await prepare_due(await _inbox_db(), limit=_BATCH_SIZE)
 
-    if is_shutting_down() or not sequence_dispatch_enabled():
-        return {"disabled": True, "claimed": 0, "completed": 0, "deferred": 0, "failed": 0}
+
+@celery_app.task(name="celery_workers.tasks.outreach.publish_sequence_jobs", queue="outreach", acks_late=True)
+def publish_sequence_jobs() -> dict:
+    return run_async(_publish_sequence_jobs())
+
+
+async def _publish_sequence_jobs() -> dict:
+    from outreach.tasks.sequence_dispatch import publish_due
+    return await publish_due(await _inbox_db(), celery_app.send_task, limit=_BATCH_SIZE)
+
+
+@celery_app.task(name="celery_workers.tasks.outreach.execute_sequence_job", queue="outreach", acks_late=True,
+                 reject_on_worker_lost=True)
+def execute_sequence_job(workspace_id: str, job_id: str) -> dict:
+    return run_async(_execute_sequence_job(workspace_id, job_id))
+
+
+async def _execute_sequence_job(workspace_id: str, job_id: str) -> dict:
+    from outreach.tasks.sequence_dispatch import execute_job
+    return await execute_job(await _inbox_db(), workspace_id, job_id)
+
+
+@celery_app.task(name="celery_workers.tasks.outreach.recover_execution_intents", queue="outreach", acks_late=True)
+def recover_execution_intents() -> dict:
+    return run_async(_recover_execution_intents())
+
+
+async def _recover_execution_intents() -> dict:
+    """Local-only recovery continues while provider actions are disabled."""
+    if is_shutting_down():
+        return {"checked": 0}
+    from outreach.core.execution_recovery import recover_intent
     client = await get_client()
     db = client[os.environ["DB_NAME"]]
     now = datetime.now(timezone.utc)
-    claim_cutoff = now - timedelta(seconds=_CLAIM_TIMEOUT_SECONDS)
-
-    campaign_ids = await db.outreach_campaigns.distinct(
-        "id", {"status": "active", "is_deleted": {"$ne": True}}
-    )
-    if not campaign_ids:
-        return {"claimed": 0, "completed": 0, "deferred": 0, "failed": 0}
-
-    due_filter = {
-        "campaign_id": {"$in": campaign_ids},
-        "execution_state": {"$in": [
-            LeadExecutionState.QUEUED.value,
-            LeadExecutionState.WAITING_DELAY.value,
-            LeadExecutionState.REPLIED.value,
-        ]},
-        "$and": [
-            {"$or": [
-                {"next_action_due_at": {"$exists": False}},
-                {"next_action_due_at": None},
-                {"next_action_due_at": {"$lte": now}},
-            ]},
-            {"$or": [
-                {"execution_state": {"$ne": LeadExecutionState.REPLIED.value}},
-                {"waiting_for_reply_at": {"$exists": True}},
-            ]},
-        ],
-    }
-    candidates = await db.outreach_leads.find(due_filter).sort("created_at", 1).limit(_BATCH_SIZE).to_list(length=_BATCH_SIZE)
-    counts = {"claimed": 0, "completed": 0, "deferred": 0, "failed": 0}
-
-    for lead in candidates:
-        if is_shutting_down() or not sequence_dispatch_enabled():
+    records = await db.outreach_intents.find({"$and": [{"$or": [
+        {"status": "in_flight", "claim_expires_at": {"$lte": now}},
+        {"status": "executed", "projection_reconciled": {"$ne": True}},
+        {"status": "unknown_outcome", "resolution": {"$exists": False}},
+    ]}, {"$or": [{"next_recovery_due_at": {"$exists": False}}, {"next_recovery_due_at": {"$lte": now}}]}]}).sort([
+        ("next_recovery_due_at", 1), ("_id", 1)]).limit(200).to_list(length=200)
+    counts = {"checked": 0, "repaired": 0, "quarantined": 0}
+    for record in records:
+        if is_shutting_down():
             break
-        claim_filter = {
-            "id": lead.get("id"),
-            "campaign_id": lead.get("campaign_id"),
-            "$and": [
-                {"execution_state": {"$in": [
-                    LeadExecutionState.QUEUED.value,
-                    LeadExecutionState.WAITING_DELAY.value,
-                    LeadExecutionState.REPLIED.value,
-                ]}},
-                {"$or": [
-                    {"next_action_due_at": {"$exists": False}},
-                    {"next_action_due_at": None},
-                    {"next_action_due_at": {"$lte": now}},
-                ]},
-                {"$or": [
-                    {"execution_claimed_at": {"$exists": False}},
-                    {"execution_claimed_at": {"$lte": claim_cutoff}},
-                ]},
-                {"$or": [
-                    {"execution_state": {"$ne": LeadExecutionState.REPLIED.value}},
-                    {"waiting_for_reply_at": {"$exists": True}},
-                ]},
-            ],
-        }
-        claim = await db.outreach_leads.update_one(
-            claim_filter,
-            {"$set": {"execution_claimed_at": now}},
-        )
+        try:
+            # Rotate even missing or faulting projections so a failing prefix
+            # cannot indefinitely hide later receipts or unknown submissions.
+            await db.outreach_intents.update_one({"_id": record["_id"], "workspace_id": record["workspace_id"],
+                "claim_token": record.get("claim_token"), "status": record["status"]},
+                {"$set": {"next_recovery_due_at": now + timedelta(minutes=5)}})
+            outcome = await recover_intent(db, record, now=now)
+            counts["checked"] += 1
+            if outcome in {"repaired", "quarantined"}:
+                counts[outcome] += 1
+        except Exception as exc:
+            logger.warning("Execution recovery deferred (%s)", type(exc).__name__)
+    return counts
+
+
+@celery_app.task(name="celery_workers.tasks.outreach.sync_priority_inboxes", queue="outreach", acks_late=True)
+def sync_priority_inboxes() -> dict:
+    return run_async(_sync_priority_inboxes())
+
+
+async def _sync_priority_inboxes() -> dict:
+    from outreach.engine.inbox_sync import InboxSynchronizer
+    if is_shutting_down() or not live_actions_enabled():
+        return {"disabled": True}
+    db = await _inbox_db()
+    now = datetime.now(timezone.utc)
+    accounts = await db.outreach_accounts.find({
+        "status": "active", "priority_sync_due_at": {"$lte": now},
+    }).limit(20).to_list(length=20)
+    synced = 0
+    for account in accounts:
+        if is_shutting_down():
+            break
+        scope = {"id": account["id"], "workspace_id": account["workspace_id"],
+                 "priority_sync_due_at": {"$lte": now}, "status": "active"}
+        claim = await db.outreach_accounts.update_one(scope, {
+            "$set": {"priority_sync_due_at": now + timedelta(minutes=5)},
+        })
         if not claim.modified_count:
             continue
-
-        counts["claimed"] += 1
         try:
-            result = await SequenceExecutor.execute_lead_step(lead["id"], db)
-            result_status = result.get("status")
-            if result_status in {"outside_working_hours", "paid_access_required",
-                                 "mailbox_unavailable", "action_disabled"}:
-                retry_minutes = {
-                    "outside_working_hours": 5,
-                    "mailbox_unavailable": 30,
-                    "paid_access_required": 60,
-                    "action_disabled": 60,
-                }[result_status]
-                await db.outreach_leads.update_one(
-                    {"id": lead["id"], "workspace_id": lead["workspace_id"]},
-                    {"$set": {"next_action_due_at": now + timedelta(minutes=retry_minutes)}},
-                )
-                counts["deferred"] += 1
-            elif result_status == "rate_limited":
-                tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=5, second=0, microsecond=0)
-                await db.outreach_leads.update_one(
-                    {"id": lead["id"]},
-                    {"$set": {"next_action_due_at": tomorrow, "execution_state": LeadExecutionState.WAITING_DELAY}},
-                )
-                counts["deferred"] += 1
-            elif result_status in {"no_account_assigned", "account_unavailable", "sequence_not_configured", "action_failed", "unsupported_action"}:
-                await db.outreach_leads.update_one(
-                    {"id": lead["id"]},
-                    {"$set": {
-                        "execution_state": LeadExecutionState.FAILED,
-                        "failure_reason": result.get("reason") or result_status,
-                        "updated_at": datetime.now(timezone.utc),
-                    }},
-                )
-                counts["failed"] += 1
-            else:
-                counts["completed"] += 1
+            result = await InboxSynchronizer(db, account["workspace_id"], account.get("user_id")).sync_account_inbox(account["id"])
+            synced += int(bool(result.get("coverage_complete")))
         except Exception as exc:
-            logger.error("Outreach step failed for lead %s (%s)", lead.get("id"), type(exc).__name__)
-            await db.outreach_leads.update_one(
-                {"id": lead.get("id")},
-                {"$set": {
-                    "execution_state": LeadExecutionState.FAILED,
-                    "failure_reason": "Outreach action failed; review the sender and campaign before retrying.",
-                    "updated_at": datetime.now(timezone.utc),
-                }},
-            )
-            counts["failed"] += 1
-        finally:
-            await db.outreach_leads.update_one(
-                {"id": lead.get("id")},
-                {"$unset": {"execution_claimed_at": ""}},
-            )
-
-    return counts
+            logger.error("Priority inbox sync failed (%s)", type(exc).__name__)
+    return {"synced": synced}
 
 
 @celery_app.task(name="celery_workers.tasks.outreach.scan_event_outbox", queue="outreach", acks_late=True)
@@ -754,23 +850,26 @@ def crawl_page(job_id: str, cursor: int = 0, lease_token: str = "") -> dict:
 
 async def _crawl_page(job_id: str, cursor: int = 0, lease_token: str = "", db=None, redis_client=None) -> dict:
     """Discrete single-page search crawler. Fetches one page, lands leads in 'staged', and reschedules."""
-    if is_shutting_down():
+    if is_shutting_down() or not live_actions_enabled():
         return {"status": "shutting_down"}
 
     import random
     from pymongo import ReturnDocument
     from outreach.core.lead_importer import build_lead_identifiers, check_compound_suppression
     from outreach.core.name_cleaner import clean_first_name
-    from outreach.core.rate_budget import RateBudget
     from outreach.core.safety_shield import SafetyShield
     from outreach.engine.voyager_client import LinkedInVoyagerClient
     from outreach.models import LeadExecutionState, SearchImportJobStatus, SearchImportStopReason
 
     db = db or await _inbox_db()
 
+    page_owner = str(uuid.uuid4())
+    claim_now = datetime.now(timezone.utc)
     # 1. Atomic claim: ensure job is queued or crawling and lease token matches
     claim_query = {
-        "id": job_id,
+        "id": job_id, "cursor": cursor,
+        "page_owner_token": None,
+        "$or": [{"next_page_due_at": {"$lte": claim_now}}, {"next_page_due_at": {"$exists": False}}],
         "status": {"$in": [SearchImportJobStatus.QUEUED.value, SearchImportJobStatus.CRAWLING.value]},
     }
     if lease_token:
@@ -781,6 +880,7 @@ async def _crawl_page(job_id: str, cursor: int = 0, lease_token: str = "", db=No
         {
             "$set": {
                 "status": SearchImportJobStatus.CRAWLING.value,
+                "page_owner_token": page_owner,
                 "heartbeat_at": datetime.now(timezone.utc),
                 "updated_at": datetime.now(timezone.utc),
             }
@@ -792,6 +892,7 @@ async def _crawl_page(job_id: str, cursor: int = 0, lease_token: str = "", db=No
         return {"status": "job_not_found_or_cancelled"}
 
     active_lease_token = job.get("lease_token", lease_token)
+    job_scope = {"id": job_id, "workspace_id": job["workspace_id"], "lease_token": active_lease_token, "page_owner_token": page_owner, "status": "crawling"}
     workspace_id = job.get("workspace_id")
     campaign_id = job.get("campaign_id")
     sender_id = job.get("sender_account_id")
@@ -799,7 +900,7 @@ async def _crawl_page(job_id: str, cursor: int = 0, lease_token: str = "", db=No
     # 2. Entitlement check
     if not await get_active_entitlement(db, workspace_id):
         await db.outreach_import_jobs.update_one(
-            {"id": job_id},
+            job_scope,
             {
                 "$set": {
                     "status": SearchImportJobStatus.STOPPED.value,
@@ -820,7 +921,7 @@ async def _crawl_page(job_id: str, cursor: int = 0, lease_token: str = "", db=No
     })
     if not sender:
         await db.outreach_import_jobs.update_one(
-            {"id": job_id},
+            job_scope,
             {
                 "$set": {
                     "status": SearchImportJobStatus.STOPPED.value,
@@ -835,7 +936,7 @@ async def _crawl_page(job_id: str, cursor: int = 0, lease_token: str = "", db=No
 
     if sender.get("status") in {"checkpoint_detected", "checkpoint", "reauth_required", "error"}:
         await db.outreach_import_jobs.update_one(
-            {"id": job_id},
+            job_scope,
             {
                 "$set": {
                     "status": SearchImportJobStatus.STOPPED.value,
@@ -856,7 +957,7 @@ async def _crawl_page(job_id: str, cursor: int = 0, lease_token: str = "", db=No
     inventory = await db.outreach_proxy_inventory.find_one({"_id": lease["_id"]}) if lease else None
     if not lease or not inventory or inventory.get("status") != "available":
         await db.outreach_import_jobs.update_one(
-            {"id": job_id},
+            job_scope,
             {
                 "$set": {
                     "status": SearchImportJobStatus.STOPPED.value,
@@ -870,57 +971,33 @@ async def _crawl_page(job_id: str, cursor: int = 0, lease_token: str = "", db=No
         return {"status": "proxy_unavailable"}
 
     proxy = _proxy_from_inventory(inventory)
-    proxy_url = JITProxyManager.format_proxy_url(proxy)
-
-    # 5. Rate budget check
-    allowed, retry_after, reason = await RateBudget.acquire_token(
-        sender_id=sender["id"],
-        sender_config=sender,
-        action_type="search",
-        redis_client=redis_client,
-    )
-    if not allowed:
-        if reason.startswith("sender_stopped_"):
-            await db.outreach_import_jobs.update_one(
-                {"id": job_id},
-                {
-                    "$set": {
-                        "status": SearchImportJobStatus.STOPPED.value,
-                        "stop_reason": SearchImportStopReason.CHECKPOINT.value,
-                        "user_error_message": "Sender is stopped due to security checkpoint.",
-                        "completed_at": datetime.now(timezone.utc),
-                        "updated_at": datetime.now(timezone.utc),
-                    }
-                },
-            )
-            return {"status": "sender_stopped", "reason": reason}
-
-        # Reschedule next check with countdown
-        countdown = max(retry_after, 10)
-        try:
-            crawl_page.apply_async(args=[job_id, cursor, active_lease_token], countdown=countdown)
-        except Exception as exc:
-            logger.warning("Could not enqueue reschedule crawl_page task: %s", exc)
-        return {"status": "rescheduled", "retry_after": countdown, "reason": reason}
+    prepared = await prepare_proxy(proxy, workspace_id)
+    proxy_url = prepared.url
 
     # 6. Fetch search page from LinkedIn Voyager / mock
-    li_at = decrypt_secret(sender["li_at_enc"]) if sender.get("li_at_enc") else ""
-    jsession_id = decrypt_secret(sender["jsession_id_enc"]) if sender.get("jsession_id_enc") else ""
-    li_a = decrypt_secret(sender["li_a_enc"]) if sender.get("li_a_enc") else None
+    material = await account_session(sender)
+
+    async def validate_page(database=None):
+        current = database if database is not None else db
+        return None if await current.outreach_import_jobs.find_one(job_scope) else "search_job_changed"
 
     page_size = job.get("page_size", 10)
     voyager = LinkedInVoyagerClient(
-        li_at=li_at,
-        jsession_id=jsession_id,
-        li_a=li_a,
+        **material,
         proxy_url=proxy_url,
         user_agent=sender.get("user_agent"),
+        request_envelope=RequestEnvelope(db, workspace_id, sender_id, credential_generation(sender), "search", proxy_url,
+            prepared_proxy=prepared, authority_validator=validate_page, transaction_validator=validate_page),
     )
-    search_res = await voyager.search_people_entities(
-        search_url=job["search_url"],
-        start=cursor,
-        count=page_size,
-    )
+    try:
+        search_res = await voyager.search_people_entities(
+            search_url=job["search_url"], start=cursor, count=page_size)
+    except RequestDenied as exc:
+        await db.outreach_import_jobs.update_one(job_scope, {"$set": {
+            "status": "queued", "next_page_due_at": datetime.now(timezone.utc) + timedelta(seconds=exc.retry_after),
+            "page_owner_token": None, "updated_at": datetime.now(timezone.utc), "defer_reason": exc.reason}})
+        return {"status": "rescheduled", "retry_after": exc.retry_after, "reason": exc.reason}
+
 
     # 7. Check for stop reasons from network response
     stop_reason = search_res.get("stop_reason")
@@ -951,7 +1028,7 @@ async def _crawl_page(job_id: str, cursor: int = 0, lease_token: str = "", db=No
             final_status = SearchImportJobStatus.STOPPED.value
 
         await db.outreach_import_jobs.update_one(
-            {"id": job_id},
+            job_scope,
             {
                 "$set": {
                     "status": final_status,
@@ -975,7 +1052,7 @@ async def _crawl_page(job_id: str, cursor: int = 0, lease_token: str = "", db=No
         max_cap = 2500 if job.get("search_type") == "sales_nav" else 1000
         target_count = min(target_count, total_results, max_cap) if total_results > 0 else min(target_count, max_cap)
         await db.outreach_import_jobs.update_one(
-            {"id": job_id},
+            job_scope,
             {
                 "$set": {
                     "total_available": total_results,
@@ -995,6 +1072,8 @@ async def _crawl_page(job_id: str, cursor: int = 0, lease_token: str = "", db=No
     current_imported = job.get("leads_imported", 0)
 
     for ent in entities:
+        if await validate_page():
+            return {"status": "job_changed"}
         if ent.get("is_unresolvable"):
             unresolvable_count += 1
             continue
@@ -1070,7 +1149,7 @@ async def _crawl_page(job_id: str, cursor: int = 0, lease_token: str = "", db=No
     # 10. Increment progress counters
     new_cursor = cursor + len(entities)
     updated_job = await db.outreach_import_jobs.find_one_and_update(
-        {"id": job_id},
+        job_scope,
         {
             "$inc": {
                 "leads_imported": new_staged,
@@ -1093,7 +1172,7 @@ async def _crawl_page(job_id: str, cursor: int = 0, lease_token: str = "", db=No
     # 11. Check termination conditions
     if total_imported >= target_count:
         await db.outreach_import_jobs.update_one(
-            {"id": job_id},
+            job_scope,
             {
                 "$set": {
                     "status": SearchImportJobStatus.COMPLETED.value,
@@ -1107,7 +1186,7 @@ async def _crawl_page(job_id: str, cursor: int = 0, lease_token: str = "", db=No
 
     if len(entities) == 0:
         await db.outreach_import_jobs.update_one(
-            {"id": job_id},
+            job_scope,
             {
                 "$set": {
                     "status": SearchImportJobStatus.COMPLETED.value,
@@ -1121,7 +1200,7 @@ async def _crawl_page(job_id: str, cursor: int = 0, lease_token: str = "", db=No
 
     if len(entities) < page_size:
         await db.outreach_import_jobs.update_one(
-            {"id": job_id},
+            job_scope,
             {
                 "$set": {
                     "status": SearchImportJobStatus.COMPLETED.value,
@@ -1133,13 +1212,43 @@ async def _crawl_page(job_id: str, cursor: int = 0, lease_token: str = "", db=No
         )
         return {"status": "completed", "reason": "short_page_exhausted", "leads_imported": total_imported}
 
-    # 12. Reschedule next page task with natural jitter delay
+    # Stored due times survive broker failure; beat publishes only due references.
     pacing_delay = random.randint(10, 20)
-    try:
-        crawl_page.apply_async(args=[job_id, new_cursor, active_lease_token], countdown=pacing_delay)
-    except Exception as exc:
-        logger.warning("Could not enqueue next page crawl_page task: %s", exc)
+    await db.outreach_import_jobs.update_one(job_scope, {"$set": {
+        "status": "queued", "next_page_due_at": datetime.now(timezone.utc) + timedelta(seconds=pacing_delay),
+        "page_owner_token": None, "updated_at": datetime.now(timezone.utc)}})
     return {"status": "next_page_scheduled", "cursor": new_cursor, "leads_imported": total_imported}
+
+
+@celery_app.task(name="celery_workers.tasks.outreach.dispatch_due_search_pages", queue="outreach", acks_late=True)
+def dispatch_due_search_pages() -> dict:
+    return run_async(_dispatch_due_search_pages())
+
+
+async def _dispatch_due_search_pages(db=None) -> dict:
+    """Publish due read-page references; duplicates are fenced by page ownership."""
+    if is_shutting_down() or not live_actions_enabled():
+        return {"disabled": True, "published": 0}
+    db = db or await _inbox_db()
+    now = datetime.now(timezone.utc)
+    jobs = await db.outreach_import_jobs.find({"status": "queued", "page_owner_token": None,
+        "next_page_due_at": {"$lte": now}}).limit(50).to_list(length=50)
+    published = 0
+    for job in jobs:
+        if is_shutting_down():
+            break
+        try:
+            crawl_page.delay(job["id"], job.get("cursor", 0), job["lease_token"])
+            published += 1
+        except Exception as exc:
+            logger.warning("Due search page publication failed (%s)", type(exc).__name__)
+    return {"published": published}
+
+
+celery_app.conf.beat_schedule["dispatch-due-outreach-search-pages"] = {
+    "task": "celery_workers.tasks.outreach.dispatch_due_search_pages", "schedule": 30.0,
+    "options": {"queue": "outreach"},
+}
 
 
 @celery_app.task(name="celery_workers.tasks.outreach.reap_stale_search_crawlers", queue="outreach", acks_late=True)
@@ -1167,21 +1276,23 @@ async def _reap_stale_search_crawlers(db=None) -> dict:
         res = await db.outreach_import_jobs.update_one(
             {
                 "id": job_id,
+                "workspace_id": job["workspace_id"], "page_owner_token": job.get("page_owner_token"),
+                "cursor": job.get("cursor", 0), "heartbeat_at": job.get("heartbeat_at"),
                 "status": "crawling",
                 "lease_token": job.get("lease_token"),
             },
             {
                 "$set": {
                     "lease_token": new_lease,
+                    "page_owner_token": None, "status": "queued",
+                    "next_page_due_at": datetime.now(timezone.utc),
                     "heartbeat_at": datetime.now(timezone.utc),
                     "updated_at": datetime.now(timezone.utc),
                 }
             },
         )
         if res.modified_count:
-            crawl_page.delay(job_id, job.get("cursor", 0), new_lease)
             reaped += 1
             logger.info("Resumed stale search import job %s from cursor %s", job_id, job.get("cursor", 0))
 
     return {"reaped": reaped}
-

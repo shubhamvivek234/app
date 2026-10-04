@@ -243,6 +243,7 @@ async def test_add_contacts_and_fetch_posts(db, mock_user):
 
     # 3. Fetch queues background work; the API no longer scrapes on the request path.
     with patch("celery_workers.celery_app.celery_app.send_task") as send_task, \
+         patch("outreach.core.manual_actions.ManualActions.queue", new_callable=AsyncMock), \
          patch.object(db.outreach_engage_lists, "update_one", new_callable=AsyncMock) as update_one:
         update_one.return_value = SimpleNamespace(modified_count=1)
         fetch_res = await fetch_latest_posts_for_list(list_id, current_user=mock_user, db=db)
@@ -352,6 +353,7 @@ async def test_like_endpoint_only_queues_worker_action(db, mock_user):
     post_id = db.outreach_engage_posts.items[0]["id"]
     with patch.object(db.outreach_engage_posts, "update_one", new_callable=AsyncMock) as update_one, \
          patch("celery_workers.celery_app.celery_app.send_task") as send_task, \
+         patch("outreach.core.manual_actions.ManualActions.queue", new_callable=AsyncMock), \
          patch("outreach.engine.voyager_client.VoyagerClient.like_update", new_callable=AsyncMock) as voyager_like:
         update_one.return_value = SimpleNamespace(modified_count=1)
         result = await queue_like_engage_post(post_id, LikePostRequest(sender_account_id="acc_1"),

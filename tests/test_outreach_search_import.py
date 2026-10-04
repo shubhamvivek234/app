@@ -56,82 +56,12 @@ class MockCollection:
         self.docs = list(docs or [])
 
     async def find_one(self, query=None, projection=None):
-        query = query or {}
-        for d in self.docs:
-            match = True
-            for k, v in query.items():
-                if k == "$or":
-                    or_match = False
-                    for clause in v:
-                        if all(d.get(ck) == cv for ck, cv in clause.items()):
-                            or_match = True
-                            break
-                    if not or_match:
-                        match = False
-                        break
-                elif isinstance(v, dict):
-                    if "$in" in v and d.get(k) not in v["$in"]:
-                        match = False
-                        break
-                    if "$ne" in v and d.get(k) == v["$ne"]:
-                        match = False
-                        break
-                    if "$lt" in v and not (d.get(k) and d[k] < v["$lt"]):
-                        match = False
-                        break
-                    if "$gt" in v and not (d.get(k) and d[k] > v["$gt"]):
-                        match = False
-                        break
-                elif d.get(k) != v:
-                    match = False
-                    break
-            if match:
-                return dict(d)
-        return None
+        from tests.outreach_memory import matches
+        return next((dict(doc) for doc in self.docs if matches(doc, query or {})), None)
 
     def find(self, query=None, projection=None):
-        query = query or {}
-        matched = []
-        for d in self.docs:
-            match = True
-            for k, v in query.items():
-                if k == "$or":
-                    or_match = False
-                    for clause in v:
-                        sub_m = True
-                        for ck, cv in clause.items():
-                            if isinstance(cv, dict) and "$in" in cv:
-                                if d.get(ck) not in cv["$in"]:
-                                    sub_m = False
-                                    break
-                            elif d.get(ck) != cv:
-                                sub_m = False
-                                break
-                        if sub_m:
-                            or_match = True
-                            break
-                    if not or_match:
-                        match = False
-                        break
-                elif isinstance(v, dict):
-                    if "$in" in v and d.get(k) not in v["$in"]:
-                        match = False
-                        break
-                    if "$ne" in v and d.get(k) == v["$ne"]:
-                        match = False
-                        break
-                    if "$lt" in v and not (d.get(k) and d[k] < v["$lt"]):
-                        match = False
-                        break
-                    if "$gt" in v and not (d.get(k) and d[k] > v["$gt"]):
-                        match = False
-                        break
-                elif d.get(k) != v:
-                    match = False
-                    break
-            if match:
-                matched.append(dict(d))
-        return MockCursor(matched)
+        from tests.outreach_memory import matches
+        return MockCursor([dict(doc) for doc in self.docs if matches(doc, query or {})])
 
     async def insert_one(self, doc):
         doc = dict(doc)
@@ -201,6 +131,7 @@ class MockDatabase:
 @pytest.fixture(autouse=True)
 def set_mock_env(monkeypatch):
     monkeypatch.setenv("OUTREACH_MOCK_AUTH", "true")
+    monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", "true")
 
 
 @pytest.fixture
@@ -398,8 +329,10 @@ async def test_worker_killed_midrun_and_resumed_without_duplicates(mock_db):
     with patch("celery_workers.tasks.outreach.crawl_page.delay") as mock_delay:
         reap_res = await _reap_stale_search_crawlers(db=mock_db)
         assert reap_res["reaped"] == 1
-        assert mock_delay.call_count == 1
-        call_job_id, call_cursor, new_lease = mock_delay.call_args[0]
+        assert mock_delay.call_count == 0
+        assert mock_db.outreach_import_jobs.docs[-1]["status"] == "queued"
+        saved_job = mock_db.outreach_import_jobs.docs[-1]
+        call_job_id, call_cursor, new_lease = saved_job["id"], saved_job["cursor"], saved_job["lease_token"]
         assert call_job_id == job_id
         assert call_cursor == 10
         assert new_lease != initial_lease

@@ -186,17 +186,21 @@ async def send_thread_reply(
         raise HTTPException(status_code=409, detail="A reply is already being sent for this conversation")
 
     from celery_workers.tasks.outreach import send_inbox_reply
+    from outreach.core.manual_actions import ManualActions
+    from pymongo.errors import DuplicateKeyError
     job_id = f"inbox_{uuid.uuid4().hex}"
+    try:
+        await ManualActions(db).queue(job_id, ws_id, account_id, thread_id, "inbox_reply", "reply", {"body": req.body.strip()}, user_id)
+    except (DuplicateKeyError, ValueError) as exc:
+        raise HTTPException(409, "A reply is already pending or its content needs review") from exc
     await db.outreach_inbox_jobs.insert_one({
         "id": job_id, "kind": "reply", "workspace_id": ws_id, "user_id": user_id,
         "thread_id": thread_id, "status": "queued", "created_at": datetime.now(timezone.utc),
     })
     try:
-        send_inbox_reply.apply_async(args=(job_id, ws_id, account_id, thread_id, req.body.strip()), queue="outreach")
+        send_inbox_reply.apply_async(args=(job_id, ws_id, account_id, thread_id), queue="outreach")
     except Exception as exc:
-        logger.exception("Could not queue inbox reply")
-        await db.outreach_inbox_jobs.update_one({"id": job_id, "workspace_id": ws_id}, {"$set": {"status": "failed"}})
-        raise HTTPException(status_code=503, detail="Reply queue is unavailable") from exc
+        logger.warning("Inbox reply publish deferred (%s)", type(exc).__name__)
     return {"status": "queued", "job_id": job_id}
 
 
@@ -297,7 +301,23 @@ async def get_inbox_job(
     ws_id = current_user.get("default_workspace_id") or current_user.get("user_id")
     job = await db.outreach_inbox_jobs.find_one({"id": job_id, "workspace_id": ws_id})
     if not job:
-        raise HTTPException(status_code=404, detail="Inbox job not found")
+        manual = await db.outreach_manual_actions.find_one({"_id": job_id, "workspace_id": ws_id, "source": "inbox_reply"})
+        if not manual:
+            raise HTTPException(status_code=404, detail="Inbox job not found")
+        job = {"id": job_id, "kind": "reply"}
+    if job.get("kind") == "reply":
+        manual = await db.outreach_manual_actions.find_one({"_id": job_id, "workspace_id": ws_id})
+        if manual:
+            job["status"] = manual["status"]
+            if manual["status"] in {"unknown_outcome", "awaiting_approval"}:
+                job["error"] = "This reply needs review. Check the conversation before another send."
+            elif manual["status"] in {"resolving", "resolved"}:
+                stage = manual.get("stages", {}).get("reply", {})
+                if manual["status"] == "resolved" and stage.get("status") == "provider_accepted":
+                    job["status"] = "completed"
+                else:
+                    job["error"] = "Reply review recorded. Sending remains stopped; check LinkedIn for the outcome."
+                job["review_provenance"] = stage.get("provenance")
     return {key: value for key, value in job.items() if key not in {"_id", "user_id"}}
 
 

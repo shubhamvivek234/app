@@ -200,6 +200,22 @@ describe('LinkedIn sender session connection', () => {
     expect(container.querySelector('button[type="submit"]').disabled).toBe(false);
   });
 
+  it.each(['storage_stopped', 'repaired_stopped'])('ends polling when verification is %s', async (status) => {
+    const connected = jest.fn();
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ job_id: 'job-1', status: 'queued' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ status }) });
+    await renderModal({ onAccountConnected: connected });
+    await enterValue('linkedin-li-at', 'li_at=AQvalid; JSESSIONID="ajax:123"');
+    await enterValue('linkedin-proxy-country', 'IN');
+    await submit();
+    expect(container.querySelector('[role="alert"]').textContent).toContain('verification was stopped');
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(connected).not.toHaveBeenCalled();
+    expect(container.querySelector('#linkedin-li-at').value).toBe('');
+    expect(container.querySelector('button[type="submit"]').disabled).toBe(false);
+  });
+
   it('uses a safe fallback message when the API returns an empty error body', async () => {
     global.fetch = jest.fn(() => Promise.resolve({ ok: false, json: async () => null }));
     await renderModal();

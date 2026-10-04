@@ -50,6 +50,9 @@ async def test_connect_via_cookie_queues_encrypted_job_in_authenticated_workspac
     monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", "true")
     monkeypatch.setenv("OUTREACH_MOCK_AUTH", "false")
     db = AsyncMock()
+    db.outreach_accounts.find_one.return_value = None
+    db.outreach_connection_jobs.find_one.return_value = None
+    db.outreach_connection_locks.update_one.return_value = SimpleNamespace(matched_count=1)
     db.outreach_entitlements.find_one.return_value = {
         "workspace_id": "ws_test", "status": "active", "seats": 1,
         "payment_source": "manual_verified_invoice",
@@ -85,6 +88,8 @@ async def test_reconnect_queues_same_sender_without_using_second_seat(monkeypatc
     monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", "true")
     monkeypatch.setenv("OUTREACH_MOCK_AUTH", "false")
     db = AsyncMock()
+    db.outreach_connection_jobs.find_one.return_value = None
+    db.outreach_connection_locks.update_one.return_value = SimpleNamespace(matched_count=1)
     db.outreach_entitlements.find_one.return_value = {
         "workspace_id": "ws_test", "status": "active", "seats": 1,
         "payment_source": "manual_verified_invoice",
