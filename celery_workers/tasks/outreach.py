@@ -24,6 +24,7 @@ from outreach.models import AccountAuthMode, AccountStatus
 from outreach.core.connection_repair import ConnectionRepair, credential_deadline
 from outreach.core.request_guard import RequestEnvelope, RequestDenied
 from outreach.core.execution_permission import ExecutionPermission
+from outreach.core.health_monitor import HealthMonitor, connection_evidence, now as health_now
 from outreach.core.inbox_freshness import credential_generation
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,11 @@ async def _verify_sender_connection(job_id: str, workspace_id: str, trace_id: st
     if is_shutting_down():
         return {"status": "shutting_down"}
     db = db or await _inbox_db()
+    from outreach.core.restore_epoch import positive, EpochUnavailable
+    try:
+        epoch = await positive(db, workspace_id)
+    except EpochUnavailable:
+        return {'status': 'restore_epoch_required'}
     now = datetime.now(timezone.utc)
     owner = str(uuid.uuid4())
     claimed = await db.outreach_connection_jobs.update_one(
@@ -80,11 +86,20 @@ async def _verify_sender_connection(job_id: str, workspace_id: str, trace_id: st
         if (inventory.get("country_code") != job["country_code"] or not expires_at
                 or expires_at <= datetime.now(timezone.utc)):
             raise ValueError("provider_term_expired")
+        if inventory.get('provider') == 'webshare_plan' or str(job['proxy_id']).startswith('webshare:'):
+            from outreach.core.webshare_provisioning import managed_webshare_valid
+            if not await managed_webshare_valid(db, inventory, workspace_id):
+                raise ValueError('proxy_import_requires_review')
         if not await ExecutionPermission(db).allowed(workspace_id, sender_id, "pending:" + job_id, "verify"):
             raise RequestDenied("execution_permission_required", 15)
         proxy = _proxy_from_inventory(inventory)
+        from outreach.core.proxy_identity import check_restore_ips
+        await check_restore_ips(db, workspace_id, [proxy.host], captured=epoch.captured)
         prepared = await prepare_proxy(proxy, workspace_id)
+        await positive(db, workspace_id, captured=epoch.captured)
+        await check_restore_ips(db, workspace_id, [proxy.host], captured=epoch.captured)
         health_options = {"prepared_proxy": prepared} if prepared.scoped else {}
+        health_options['allowed'] = epoch.live
         if not await JITProxyManager().test_proxy_health(proxy, **health_options):
             raise ValueError("proxy_health_failed")
         material = await pending_session(job)
@@ -97,6 +112,7 @@ async def _verify_sender_connection(job_id: str, workspace_id: str, trace_id: st
             request_envelope=RequestEnvelope(db, workspace_id, sender_id, "pending:" + job_id, "verify",
                 prepared.url, connection_job_id=job_id, prepared_proxy=prepared),
         )
+        health_observed_at = health_now()
         linkedin_urn = profile.get("linkedin_urn")
         if not linkedin_urn:
             raise InvalidSessionError("LinkedIn identity was not returned")
@@ -128,7 +144,15 @@ async def _verify_sender_connection(job_id: str, workspace_id: str, trace_id: st
                 or refreshed.get("last_workspace_id") != workspace_id
                 or refreshed.get("country_code") != job["country_code"]):
             raise ValueError("sender_capacity_unavailable")
+        if refreshed.get('provider') == 'webshare_plan':
+            from outreach.core.webshare_provisioning import managed_webshare_valid
+            if not await managed_webshare_valid(db, refreshed, workspace_id) or not prepared.matches(refreshed, workspace_id):
+                raise ValueError('proxy_import_changed')
 
+        hosts = [proxy.host]
+        if refreshed.get('host') is not None:
+            hosts.append(refreshed['host'])
+        await check_restore_ips(db, workspace_id, hosts, captured=epoch.captured)
         now = datetime.now(timezone.utc)
         generation = str(uuid.uuid4())
         installed = (await seal_installed(material, workspace_id, sender_id, generation)
@@ -138,6 +162,7 @@ async def _verify_sender_connection(job_id: str, workspace_id: str, trace_id: st
         if credential_deadline(job) <= now:
             raise ValueError("connection_job_expired")
         # From preparation onward an uncertain acknowledgement is quarantined.
+        await positive(db, workspace_id, captured=epoch.captured)
         finalizing = True
         repair = ConnectionRepair(db)
         await repair.prepare(job, owner, generation, profile, now=now)
@@ -164,7 +189,9 @@ async def _verify_sender_connection(job_id: str, workspace_id: str, trace_id: st
             "credential_generation": generation, "inbox_sync": {"status": "required"},
             "updated_at": now,
         }
-        if not await get_active_entitlement(db, workspace_id) or not await repair.install(job, owner, generation, updates):
+        updates['execution_health'] = connection_evidence(job_id, generation,
+            {'workspace_id': workspace_id, 'id': sender_id, **updates}, health_observed_at)
+        if not await get_active_entitlement(db, workspace_id) or not await repair.install(job, owner, generation, updates, prepared_proxy=prepared):
             raise ValueError("connection_installation_stopped")
         # The paid period may end while identity verification or the DB write
         # is in flight. Never leave a newly usable session behind in that case.
@@ -338,7 +365,21 @@ async def _send_inbox_reply(job_id: str, workspace_id: str, account_id: str, thr
 _SCAN_INTERVAL_SECONDS = max(10, int(os.environ.get("OUTREACH_SCAN_INTERVAL_SECONDS", "30")))
 _BATCH_SIZE = max(1, int(os.environ.get("OUTREACH_SCAN_BATCH_SIZE", "50")))
 
+
+@celery_app.task(name='celery_workers.tasks.outreach.monitor_sender_health', queue='outreach', acks_late=True)
+def monitor_sender_health() -> dict:
+    return run_async(_monitor_sender_health())
+
+
+async def _monitor_sender_health(db=None) -> dict:
+    if is_shutting_down():
+        return {'status': 'shutting_down'}
+    return await HealthMonitor(db if db is not None else await _inbox_db()).sweep(limit=100)
+
 celery_app.conf.beat_schedule.update({
+    'monitor-verified-sender-health': {
+        'task': 'celery_workers.tasks.outreach.monitor_sender_health', 'schedule': 30.0, 'options': {'queue': 'outreach'},
+    },
     "publish-durable-sequence-jobs": {
         "task": "celery_workers.tasks.outreach.publish_sequence_jobs", "schedule": 30.0, "options": {"queue": "outreach"},
     },

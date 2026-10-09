@@ -150,35 +150,16 @@ async def scan_and_fanout_outbox(
         })
         active_webhooks = await cursor.to_list(length=100)
 
+        from outreach.core.integration_delivery import IntegrationDelivery
+        service = IntegrationDelivery(db)
         for webhook in active_webhooks:
-            delivery_id = f"del_{uuid.uuid4().hex}"
-            delivery_doc = {
-                "id": delivery_id,
-                "event_id": event["id"],
-                "destination_id": webhook["id"],
-                "workspace_id": workspace_id,
-                "target_url": webhook["target_url"],
-                "secret_enc": webhook.get("secret_enc", ""),
-                "payload": event["payload"],
-                "attempt": 0,
-                "max_attempts": 6,
-                "next_attempt_at": now,
-                "status": "pending",  # pending, retry, delivered, failed, dead_letter
-                "lease_id": None,
-                "leased_until": None,
-                "response_status": None,
-                "error_sanitized": None,
-                "created_at": now,
-                "delivered_at": None,
-            }
-
             try:
-                # Unique index on (event_id, destination_id) guarantees idempotent fan-out
-                await db.outreach_webhook_deliveries.insert_one(delivery_doc)
-                deliveries_created += 1
-            except DuplicateKeyError:
-                # Already created on prior aborted pass
-                pass
+                delivery = await service.queue(workspace_id, "webhook", webhook["id"],
+                    event["id"], event["payload"], expected_source=webhook)
+                deliveries_created += int(delivery["newly_queued"])
+            except ValueError:
+                # A disconnected/changed destination cannot authorize old fanout.
+                continue
 
         # Check active Slack integration fan-out
         slack_doc = None
@@ -205,37 +186,16 @@ async def scan_and_fanout_outbox(
                 should_notify_slack = True
 
             if should_notify_slack:
-                slack_delivery_id = f"del_slack_{uuid.uuid4().hex}"
-                slack_delivery_doc = {
-                    "id": slack_delivery_id,
-                    "event_id": event["id"],
-                    "destination_id": "slack",
-                    "destination_type": "slack",
-                    "workspace_id": workspace_id,
-                    "target_url_enc": slack_doc["access_token_enc"],
-                    "target_url": "https://hooks.slack.com/services/***",
-                    "secret_enc": "",
-                    "payload": event["payload"],
-                    "attempt": 0,
-                    "max_attempts": 6,
-                    "next_attempt_at": now,
-                    "status": "pending",
-                    "lease_id": None,
-                    "leased_until": None,
-                    "response_status": None,
-                    "error_sanitized": None,
-                    "created_at": now,
-                    "delivered_at": None,
-                }
                 try:
-                    await db.outreach_webhook_deliveries.insert_one(slack_delivery_doc)
-                    deliveries_created += 1
-                except DuplicateKeyError:
+                    delivery = await service.queue(workspace_id, "slack", "slack", event["id"],
+                        event["payload"], expected_source=slack_doc)
+                    deliveries_created += int(delivery["newly_queued"])
+                except ValueError:
                     pass
 
         # Mark event as dispatched
         await db.outreach_event_outbox.update_one(
-            {"id": event["id"], "lease_id": lease_id},
+            {"id": event["id"], "workspace_id": workspace_id, "lease_id": lease_id},
             {"$set": {
                 "status": "dispatched",
                 "dispatched_at": datetime.now(timezone.utc),

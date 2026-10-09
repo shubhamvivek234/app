@@ -209,185 +209,46 @@ async def test_record_outbox_event_idempotency():
 
 @pytest.mark.asyncio
 async def test_scan_and_fanout_outbox_cross_workspace_isolation():
-    """Outbox scan only fans out to webhooks matching the event's workspace and subscription."""
-    mock_db = MagicMock()
-
-    pending_event = {
-        "id": "evt_abc",
-        "workspace_id": "ws_alpha",
-        "type": "lead.replied",
-        "payload": {"id": "evt_abc", "type": "lead.replied", "data": {"lead_id": "lead_1"}},
-    }
-    # Return pending_event on first call, None on second call
-    mock_db.outreach_event_outbox.find_one_and_update = AsyncMock(side_effect=[pending_event, None])
-
-    # 2 webhooks in ws_alpha subscribed to lead.replied
-    webhooks = [
-        {"id": "wh_1", "workspace_id": "ws_alpha", "target_url": "https://alpha.com/webhook", "secret_enc": ""},
-        {"id": "wh_2", "workspace_id": "ws_alpha", "target_url": "https://alpha2.com/webhook", "secret_enc": ""},
-    ]
-    cursor = MagicMock()
-    cursor.to_list = AsyncMock(return_value=webhooks)
-    mock_db.outreach_webhooks.find = MagicMock(return_value=cursor)
-
-    mock_db.outreach_webhook_deliveries.insert_one = AsyncMock()
-    mock_db.outreach_event_outbox.update_one = AsyncMock()
-
-    stats = await scan_and_fanout_outbox(mock_db, batch_size=10)
-
-    assert stats["dispatched_events"] == 1
-    assert stats["deliveries_created"] == 2
-    assert mock_db.outreach_webhook_deliveries.insert_one.await_count == 2
-    mock_db.outreach_event_outbox.update_one.assert_awaited_once()
+    """Only current same-workspace subscriptions create reference-only deliveries."""
+    from tests.outreach_memory import Database
+    from utils.encryption import encrypt
+    event = {"id": "evt_abc", "workspace_id": "ws_alpha", "type": "lead.replied",
+             "payload": {"id": "evt_abc", "type": "lead.replied", "data": {"lead_id": "lead_1"}}}
+    db = Database()
+    db.outreach_event_outbox.find_one_and_update = AsyncMock(side_effect=[event, None])
+    for workspace, hook in [("ws_alpha", "wh_1"), ("ws_alpha", "wh_2"), ("other", "wh_3")]:
+        await db.outreach_webhooks.insert_one({"id": hook, "workspace_id": workspace,
+            "target_url": "https://example.com/hook", "secret_enc": encrypt("private-secret"),
+            "status": "active", "events": ["lead.replied"]})
+    stats = await scan_and_fanout_outbox(db, batch_size=10)
+    assert stats == {"dispatched_events": 1, "deliveries_created": 2}
+    assert await db.outreach_webhook_deliveries.count_documents({"workspace_id": "ws_alpha"}) == 2
+    assert await db.outreach_webhook_deliveries.count_documents({"workspace_id": "other"}) == 0
+    assert "secret_enc" not in str(db.outreach_webhook_deliveries.docs)
 
 
-# ── 5. Delivery Worker & Retries Tests ────────────────────────────────────────
+# Legacy evidence cannot become sendable after cutover.
 
 @pytest.mark.asyncio
-async def test_delivery_success_marks_delivered_and_resets_failures():
-    """A 200 response marks the delivery delivered and clears consecutive failures."""
-    mock_db = MagicMock()
-    delivery_doc = {
-        "id": "del_1",
-        "event_id": "evt_1",
-        "destination_id": "wh_1",
-        "workspace_id": "ws_1",
-        "target_url": "https://consumer.example.com/webhook",
-        "secret_enc": "",
-        "attempt": 0,
-        "max_attempts": 6,
-        "payload": {"id": "evt_1", "type": "lead.replied"},
-    }
-    mock_db.outreach_webhook_deliveries.find_one_and_update = AsyncMock(side_effect=[delivery_doc, None])
-    mock_db.outreach_webhook_deliveries.update_one = AsyncMock()
-    mock_db.outreach_webhooks.update_one = AsyncMock()
-
-    mock_client = AsyncMock()
-    mock_client.post = AsyncMock(return_value=MagicMock(status_code=200, text="OK"))
-
-    stats = await dispatch_due_deliveries(mock_db, safe_client=mock_client)
-
-    assert stats["delivered"] == 1
-    # Check update_one sets status to delivered
-    delivery_update = mock_db.outreach_webhook_deliveries.update_one.await_args.args[1]
-    assert delivery_update["$set"]["status"] == "delivered"
-    assert delivery_update["$set"]["attempt"] == 1
-    assert delivery_update["$set"]["response_status"] == 200
-
-    # Webhook failures reset
-    webhook_update = mock_db.outreach_webhooks.update_one.await_args.args[1]
-    assert webhook_update["$set"]["consecutive_failures"] == 0
+@pytest.mark.parametrize("state", ["pending", "retry", "leased"])
+async def test_legacy_snapshot_jobs_are_quarantined_without_http(state, monkeypatch):
+    from tests.outreach_memory import Database
+    db = Database(outreach_webhook_deliveries=[{"workspace_id": "w", "id": "old", "event_id": "event",
+        "status": state, "secret_enc": "old-evidence", "target_url_enc": "old-evidence"}])
+    monkeypatch.setattr("outreach.core.integration_delivery.IntegrationDelivery.dispatch_due",
+        AsyncMock(return_value={"delivered": 0, "failed": 0, "review_required": 0, "cancelled": 0, "retry": 0}))
+    client = AsyncMock()
+    result = await dispatch_due_deliveries(db, safe_client=client)
+    assert result["review_required"] == 1 and result["delivered"] == 0
+    client.post.assert_not_awaited()
+    saved = await db.outreach_webhook_deliveries.find_one({"workspace_id": "w"})
+    assert saved["status"] == "review_required" and saved["secret_enc"] == "old-evidence"
 
 
 @pytest.mark.asyncio
-async def test_delivery_permanent_404_client_error_does_not_retry():
-    """A 404 response immediately transitions to failed without retrying."""
-    mock_db = MagicMock()
-    delivery_doc = {
-        "id": "del_2",
-        "event_id": "evt_2",
-        "destination_id": "wh_2",
-        "workspace_id": "ws_1",
-        "target_url": "https://consumer.example.com/404",
-        "secret_enc": "",
-        "attempt": 0,
-        "max_attempts": 6,
-        "payload": {"id": "evt_2"},
-    }
-    mock_db.outreach_webhook_deliveries.find_one_and_update = AsyncMock(side_effect=[delivery_doc, None])
-    mock_db.outreach_webhook_deliveries.update_one = AsyncMock()
-    mock_db.outreach_webhooks.find_one_and_update = AsyncMock(return_value={"consecutive_failures": 1})
-
-    mock_client = AsyncMock()
-    mock_client.post = AsyncMock(return_value=MagicMock(status_code=404, text="Not Found"))
-
-    stats = await dispatch_due_deliveries(mock_db, safe_client=mock_client)
-
-    assert stats["failed"] == 1
-    assert stats["retried"] == 0
-    delivery_update = mock_db.outreach_webhook_deliveries.update_one.await_args.args[1]
-    assert delivery_update["$set"]["status"] == "failed"
-
-
-@pytest.mark.asyncio
-async def test_delivery_500_retries_with_exponential_backoff():
-    """A 500 server error schedules an exponential backoff retry."""
-    mock_db = MagicMock()
-    delivery_doc = {
-        "id": "del_3",
-        "event_id": "evt_3",
-        "destination_id": "wh_3",
-        "workspace_id": "ws_1",
-        "target_url": "https://consumer.example.com/500",
-        "secret_enc": "",
-        "attempt": 1,  # first attempt failed
-        "max_attempts": 6,
-        "payload": {"id": "evt_3"},
-    }
-    mock_db.outreach_webhook_deliveries.find_one_and_update = AsyncMock(side_effect=[delivery_doc, None])
-    mock_db.outreach_webhook_deliveries.update_one = AsyncMock()
-
-    mock_client = AsyncMock()
-    mock_client.post = AsyncMock(return_value=MagicMock(status_code=500, text="Internal Server Error"))
-
-    stats = await dispatch_due_deliveries(mock_db, safe_client=mock_client)
-
-    assert stats["retried"] == 1
-    delivery_update = mock_db.outreach_webhook_deliveries.update_one.await_args.args[1]
-    assert delivery_update["$set"]["status"] == "retry"
-    assert delivery_update["$set"]["attempt"] == 2
-    # Verify next_attempt_at was scheduled in the future
-    assert delivery_update["$set"]["next_attempt_at"] > datetime.now(timezone.utc)
-
-
-@pytest.mark.asyncio
-async def test_delivery_exceeding_max_attempts_moves_to_dead_letter():
-    """After 6 failed attempts, delivery moves to dead_letter."""
-    mock_db = MagicMock()
-    delivery_doc = {
-        "id": "del_max",
-        "event_id": "evt_max",
-        "destination_id": "wh_4",
-        "workspace_id": "ws_1",
-        "target_url": "https://consumer.example.com/500",
-        "secret_enc": "",
-        "attempt": 5,  # 6th attempt about to happen
-        "max_attempts": 6,
-        "payload": {"id": "evt_max"},
-    }
-    mock_db.outreach_webhook_deliveries.find_one_and_update = AsyncMock(side_effect=[delivery_doc, None])
-    mock_db.outreach_webhook_deliveries.update_one = AsyncMock()
-    mock_db.outreach_webhooks.find_one_and_update = AsyncMock(return_value={"consecutive_failures": 6})
-
-    mock_client = AsyncMock()
-    mock_client.post = AsyncMock(return_value=MagicMock(status_code=503, text="Service Unavailable"))
-
-    stats = await dispatch_due_deliveries(mock_db, safe_client=mock_client)
-
-    assert stats["dead_letter"] == 1
-    delivery_update = mock_db.outreach_webhook_deliveries.update_one.await_args.args[1]
-    assert delivery_update["$set"]["status"] == "dead_letter"
-
-
-@pytest.mark.asyncio
-async def test_replay_dead_letter_delivery_resets_attempt_and_preserves_event_id():
-    """Manual replay resets attempt, reschedules immediately, and keeps event_id."""
-    mock_db = MagicMock()
-    mock_db.outreach_webhook_deliveries.find_one = AsyncMock(return_value={
-        "id": "del_dead",
-        "event_id": "evt_original_123",
-        "workspace_id": "ws_1",
-        "status": "dead_letter",
-    })
-    mock_db.outreach_webhook_deliveries.update_one = AsyncMock()
-
-    result = await replay_delivery(mock_db, "ws_1", "del_dead", actor_id="user_admin")
-
-    assert result["id"] == "del_dead"
-    assert result["event_id"] == "evt_original_123"
-    assert result["status"] == "pending"
-
-    update_payload = mock_db.outreach_webhook_deliveries.update_one.await_args.args[1]["$set"]
-    assert update_payload["status"] == "pending"
-    assert update_payload["attempt"] == 0
-    assert update_payload["replayed_by"] == "user_admin"
+async def test_replay_preserves_original_evidence_and_denies_reset():
+    from tests.outreach_memory import Database
+    db = Database(outreach_webhook_deliveries=[{"workspace_id": "w", "id": "old", "event_id": "event", "status": "dead_letter"}])
+    with pytest.raises(ValueError, match="cannot be replayed"):
+        await replay_delivery(db, "w", "old", "actor")
+    assert (await db.outreach_webhook_deliveries.find_one({"workspace_id": "w"}))["status"] == "dead_letter"

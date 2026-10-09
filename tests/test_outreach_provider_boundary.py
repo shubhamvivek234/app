@@ -16,6 +16,9 @@ from tests.test_outreach_execution_outbox import execution_db
 
 async def ready(monkeypatch, provider="gmail", source="email_send"):
     from outreach.core import provider_boundary as module
+    from cryptography.fernet import Fernet
+    from utils import encryption
+    monkeypatch.setattr(encryption, '_fernet', Fernet(Fernet.generate_key()))
     db = execution_db()
     account = db.outreach_accounts.docs[0]
     from utils.encryption import encrypt
@@ -44,7 +47,9 @@ async def ready(monkeypatch, provider="gmail", source="email_send"):
     if source == "email_find":
         from outreach.core.email_finder import _linkedin_handle
         envelope.finder_handle = _linkedin_handle(db.outreach_leads.docs[0]["linkedin_url"])
-    await ExecutionPermission(db).grant("w", "a", provider_generation(account, resource, source), [source], "operator")
+    # This helper constructs an in-memory fixture. Real callers re-grant on the
+    # replica set; fake data uses only the callback, with no transaction fallback.
+    await ExecutionPermission(db)._grant("w", "a", provider_generation(account, resource, source), [source], "operator")
     guard = SenderExecution(db)
     await guard.acquire("w", "a", "owner")
     await guard.begin("w", "a", "owner")

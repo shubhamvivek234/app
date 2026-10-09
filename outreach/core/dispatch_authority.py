@@ -160,6 +160,12 @@ class DispatchAuthority:
             scoped = AuthorityDatabase(self.database, session, request_id)
             # Take the shared writer guard before any authority snapshot read.
             await scoped.fence_suppression(envelope.workspace_id)
+            from outreach.core.restore_epoch import positive, EpochUnavailable
+            try:
+                epoch = await positive(scoped, envelope.workspace_id, captured=envelope.epoch_policy)
+            except EpochUnavailable as exc:
+                raise RequestDenied('restore_epoch_required') from exc
+            scoped.checks.append(lambda stamp: epoch.live())
             current = copy(envelope)
             current.db = scoped
             current.authority_validator = (lambda: envelope.transaction_validator(scoped)) if envelope.transaction_validator else None

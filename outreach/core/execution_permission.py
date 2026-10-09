@@ -23,13 +23,28 @@ class ExecutionPermission:
     async def grant(self, workspace_id: str, sender_id: str, generation: str, sources: list[str],
                     operator: str, *, ttl_seconds: int = 60, clear_latch: bool = False,
                     now: datetime | None = None) -> dict:
-        """Issue a bounded grant; renewal cannot silently clear a stop latch."""
+        """Grant and restore stops serialize on the same workspace guard."""
+        from outreach.core.erasure import workspace_is_open
+        if not await workspace_is_open(self.db, workspace_id):
+            raise ValueError("Workspace is closed for erasure")
+        from outreach.core import suppression
+        async def apply(current):
+            return await ExecutionPermission(current)._grant(workspace_id, sender_id, generation,
+                sources, operator, ttl_seconds=ttl_seconds, clear_latch=clear_latch, now=now)
+        return await suppression.mutate_suppression(self.db, workspace_id, apply)
+
+    async def _grant(self, workspace_id: str, sender_id: str, generation: str, sources: list[str],
+                     operator: str, *, ttl_seconds: int = 60, clear_latch: bool = False,
+                     now: datetime | None = None) -> dict:
+        """Private callback: no provider/key work and no unknown-commit fallback."""
         if (not generation or not operator.strip() or not sources or not set(sources) <= SOURCES
                 or type(ttl_seconds) is not int or not 1 <= ttl_seconds <= MAX_PERMISSION_SECONDS):
             raise ValueError("Invalid execution permission")
         from outreach.core.erasure import workspace_is_open
         if not await workspace_is_open(self.db, workspace_id):
             raise ValueError("Workspace is closed for erasure")
+        from outreach.core.restore_epoch import positive
+        epoch = await positive(self.db, workspace_id)
         now = now or datetime.now(timezone.utc)
         expires_at = now + timedelta(seconds=ttl_seconds)
         if generation.startswith("pending:"):
@@ -41,10 +56,10 @@ class ExecutionPermission:
                 raise ValueError("Pending verification custody expired or job scope is unavailable")
             expires_at = min(expires_at, deadline)
         scope = self.scope(workspace_id, sender_id)
-        try:
-            await self.db.outreach_sender_execution.insert_one({**scope, "status": "idle", "permission_revision": 0})
-        except DuplicateKeyError:
-            pass
+        # A caught duplicate insert still aborts a real Mongo transaction.
+        # The shared guard serializes participating creation/grants instead.
+        await self.db.outreach_sender_execution.update_one(scope, {'$setOnInsert': {
+            'status': 'idle', 'permission_revision': 0}}, upsert=True)
         query = dict(scope)
         query["physical_request_token"] = {"$exists": False}
         if not clear_latch:
@@ -76,6 +91,7 @@ class ExecutionPermission:
         permission = {"credential_generation": generation, "sources": sorted(set(sources)),
                       "issued_at": now, "expires_at": expires_at,
                       "operator": operator.strip(), "latched": False, "stop_reason": None}
+        await positive(self.db, workspace_id, captured=epoch.captured)
         result = await self.db.outreach_sender_execution.update_one(query, {
             "$set": {"permission": permission}, "$inc": {"permission_revision": 1},
             "$push": {"permission_history": {**permission, "event": "grant"}},
@@ -86,6 +102,9 @@ class ExecutionPermission:
         permission = doc["permission"]
         await self.db.outreach_execution_permissions.update_one(scope, {"$set": {
             **permission, "revision": doc["permission_revision"]}}, upsert=True)
+        if not epoch.live():
+            from outreach.core.restore_epoch import EpochUnavailable
+            raise EpochUnavailable('Restore configuration changed during grant')
         return {**scope, **permission, "revision": doc["permission_revision"]}
 
     async def allowed(self, workspace_id: str, sender_id: str, generation: str, source: str,
@@ -93,12 +112,23 @@ class ExecutionPermission:
         now = now or datetime.now(timezone.utc)
         if source not in SOURCES or not generation:
             return False
+        from outreach.core.restore_epoch import positive, EpochUnavailable
+        try:
+            epoch = await positive(self.db, workspace_id)
+        except EpochUnavailable:
+            return False
+        if hasattr(type(self.db), 'note_schedule'):
+            self.db.checks.append(lambda stamp: epoch.live())
         authority = await self.db.outreach_sender_execution.find_one(self.scope(workspace_id, sender_id))
         doc = (authority or {}).get("permission")
         if not doc or doc.get("latched") or doc.get("credential_generation") != generation or source not in doc.get("sources", []):
             return False
         issued, expiry = _utc(doc.get("issued_at")), _utc(doc.get("expires_at"))
-        return bool(issued and expiry and issued <= now < expiry
+        if doc.get('health_control_id'):
+            from outreach.core.health_monitor import controlled_permission_allowed
+            if not await controlled_permission_allowed(self.db, authority, doc, now):
+                return False
+        return bool(epoch.live() and issued and expiry and issued <= now < expiry
                     and 0 < (expiry - issued).total_seconds() <= MAX_PERMISSION_SECONDS)
 
     async def revoke(self, workspace_id: str, sender_id: str, operator: str, reason: str,

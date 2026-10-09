@@ -25,10 +25,13 @@ USER = {"user_id": "user_a", "default_workspace_id": "workspace_a"}
 
 def fake_webshare(monkeypatch, handler):
     original_client = httpx.AsyncClient
-    transport = httpx.MockTransport(handler)
+    def streamed(request):
+        reply = handler(request)
+        return httpx.Response(reply.status_code, headers=reply.headers, stream=httpx.ByteStream(reply.content))
+    transport = httpx.MockTransport(streamed)
     monkeypatch.setattr(
-        "outreach.core.proxy_manager.httpx.AsyncClient",
-        lambda **kwargs: original_client(transport=transport, **kwargs),
+        "outreach.core.webshare_inventory.create_safe_client",
+        lambda **kwargs: original_client(transport=transport, trust_env=False, follow_redirects=False),
     )
 
 
@@ -85,8 +88,8 @@ async def test_dedicated_isp_plan_selects_unassigned_country_proxy(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_managed_pilot_does_not_silently_fall_back_to_webshare():
-    """Webshare inventory remains a future adapter, not a paid-pilot fallback."""
+async def test_managed_pilot_requires_imported_capacity_without_provider_api_fallback():
+    """Both managed providers require local imported capacity, never API fallback."""
     from outreach.core.managed_proxy import ManagedProxyUnavailable, reserve_sender_proxy
     db = MagicMock()
     db.outreach_proxy_leases.find_one = AsyncMock(return_value=None)
@@ -95,4 +98,4 @@ async def test_managed_pilot_does_not_silently_fall_back_to_webshare():
     db.outreach_proxy_inventory.find.return_value = cursor
     with pytest.raises(ManagedProxyUnavailable):
         await reserve_sender_proxy(db, "workspace-a", "sender-a", "US")
-    assert db.outreach_proxy_inventory.find.call_args.args[0]["provider"] == "iproyal_static"
+    assert db.outreach_proxy_inventory.find.call_args.args[0]["provider"] == {'$in':['iproyal_static','webshare_plan']}

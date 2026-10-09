@@ -332,12 +332,17 @@ async def test_global_index_setup_secures_oauth_retention_before_other_builds(mo
     from unittest.mock import MagicMock
     from db import indexes
     order = []
+    async def all_retention(_): order.append('other_evidence_retention')
     async def retention(_): order.append('oauth_retention')
     async def other(*args, **kwargs): order.append('other_index')
+    monkeypatch.setattr(indexes, 'remove_other_evidence_ttls', all_retention)
     monkeypatch.setattr(indexes, 'ensure_mailbox_job_indexes', retention)
+    monkeypatch.setattr(indexes, 'ensure_managed_proxy_indexes', other)
+    monkeypatch.setattr(indexes, 'ensure_integration_indexes', other)
     monkeypatch.setattr(indexes, 'ensure_mailbox_sync_indexes', other)
     monkeypatch.setattr(indexes, 'ensure_voice_studio_indexes', other)
+    monkeypatch.setattr(indexes, 'ensure_voice_artifact_migration_indexes', other)
     monkeypatch.setattr(indexes, '_safe_create_index', other)
     monkeypatch.setenv('DB_NAME', 'local-index-fixture')
     await indexes.create_all_indexes(MagicMock())
-    assert order[0] == 'oauth_retention' and order.count('oauth_retention') == 1
+    assert order[:2] == ['other_evidence_retention', 'oauth_retention'] and order.count('oauth_retention') == 1

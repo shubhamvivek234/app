@@ -54,7 +54,7 @@ async def outreach_health():
         "status": "healthy",
         "subsystem": "linkedin_outbound_engine",
         "version": "1.0.0",
-        "proxy_provider_mode": "mock" if proxy_manager.is_mock else "live",
+        "proxy_provider_mode": proxy_manager.configuration_state,
         "features": {
             "hybrid_engine": True,
             "voice_cloner": True,

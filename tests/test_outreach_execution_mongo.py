@@ -192,7 +192,7 @@ async def test_real_mongo_different_traffic_sources_share_one_owner(mongo_db, mo
     from outreach.core.execution_permission import ExecutionPermission
     from unittest.mock import AsyncMock
     import httpx
-    await mongo_db.outreach_accounts.insert_one({"id": "a", "workspace_id": "w", "status": "active", "credential_generation": "g"})
+    await mongo_db.outreach_accounts.insert_one({"id": "a", "workspace_id": "w", "status": "active", "credential_generation": "g", "proxy": {"host": "191.116.125.248"}})
     sources = ["sequence", "sync", "search", "inbox_reply", "engage"]
     await ExecutionPermission(mongo_db).grant("w", "a", "g", sources, "operator")
     monkeypatch.setattr(request_guard, "sender_is_ready", AsyncMock(return_value=True))
@@ -227,7 +227,7 @@ async def test_real_mongo_permission_revoke_at_final_context_check_prevents_send
     from outreach.core.request_guard import RequestEnvelope, RequestDenied
     from outreach.core.execution_permission import ExecutionPermission
     from unittest.mock import AsyncMock
-    await mongo_db.outreach_accounts.insert_one({"id": "a", "workspace_id": "w", "status": "active", "credential_generation": "g"})
+    await mongo_db.outreach_accounts.insert_one({"id": "a", "workspace_id": "w", "status": "active", "credential_generation": "g", "proxy": {"host": "191.116.125.248"}})
     await ExecutionPermission(mongo_db).grant("w", "a", "g", ["sequence"], "operator")
     monkeypatch.setattr(request_guard, "sender_is_ready", AsyncMock(return_value=True))
     monkeypatch.setattr(request_guard, "live_actions_enabled", lambda: True)

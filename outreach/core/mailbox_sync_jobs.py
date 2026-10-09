@@ -59,6 +59,8 @@ def allowed(workspace: str) -> bool:
 
 
 async def validate(current: Any, job: dict, owner: str | None = None, *, paid: bool = True) -> tuple[dict, dict, list]:
+    from outreach.core.restore_epoch import positive
+    await positive(current, job['workspace_id'])
     query = {**scope(job), 'status': 'running' if owner else {'$in': ACTIVE}}
     if owner: query['owner'] = owner
     fenced = _fenced(current, owner or job['_id'])
@@ -151,11 +153,15 @@ class SyncReadAccess:
         self.db, self.job, self.owner, self.token = db, job, owner, token
         self.index = 0
         self.request = None
+        from outreach.core.restore_epoch import policy
+        self.epoch_policy = policy()
 
     async def authorize(self) -> list:
+        from outreach.core.restore_epoch import positive
         request = self.request
         if not request: raise MailboxUnavailable('Mailbox read reference is unavailable')
         async def authorize(current):
+            await positive(current, self.job['workspace_id'], captured=self.epoch_policy)
             row, mailbox, deadlines = await validate(current, self.job, self.owner)
             if (not self.token.secret.matches(mailbox, self.job['workspace_id'], self.job['sender_account_id'])
                     or not _utc(mailbox.get('token_expires_at')) or _utc(mailbox['token_expires_at']) <= now()):
@@ -178,6 +184,9 @@ class SyncReadAccess:
         return await suppression.mutate_suppression(self.db, self.job['workspace_id'], authorize)
 
     def assert_live(self, deadlines: list) -> None:
+        from outreach.core.restore_epoch import EpochProof
+        if not EpochProof(self.epoch_policy).live():
+            raise MailboxUnavailable('Restore epoch changed after commit')
         if not _deadlines_live(deadlines) or not allowed(self.job['workspace_id']) or not self.token.secret.policy_matches():
             raise MailboxUnavailable('Mailbox read authorization expired after commit')
 
@@ -273,6 +282,8 @@ async def _collect(mailbox: dict, job: dict, access: SyncReadAccess) -> tuple[li
 
 async def finish_job(db: Any, job: dict, owner: str, cursor: dict) -> dict:
     async def finish(current):
+        from outreach.core.restore_epoch import positive
+        epoch = await positive(current, job['workspace_id'])
         row, mailbox, _ = await validate(current, job, owner)
         changed = await current.outreach_mailboxes.update_one(sync._mailbox_snapshot_filter(mailbox), {'$set': {
             **cursor, 'sync_status': 'healthy', 'last_sync_at': row['coverage_started_at'], 'sync_completed_at': now(),
@@ -283,6 +294,7 @@ async def finish_job(db: Any, job: dict, owner: str, cursor: dict) -> dict:
             'cache_scrubbed_at': now()}, '$unset': {'lease_until': ''}})
         await current.outreach_mailbox_sync_reads.update_many({'workspace_id': job['workspace_id'], 'job_id': job['_id']},
             {'$unset': {'response_enc': ''}})
+        epoch.assert_live()
         return {'status': 'healthy', 'replies': row['replies'], 'bounces': row['bounces']}
     try: return await suppression.mutate_suppression(db, job['workspace_id'], finish)
     except Exception:
@@ -312,6 +324,8 @@ async def _fail(db: Any, job: dict, owner: str) -> None:
 
 
 async def execute_job(db: Any, workspace: str, job_id: str) -> dict:
+    from outreach.core.restore_epoch import positive
+    await positive(db, workspace)
     owner = secrets.token_urlsafe(18)
     job = None
     try:

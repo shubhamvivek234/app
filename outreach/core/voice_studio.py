@@ -313,6 +313,8 @@ class VoiceStudio:
                 from outreach.core.erasure import workspace_is_open
                 if not await workspace_is_open(current, workspace):
                     raise ValueError('Workspace stopped')
+                from outreach.core.restore_epoch import positive
+                epoch = await positive(current, workspace)
                 await self._validate(current, job)
             except ValueError:
                 await current.outreach_voice_studio_jobs.update_one(scope, {'$set': {'status': 'held_received',
@@ -329,10 +331,13 @@ class VoiceStudio:
                 await current.outreach_voices.update_one(ps, change)
             await current.outreach_voice_studio_jobs.update_one(scope, {'$set': {'status': 'completed',
                 'updated_at': now()}, '$unset': {'input_enc': ''}})
+            epoch.assert_live()
         await self._control(workspace, apply)
         return await self.db.outreach_voice_studio_jobs.find_one(self.scope(workspace, job_id))
 
     async def run(self, workspace: str, job_id: str, *, provider: Callable[[dict], Awaitable[dict]] | None = None) -> dict:
+        from outreach.core.restore_epoch import positive
+        epoch = await positive(self.db, workspace)
         await self.recover(workspace, job_id)
         owner = uuid.uuid4().hex
         async def claim(current):
@@ -356,6 +361,7 @@ class VoiceStudio:
             raw = await open_blob(job['input_enc'], job, 'input') if job.get('input_enc') else None
             credential = await prepare_key(expected_source=job['provider_source_digest'])
             async def begin(current):
+                await positive(current, workspace, captured=epoch.captured)
                 own = await current.outreach_voice_studio_jobs.find_one({**self.scope(workspace, job_id),
                     'owner': owner, 'status': 'preparing', 'lease_until': {'$gt': now()}})
                 if not own:
@@ -386,7 +392,7 @@ class VoiceStudio:
         # Synchronous final configuration/deadline check and bounded adapter entry.
         def allowed():
             try:
-                return now() < deadline and configuration() == job['configuration_digest'] and credential.matches()
+                return epoch.live() and now() < deadline and configuration() == job['configuration_digest'] and credential.matches()
             except ValueError:
                 return False
         try:

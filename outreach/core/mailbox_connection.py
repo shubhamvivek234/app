@@ -322,6 +322,10 @@ async def consume_oauth_callback(
 
 
 async def _token_exchange(config: ProviderConfig, job: dict, *, preflight=None) -> dict:
+    from outreach.core.restore_epoch import EpochProof, policy
+    epoch = EpochProof(policy())
+    if not epoch.live():
+        raise MailboxUnavailable('Restore activation is unavailable')
     custody = custody_stamp()
     app_secret = await prepare_app_secret(config, job=job)
     data = {
@@ -339,7 +343,7 @@ async def _token_exchange(config: ProviderConfig, job: dict, *, preflight=None) 
         raise MailboxUnavailable('Mailbox OAuth application changed before authorization')
     deadlines = (await preflight() or []) if preflight else []
     async with httpx.AsyncClient(timeout=20) as client:
-        if not app_secret.matches() or custody_stamp() != custody or preflight and (not _deadlines_live(deadlines) or not _control_allowed(job['workspace_id']) or deadline and deadline <= datetime.now(timezone.utc)):
+        if not epoch.live() or not app_secret.matches() or custody_stamp() != custody or preflight and (not _deadlines_live(deadlines) or not _control_allowed(job['workspace_id']) or deadline and deadline <= datetime.now(timezone.utc)):
             raise MailboxUnavailable('Mailbox authorization changed before transport')
         response = await client.post(config.token_url, data=data)
     if response.status_code != 200:
@@ -395,6 +399,8 @@ async def _mailbox_identity(provider: str, access_token: str, *, preflight=None)
 
 async def complete_connection_job(db, workspace_id: str, job_id: str) -> dict:
     """Worker-side code exchange; secrets never appear in task arguments/results."""
+    from outreach.core.restore_epoch import positive
+    epoch = await positive(db, workspace_id)
     owner = secrets.token_urlsafe(18)
     job = await claim_job(db, workspace_id, job_id, owner)
     if not job:
@@ -412,6 +418,7 @@ async def complete_connection_job(db, workspace_id: str, job_id: str) -> dict:
             raise MailboxUnavailable('Mailbox authorization application changed or is unproven')
         async def exchange_preflight(*, authorize=False):
             async def check(current):
+                await positive(current, workspace_id, captured=epoch.captured)
                 fenced = AuthorityDatabase(current.database, current.session, owner) if isinstance(current, suppression.SuppressionDatabase) else current
                 live = await fenced.outreach_mailbox_connection_jobs.find_one({"workspace_id": workspace_id, "id": job_id,
                     "status": "running", "connection_owner": owner})
@@ -432,8 +439,12 @@ async def complete_connection_job(db, workspace_id: str, job_id: str) -> dict:
             deadlines = await suppression.mutate_suppression(db, workspace_id, check)
             if not app_configuration_matches(config, app_digest) or not _deadlines_live(deadlines) or custody_stamp() != custody or not _control_allowed(workspace_id):
                 raise MailboxUnavailable('Mailbox authorization expired after commit')
+            if not epoch.live():
+                raise MailboxUnavailable('Restore epoch changed')
             return deadlines
         async def authorize_exchange():
+            if not epoch.live():
+                raise MailboxUnavailable('Restore epoch changed')
             return await exchange_preflight(authorize=True)
         tokens = await _token_exchange(config, job, preflight=authorize_exchange)
         await exchange_preflight()
@@ -496,6 +507,7 @@ async def complete_connection_job(db, workspace_id: str, job_id: str) -> dict:
         if config.provider == "microsoft" and not saved_cursor:
             unset_fields["delta_url"] = ""
         async def install(current):
+            await positive(current, workspace_id, captured=epoch.captured)
             from outreach.core.credential_migration import _stable
             fenced = AuthorityDatabase(current.database, current.session, owner) if isinstance(current, suppression.SuppressionDatabase) else current
             live = await fenced.outreach_mailbox_connection_jobs.find_one({"workspace_id": workspace_id, "id": job_id,
@@ -518,6 +530,7 @@ async def complete_connection_job(db, workspace_id: str, job_id: str) -> dict:
                     "installed_at": now, "updated_at": now}, "$unset": {"authorization_code_enc": "", "code_verifier_enc": "",
                         "expires_at": "", "lease_until": ""}})
             if receipt.matched_count != 1: raise MailboxUnavailable("Mailbox installation receipt owner changed")
+            epoch.assert_live()
         await suppression.mutate_suppression(db, workspace_id, install)
         # OAuth installation is complete. Independent polling initializes or
         # catches up from the preserved cursor; healthy freshness still gates send.

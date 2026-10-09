@@ -82,6 +82,7 @@ async def test_cancel_schedules_end_of_paid_period_without_clearing_proxy():
 @pytest.mark.asyncio
 async def test_manual_payment_records_unique_invoice_and_clears_pending_cancel():
     db = MagicMock()
+    db.outreach_entitlements.find_one = AsyncMock(return_value=None)
     db.outreach_payment_receipts.insert_one = AsyncMock()
     db.outreach_payment_receipts.find_one = AsyncMock(return_value=None)
     from outreach.core.authorization import canonical_hash
@@ -91,6 +92,7 @@ async def test_manual_payment_records_unique_invoice_and_clears_pending_cancel()
     db.outreach_access_requests.update_one = AsyncMock()
     db.outreach_access_requests.find_one = AsyncMock(return_value={"country_code": "IN", "seats": 1})
     db.outreach_proxy_inventory.count_documents = AsyncMock(return_value=1)
+    db.outreach_proxy_inventory.find.return_value.to_list = AsyncMock(return_value=[])
     db.outreach_sender_slots.count_documents = AsyncMock(return_value=0)
     result = await paid_access.record_verified_payment(
         db, "workspace-1", "invoice-123", "operator@example.com", 1,

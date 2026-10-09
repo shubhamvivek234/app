@@ -690,7 +690,7 @@ async def test_erased_invoice_cannot_be_applied_to_another_workspace_even_after_
     inspected = await service.inspect_hold("w", hold["_id"])
     await service.release_hold("w", hold["_id"], "operator", "The financial retention basis was independently reviewed.", expected_digest=inspected["review_digest"])
     await db.outreach_access_requests.insert_one({"workspace_id": "new-fixture", "country_code": "IN", "seats": 1})
-    await db.outreach_proxy_inventory.insert_one({"_id": "new-fixture-ip", "last_workspace_id": "new-fixture", "country_code": "IN",
+    await db.outreach_proxy_inventory.insert_one({"_id": "new-fixture-ip", "last_workspace_id": "new-fixture", "country_code": "IN", "provider": "iproyal_static",
         "status": "available", "expires_at": term + timedelta(days=1)})
     with pytest.raises(ValueError, match="Invoice"):
         await record_verified_payment(db, "new-fixture", "test-verified-invoice", "test-operator", 1, term)
@@ -745,7 +745,7 @@ async def test_actual_payment_with_submillisecond_term_remains_erasable_after_bs
     db, _ = owned
     term = (datetime.now(timezone.utc) + timedelta(days=30)).replace(microsecond=123456)
     await db.outreach_access_requests.update_one({"workspace_id": "w"}, {"$set": {"seats": 1, "country_code": "IN"}}, upsert=True)
-    await db.outreach_proxy_inventory.insert_one({"_id": "term-test-ip", "last_workspace_id": "w", "country_code": "IN",
+    await db.outreach_proxy_inventory.insert_one({"_id": "term-test-ip", "last_workspace_id": "w", "country_code": "IN", "provider": "iproyal_static",
         "status": "available", "expires_at": term + timedelta(days=1)})
     await record_verified_payment(db, "w", "test-ms-invoice", "test-operator", 1, term)
     receipt = await db.outreach_payment_receipts.find_one({"_id": "test-ms-invoice"})

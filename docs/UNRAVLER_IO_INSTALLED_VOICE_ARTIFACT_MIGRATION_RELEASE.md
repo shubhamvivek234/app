@@ -1,0 +1,65 @@
+# Installed campaign recording custody conversion — v2.31
+
+Updated: 2026-10-08. Status: locally implemented and verified. Uncommitted and not deployed.
+
+## Result and original evidence
+
+The private stopped maintenance workflow converts an installed, unexpired strict-Fernet campaign WAV into the existing scoped AES-GCM/KMS recording envelope. It preserves the original bytes, audio digest, generation, content identity, media metadata, preparation timestamp and expiry. It performs no synthesis, source adoption, expiry extension, payment grant or activation. Normal consumers continue to require the configured custody format; explicit legacy opening is confined to this reviewed migration path.
+
+Eligibility requires an exact workspace/artifact record with only the recognized recording fields, a strict Fernet ciphertext, native BSON-millisecond preparation/expiry dates, the existing 24-hour lifetime and bounded WAV metadata. The original preparation job must retain a received generation result, prepared status, mutation marker, original owner matching the recording generation, matching audio digest, positive generation count and an original start timestamp preceding preparation. Missing, expired or altered original records deny before audio/key work.
+
+A retained full content-review binding must independently reconstruct the original content identity: its own canonical hash equals its review ID; workspace, voice-note action, artifact ID, generation and audio digest match; removing the recorded artifact/generation/audio additions reconstructs the original artifact hash. An opaque job ID or a password alone is insufficient. Every matching approval must have a recognized status and positive revision. Legacy helper/direct-storage clips without these original facts remain blocked. Stored generation evidence and an operator digest do not establish current vendor ownership, voice consent or delivery permission.
+
+## Inspection, stop and conversion ordering
+
+`inspect` returns bounded references, an exact normalized inspection digest, blockers, affected authority counts and `activation_allowed=false`. It captures the original recording/job/reviews, workspace closure state, complete destination custody-policy digest and current workspace writer authorities. All four outreach, integration, Voice Studio and voice-preparation gates must be off; migration also requires scoped destination configuration, an identified operator, separate SHA-256 evidence, the exact inspection digest and explicit all-workspace-writer/cache drain acknowledgement. Drain is operator asserted, rather than an actual fleet inspection. Authority collections are bounded to 100 rows each; capacity ambiguity denies.
+
+Active/unproven sender workers, unfinished Studio operations and unrecovered campaign generation deny. Expired physical uncertainty remains held. A snapshot/majority workspace-guard preflight fences the exact source and authorities, pauses workspace senders and active/warming campaigns, disables auto-launch, increments campaign authorization revisions, latches execution permissions and cancels known queued recording preparation. Unknown owners, physical tokens, leases and paid budgets remain intact. Matching approved reviews become pending; existing pending, rejected and revoked states are preserved. Approval validity is stopped and revisioned with hashed operator history. The post-stop snapshot must still prove the same original recording/job. Actual standalone Mongo denies; no fallback is provided.
+
+That authority stop commits **before** opening audio. Policy, gates and original expiry are checked again after preflight commit, after awaited strict legacy opening, after scoped sealing, and at the final guarded boundary. Audio opening verifies bounded actual WAV bytes and the original digest/media facts. Opening and key wrapping run outside Mongo; the existing recording envelope binds workspace/artifact/generation/purpose/environment and authenticated original metadata.
+
+The final snapshot/majority transaction revalidates the exact post-stop snapshot, conditionally changes **only `audio_enc`** on the original record, verifies the complete installed record/job and inserts the permanent metadata receipt. Policy/gate/expiry and prepared-value integrity checks run after all awaited final readbacks immediately before callback completion. Commit can follow; these are process-local checks, not fleet/clock consensus or kernel/socket enforcement.
+
+Final ciphertext installation and its receipt are atomic, while the authority stop is a separate earlier transaction. Failed opening, wrapping or final installation leaves the original recording and paused authority. If no saved receipt exists, preserve evidence and inspect again: stopped authority/review revisions change the inspection digest. Lost preflight acknowledgement opens no audio and requires fresh inspection. Do not enable flags or modify expiry to force an old review through.
+
+## Receipts, retention and use limits
+
+The natural request identity binds workspace/artifact/original inspection; the exact request additionally binds operator and evidence. Ordinary or guarded concurrent saved receipts take precedence before source opening, wrapping, installation or repeated stopping. Lost final acknowledgement resolves through that receipt. Different review/evidence/operator requests cannot reuse it. Exact retries report historical completion, current-material match, destination-policy match and `activation_allowed=false`; they do not prove current decryptability, freshness or execution approval. Competing callers that both passed preflight may each wrap once before one final installation wins, so there is no exactly-once KMS billing claim.
+
+The TTL-free `voice_artifact` journal in the existing credential-migration collection contains hashed original record/job/generation/operator/policy/material, review evidence, audio digest, original preparation/expiry and `strict_fernet_voice_artifact_conversion` provenance. It contains no audio, ciphertext, script, cookie or raw operator. Strict partial unique workspace/artifact/generation indexing follows retention-first startup; conflicting duplicate history fails rather than being ignored. The original recording's expiry TTL remains unchanged. Account erasure retains only minimal hashed `voice_artifact_custody_migration` provenance and purges the ordinary journal/recording through existing erasure behavior; permanent closed tenants cannot reinstall.
+
+Storage conversion preserves an original recording for its remaining lifetime, without making its old content context current. Pausing campaigns changes authorization revisions, which may make the original binding stale. Existing profile/source/recipient/campaign/consent checks still apply. A fresh review alone cannot rebind the old recording; changed context can require a new recording through the normal separately authorized preparation flow. Previous human rejections/revocations and profile consent are preserved. Missing/expired recordings are never recreated, and older Studio input/result caches or other artifact classes are outside this slice.
+
+Implementation: `outreach/core/voice_artifact_migration.py`, private `outreach/ops/voice_artifact_migration.py`, shared validation in `voice_artifact_custody.py`, strict indexes in `db/indexes.py` and minimal retention in `outreach/core/erasure.py`. No new API, UI, broker job or blob collection is added. Participating guards do not establish safety against arbitrary raw database writers or an undrained older fleet.
+
+## Private procedure
+
+Independently review and retain the original generation/content evidence. On a trusted backend host, keep all four gates disabled, configure the scoped destination and pause/drain every workspace writer and cache. Inspect the existing recording:
+
+```text
+python -m outreach.ops.voice_artifact_migration inspect --workspace WORKSPACE --artifact ORIGINAL_ARTIFACT_SHA256
+```
+
+Review every blocker and preserve the exact digest. Only an eligible original record may proceed:
+
+```text
+python -m outreach.ops.voice_artifact_migration migrate --workspace WORKSPACE --artifact ORIGINAL_ARTIFACT_SHA256 --operator OPERATOR --evidence-digest REVIEW_EVIDENCE_SHA256 --review-digest INSPECTION_DIGEST --workers-drained I_PAUSED_AND_DRAINED_ALL_WORKSPACE_WRITERS_AND_CACHES
+```
+
+References/digests must contain no secrets. There are no audio, password, replacement generation, source or expiry arguments. Parser/runtime errors are sanitized; the Mongo client closes even after database-selection failure. Retain the original evidence and permanent metadata receipt. Inspect mismatches separately. The command installs no configuration and grants no activation. See the [operator guide](OUTREACH_PROXY_PROVIDERS.md).
+
+## Verification
+
+All **66 new focused cases** pass in **37.61 seconds**: 34 service/proof cases, eight CLI cases, 23 actual replica-set cases and one actual standalone denial. Dedicated new-module statement coverage is **95% combined** (service95/CLI96). Real database cases cover naive-UTC BSON, committed stop before opening, key work outside transactions, failed key work with retained stop/source, atomic installation/journal rollback, seal-time source/review/authority/config/expiry/erasure changes, late awaited-readback policy/gate/expiry rollback, exact concurrent receipt precedence, lost final/preflight acknowledgement, TTL-style record removal, strict indexes and minimal closed-tenant erasure. No new HTTP, SIGKILL, Redis or broker redelivery evidence is claimed.
+
+Independent review reproduced a late policy change reaching audio/key work after committed preflight. Two red boundary cases now pass with checks before opening and sealing. Four red original-binding cases also passed only after tenant/content hash/generation/audio proof was added. Rejection/revocation preservation and strict original opening failures are covered. The initial real-erasure fixture used a nonexistent helper; it was corrected to the existing request/inspect/finish protocol and rerun. These initial failures are not green release evidence. Corrected source/CLI/index/erasure review is approved; the independent reviewer ran 143 focused/affected cases, without running Mongo services.
+
+Compilation, medium/high Bandit, development Compose, production Compose (the existing symlink to the same configuration) and whitespace checks pass with existing warnings. Frontend is unchanged; prior 99 frontend tests/build remain historical. The final complete normal outreach/account-auth rerun passes **2,282 backend checks** (2,262 outreach plus 20 account/auth), with **44 historical opt-in skips** and two existing warnings, in **667.01 seconds**. All 66 new cases are included; no failing case is excluded. Dedicated coverage preserves the repository's pre-existing coverage cache; broad verification runs without coverage because v2.29 already documents the existing instrumented subprocess interaction.
+
+The initial complete normal run had 2,281 passes, one failure and 44 historical skips in 669.78 seconds. Its sole failure was the existing global index-order fixture missing an async stub for the new index helper; its regular mock could not be awaited. One matching helper stub was added, preserving the retention-first assertion. All 28 lifecycle-module cases and an independent targeted rerun pass. Production source, crash-test timeouts and exclusions were unchanged; the complete normal rerun passes as reported above. The initial failed run is disclosed rather than counted as a clean result.
+
+Zero temporary databases remained after verification. The exact ownership-validated Mongo process/storage and both explicit final test directories are removed; ports 27028/27029/6389 are closed and no Redis was started. Diagnostic logs and explicit temporary coverage files remain; the pre-existing repository coverage cache and unrelated dirty files are preserved. Three v2.31 repo/Desktop specifications, the runbook and all 30 linked release reports byte-match; all 113 local specification links are valid. Independent source, fixture and contract review approves the final scope; final log/copy/link/port audit is recorded separately. The pre-edit backup contains eight original repo/Desktop specification/runbook copies in `/tmp/unravler-docs-before-v2-31-20261008`. No production database/configuration, IAM, real AWS/provider call, purchase, payment grant or flag is changed. Legacy custody and disabled flags remain the defaults.
+
+## Remaining work
+
+Unproven or expired campaign recordings, older Studio input/result/audio custody and remaining shared-provider secrets need separate work. Missing-original-fact Webshare adoption, explicit integration activation, different-key/unproven voice evidence and actual IAM/temporary-role/kernel-egress/backup-restore/authorized-pilot checks remain outstanding. v2.23–v2.31 are local, uncommitted and undeployed; no commit, push or deployment occurs here.

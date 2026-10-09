@@ -35,8 +35,8 @@ async def current_sequence_binding(db: AsyncIOMotorDatabase, record: dict) -> di
     artifact_id = binding["context"].get("voice_artifact_id")
     artifact = None
     if artifact_id:
-        await VoiceArtifacts(db).load(binding["workspace_id"], artifact_id)
-        artifact = await db.outreach_voice_artifacts.find_one({"_id": artifact_id, "workspace_id": binding["workspace_id"]})
+        clip = await VoiceArtifacts(db).prepare_load(binding["workspace_id"], artifact_id)
+        artifact = clip.document
     return await sequence_binding(db, binding["workspace_id"], binding["context"]["lead_id"], voice_artifact=artifact)
 
 
@@ -104,7 +104,7 @@ async def prepare_content_reviews(campaign_id: str, skip: int = Query(0, ge=0, l
             if value["action"] == "voice_note":
                 artifact = await current.outreach_voice_artifacts.find_one({"_id": canonical_hash(value), "workspace_id": ws, "status": "prepared"})
                 try:
-                    await VoiceArtifacts(current).load(ws, canonical_hash(value))
+                    artifact = await VoiceArtifacts(current).metadata(ws, canonical_hash(value))
                 except ValueError:
                     held = await current.outreach_voice_preparation_jobs.find_one({"_id": canonical_hash(value), "workspace_id": ws,
                         "status": "held_outcome"})
@@ -179,8 +179,10 @@ async def content_audio(approval_id: str, current_user: dict = Depends(get_curre
     if not artifact_id:
         raise HTTPException(404, "Prepared voice clip not found")
     try:
-        audio = await VoiceArtifacts(db).load(ws, artifact_id)
-        if hashlib.sha256(audio).hexdigest() != record["binding"]["content"].get("audio_digest"):
+        clip = await VoiceArtifacts(db).prepare_load(ws, artifact_id)
+        audio = clip.audio
+        if (hashlib.sha256(audio).hexdigest() != record["binding"]["content"].get("audio_digest")
+                or clip.document['generation_id'] != record['binding']['context'].get('voice_artifact_generation')):
             raise ValueError("Voice preview changed; prepare and review it again")
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc

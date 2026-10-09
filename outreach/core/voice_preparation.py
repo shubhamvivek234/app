@@ -15,6 +15,7 @@ from outreach.core.dispatch_authority import AuthorityDatabase
 from outreach.core.paid_access import get_active_entitlement, _utc
 from outreach.core.suppression import SuppressionDatabase
 from outreach.core.voice_artifacts import VoiceArtifacts
+from outreach.core.voice_artifact_custody import policy_digest as artifact_policy_digest
 from outreach.core.voice_policy import VOICE_POLICY, preparation_enabled, require_configuration, validate_audio
 from outreach.core.voice_provider import generate_campaign_voice
 from utils.encryption import validate_encryption_key
@@ -52,7 +53,11 @@ class VoicePreparation:
             raise ValueError("The current step is not a voice note")
         require_configuration(binding)
         try:
-            validate_encryption_key()
+            if session_custody.custody_mode() == 'legacy_fernet':
+                validate_encryption_key()
+            else:
+                # Construction validates pinned configuration, with no AWS call.
+                session_custody.configured_custody()
         except (ValueError, OSError) as exc:
             raise ValueError("Voice preparation requires working encrypted storage") from exc
         return binding
@@ -67,7 +72,7 @@ class VoicePreparation:
             now = utcnow()
             if job and job["status"] == "prepared":
                 try:
-                    await VoiceArtifacts(current).load(workspace, job["_id"], now=now)
+                    await VoiceArtifacts(current).metadata(workspace, job["_id"], now=now)
                     return job
                 except ValueError:
                     pass
@@ -76,6 +81,7 @@ class VoicePreparation:
             await current.outreach_voice_preparation_jobs.update_one(scope, {"$set": {
                 "binding": binding, "status": "queued", "requested_by": actor.strip(), "updated_at": now,
                 "provider_config_digest": configuration_digest(),
+                "artifact_policy_digest": artifact_policy_digest(),
                 "next_publish_at": now, "next_due_at": now}, "$setOnInsert": {"created_at": now, "mutation": True},
                 "$unset": {"owner": "", "claim_expires_at": "", "error_code": ""}}, upsert=True)
             return await current.outreach_voice_preparation_jobs.find_one(scope)
@@ -106,6 +112,8 @@ class VoicePreparation:
     async def run(self, workspace: str, job_id: str, *, generator: Generator | None = None) -> dict:
         if not preparation_enabled():
             return {"status": "disabled"}
+        from outreach.core.restore_epoch import positive
+        epoch = await positive(self.db, workspace)
         await self.recover(workspace, job_id)
         owner = str(uuid.uuid4())
         async def claim(current):
@@ -123,6 +131,10 @@ class VoicePreparation:
 
         try:
             proof = job.get('provider_config_digest')
+            artifact_proof = job.get('artifact_policy_digest')
+            if ((artifact_proof is not None and artifact_proof != artifact_policy_digest())
+                    or (session_custody.custody_mode() == 'kms_v1' and not artifact_proof)):
+                raise ValueError('Voice artifact custody is unproven')
             if session_custody.custody_mode() == 'kms_v1' and not proof:
                 raise ValueError('Voice provider configuration is unproven')
             credential = await prepare_key(expected_digest=proof,
@@ -131,8 +143,9 @@ class VoicePreparation:
             return await self._mark(workspace, job_id, owner, 'blocked', 'provider_custody_unavailable')
 
         async def begin(current):
+            await positive(current, workspace, captured=epoch.captured)
             now = utcnow()
-            if not credential.matches():
+            if not credential.matches() or (artifact_proof is not None and artifact_proof != artifact_policy_digest()):
                 raise ValueError('Voice provider configuration changed')
             deadlines = []
             if await self._binding(current, workspace, job["binding"]["context"]["lead_id"], deadlines=deadlines) != job["binding"]:
@@ -170,7 +183,8 @@ class VoicePreparation:
             return await self._mark(workspace, job_id, owner, "blocked", "generation_not_called")
         try:
             def allowed():
-                return preparation_enabled() and utcnow() < boundary['deadline'] and credential.matches()
+                return (epoch.live() and preparation_enabled() and utcnow() < boundary['deadline'] and credential.matches()
+                        and (artifact_proof is None or artifact_proof == artifact_policy_digest()))
             if not allowed():
                 raise ValueError('Voice provider configuration changed')
             audio = (await generator(job['binding']) if generator is not None else
@@ -180,7 +194,17 @@ class VoicePreparation:
             # Every error after this durable marker is potentially billable.
             return await self._mark(workspace, job_id, owner, "held_outcome", "generation_needs_review")
 
+        # Receipt already exists in this worker. Key wrapping must never run in
+        # a retryable Mongo callback or cause a second paid generation call.
+        prepared = None
+        if credential.matches() and (artifact_proof is None or artifact_proof == artifact_policy_digest()):
+            try:
+                prepared = await VoiceArtifacts(self.db).prepare(job['binding'], audio, generation_id=owner)
+            except ValueError:
+                return await self._mark(workspace, job_id, owner, 'held_outcome', 'artifact_custody_unavailable')
+
         async def finish(current):
+            await positive(current, workspace, captured=epoch.captured)
             now = utcnow()
             own = await current.outreach_voice_preparation_jobs.find_one({"workspace_id": workspace, "_id": job_id,
                 "owner": owner, "status": "generating", "claim_expires_at": {"$gt": now}})
@@ -190,17 +214,19 @@ class VoicePreparation:
                 fresh = await self._binding(current, workspace, job["binding"]["context"]["lead_id"])
             except ValueError:
                 fresh = None
-            if fresh != job["binding"] or not credential.matches():
+            if (fresh != job["binding"] or not credential.matches() or prepared is None
+                    or not prepared.matches(now=now)):
                 await current.outreach_voice_preparation_jobs.update_one({"workspace_id": workspace, "_id": job_id, "owner": owner},
                     {"$set": {"status": "superseded", "updated_at": now, "generation_result": "received_discarded"},
                         "$unset": {"binding": ""}})
                 return {"status": "superseded"}
-            artifact = await VoiceArtifacts(current).store(job["binding"], audio, generation_id=owner, now=now)
+            artifact = await VoiceArtifacts(current).install(prepared)
             reviewed = await sequence_binding(authority(current), workspace, fresh["context"]["lead_id"], voice_artifact=artifact)
             await ContentApproval(current).ensure(reviewed, now=now)
             await current.outreach_voice_preparation_jobs.update_one({"workspace_id": workspace, "_id": job_id, "owner": owner,
                 "status": "generating"}, {"$set": {"status": "prepared", "updated_at": now,
                     "audio_digest": artifact["audio_digest"], "generation_result": "received"}, "$unset": {"binding": ""}})
+            epoch.assert_live()
             return {"status": "prepared"}
         # Commit-only retries cannot repeat the already completed HTTP request.
         return await suppression.mutate_suppression(self.db, workspace, finish)

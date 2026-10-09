@@ -183,6 +183,8 @@ class VoiceVendorEvidence:
                       workers_drained: bool = False, provider: Callable[[dict], Awaitable[dict]] | None = None) -> dict:
         self.source._scope(workspace, voice)
         actor, proof = self._arguments(operator, evidence, expected_digest, workers_drained)
+        from outreach.core.restore_epoch import positive
+        epoch = await positive(self.db, workspace)
         scope = {'workspace_id': workspace, '_id': canonical_hash(['voice-vendor-read-v1', workspace, voice, expected_digest])}
         owner = uuid.uuid4().hex
 
@@ -211,8 +213,9 @@ class VoiceVendorEvidence:
             credential = await voice_key_custody.prepare_key(expected_digest=job['configuration_digest'],
                 expected_source=job['provider_source_digest'])
             def allowed():
-                return flags_off() and credential.matches() and now() < timestamp(job['authorization_expires_at'])
+                return epoch.live() and flags_off() and credential.matches() and now() < timestamp(job['authorization_expires_at'])
             async def authorize(current):
+                await positive(current, workspace, captured=epoch.captured)
                 record = await current.outreach_voice_vendor_reads.find_one(scope)
                 snapshot = await self._snapshot(VoiceStudio._authorities(current), workspace, voice)
                 others = {**snapshot, 'reads': [row for row in snapshot['reads'] if row['_id'] != job['_id']]}
@@ -274,6 +277,8 @@ class VoiceVendorEvidence:
                     'current_matches': profile_digest(profile) == release['after_digest']
                         and config['source'] == job['provider_source_digest']
                         and config['digest'] == job['configuration_digest']}
+            from outreach.core.restore_epoch import positive
+            epoch = await positive(current, workspace)
             snapshot = await self._snapshot(VoiceStudio._authorities(current), workspace, voice, job_id)
             if digest(snapshot) != expected_digest or self._release_blockers(snapshot):
                 raise ValueError('Fresh vendor ownership, verification and unchanged recorded consent are required')
@@ -293,6 +298,7 @@ class VoiceVendorEvidence:
             changed = await current.outreach_voice_vendor_reads.update_one({**scope, 'owner': job['owner'],
                 'status': 'received', 'receipt_digest': job['receipt_digest']}, {'$set': {'status': 'released', 'release': journal}})
             if changed.matched_count != 1 or not self._release_current(job): raise ValueError('Vendor receipt changed')
+            epoch.assert_live()
             return {'status': 'released', 'job_id': job_id, 'current_matches': True, 'activation_allowed': False}
         return await suppression.mutate_suppression(self.db, workspace, apply)
 

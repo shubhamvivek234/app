@@ -118,6 +118,8 @@ async def test_sync_only_publishes_complete_parsed_coverage(monkeypatch, page, c
     client = type("Client", (), {"fetch_conversations": AsyncMock(return_value=page)})()
     monkeypatch.setattr(inbox_sync, "VoyagerClient", lambda **kwargs: client)
     monkeypatch.setattr(inbox_sync, "sender_is_ready", AsyncMock(return_value=True))
+    # These parser/reconnect tests isolate credential opening with their fake client.
+    monkeypatch.setattr("outreach.core.session_custody.account_session", AsyncMock(return_value={"li_at": "local-test-cookie", "jsession_id": "ajax:local", "li_a": ""}))
     result = await inbox_sync.InboxSynchronizer(db, "w").sync_account_inbox("a")
     stored = await db.outreach_accounts.find_one({"id": "a"})
     assert (freshness_reason(stored) is None) == complete
@@ -143,6 +145,8 @@ async def test_capped_sync_and_reconnect_cannot_create_freshness(monkeypatch):
     client = type("Client", (), {"fetch_conversations": staticmethod(fetch)})()
     monkeypatch.setattr(inbox_sync, "VoyagerClient", lambda **kwargs: client)
     monkeypatch.setattr(inbox_sync, "sender_is_ready", AsyncMock(return_value=True))
+    # These parser/reconnect tests isolate credential opening with their fake client.
+    monkeypatch.setattr("outreach.core.session_custody.account_session", AsyncMock(return_value={"li_at": "local-test-cookie", "jsession_id": "ajax:local", "li_a": ""}))
     result = await inbox_sync.InboxSynchronizer(db, "w").sync_account_inbox("a")
     assert not result["coverage_complete"]
     assert freshness_reason(await db.outreach_accounts.find_one({"id": "a"}))

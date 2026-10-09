@@ -38,6 +38,10 @@ async def test_real_ip_health_is_not_bypassed_by_mock_webshare_key(monkeypatch):
 @pytest.mark.asyncio
 async def test_operator_import_encrypts_credentials_and_records_provider_term():
     db = MagicMock()
+    from tests.outreach_memory import Collection
+    db.account_proxy_ip_guards = Collection()
+    db.outreach_proxy_inventory.count_documents = AsyncMock(return_value=0)
+    db.outreach_proxy_inventory.find_one = AsyncMock(return_value=None)
     db.outreach_proxy_inventory.insert_one = AsyncMock()
     result = await import_iproyal_proxy(
         db, PROXY, "IN", "order-123", "workspace-a", NOW + timedelta(days=30), now=NOW,
@@ -62,6 +66,7 @@ async def test_inventory_rejects_private_proxy_ip():
 @pytest.mark.asyncio
 async def test_reservation_is_sender_specific_and_keeps_original_customer():
     db = MagicMock()
+    db.account_proxy_ip_guards.find_one = AsyncMock(return_value=None)
     candidate = {
         "_id": "iproyal:1", "provider": "iproyal_static", "host": "191.116.125.248",
         "port": 12323, "username": "pilot", "password_enc": "encrypted",

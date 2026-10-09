@@ -7,7 +7,8 @@ from datetime import datetime, timezone
 import hashlib
 import logging
 import secrets
-from typing import Any, Callable
+import re
+from typing import Annotated, Any, Callable
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
@@ -17,28 +18,24 @@ import httpx
 
 from api.deps import get_current_user, require_permission
 from db.mongo import get_db
-from outreach.core.crypto import decrypt_secret, encrypt_secret
+from outreach.core import integration_custody
+from outreach.core.credential_custody import CustodyUnavailable
+from outreach.core.integration_delivery import IntegrationDelivery
+from outreach.core.suppression import SuppressionUnavailable
 from outreach.core.event_definitions import WebhookEvent
 from outreach.core.event_outbox import record_outbox_event
 from outreach.core.lead_importer import normalize_linkedin_url
 from outreach.core.paid_access import get_active_entitlement
 from outreach.core.safe_transport import SSRFSecurityError, validate_webhook_url
-from outreach.core.slack_notifier import (
-    format_slack_test_card,
-    send_slack_notification,
-    validate_slack_webhook_url,
-)
+from outreach.core.slack_notifier import validate_slack_webhook_url
 from outreach.core.crm_sync import (
     FORMULA_INJECTION_PREFIXES,
     sanitize_spreadsheet_value,
     sanitize_row_data,
-    sync_lead_to_hubspot,
 )
 from outreach.core.webhook_delivery import replay_delivery
-from outreach.core.webhook_dispatcher import dispatch_webhook
 from outreach.models import LeadExecutionState, OutreachApiKey, OutreachWebhook
 from outreach.core.integrations_pilot import is_integrations_pilot_allowed
-from utils.ssrf_guard import is_safe_url
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +45,37 @@ public_router = APIRouter(prefix="/public", tags=["Outreach Public REST API"])
 ALLOWED_SCOPES = {"campaigns:read", "leads:read", "leads:write"}
 MAX_WEBHOOKS_PER_WORKSPACE = 10
 MAX_API_KEYS_PER_WORKSPACE = 10
+
+
+async def _save_integration(db, workspace, kind, row, value, previous=None, *, actor=None, api_key=None):
+    try:
+        policy = integration_custody.policy_digest()
+        sealed = await integration_custody.seal(value, row, workspace, kind)
+        authority = ({"actor": actor, "permission": "webhook:manage" if kind == "webhook" else "outreach:manage"}
+                     if actor else {"api_key_id": (api_key or {}).get("key_id"), "key_hash": (api_key or {}).get("key_hash")})
+        await integration_custody.save(db, workspace, kind, {**row, **sealed}, previous=previous, policy=policy, authority=authority)
+    except (ValueError, SuppressionUnavailable):
+        raise HTTPException(409, "Integration configuration could not be saved; reload and try again") from None
+
+
+async def _queue_integration(db, workspace, kind, destination, actor, *, lead_id=None, request_id=None):
+    import uuid
+    if request_id is not None and (not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", request_id)):
+        raise HTTPException(400, "A valid Idempotency-Key is required")
+    event_id = "manual_" + (request_id or uuid.uuid4().hex)
+    try:
+        job = await IntegrationDelivery(db).queue(workspace, kind, destination, event_id,
+            {"type": "crm.contact_sync" if kind == "hubspot" else "system.ping", "workspace_id": workspace, "data": {}}, actor=actor, lead_id=lead_id)
+    except (ValueError, SuppressionUnavailable):
+        raise HTTPException(409, "Integration is unavailable or has unresolved work; reload its status") from None
+    return {"status": "queued", "delivery_id": job["id"]}
+
+
+async def _disconnect_integration(db, workspace, kind, destination, authority):
+    try:
+        return await integration_custody.disconnect(db, workspace, kind, destination, authority=authority)
+    except (ValueError, SuppressionUnavailable):
+        raise HTTPException(409, "Integration permission changed; reload before disconnecting") from None
 
 
 def _workspace_id(user: dict) -> str:
@@ -106,7 +134,7 @@ class SubscribeRestHookRequest(BaseModel):
 class HubSpotConfigRequest(BaseModel):
     access_token: str = Field(..., description="HubSpot Private App Token or OAuth Access Token")
     portal_id: str = Field(..., description="HubSpot Portal / Account ID")
-    auto_sync_on_reply: bool = Field(default=True)
+    auto_sync_on_reply: bool = Field(default=False)
 
 
 class SheetsPreviewRequest(BaseModel):
@@ -142,12 +170,6 @@ async def create_webhook(
 ):
     ws_id = _workspace_id(current_user)
 
-    if not is_safe_url(req.target_url):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid webhook URL: rejected by SSRF security policy",
-        )
-
     # Validate URL using safe transport rules (HTTPS only, no SSRF)
     try:
         validate_webhook_url(req.target_url)
@@ -176,17 +198,15 @@ async def create_webhook(
         )
 
     raw_secret = f"whsec_{secrets.token_hex(24)}"
-    secret_enc = encrypt_secret(raw_secret)
-
     webhook_doc = OutreachWebhook(
         workspace_id=ws_id,
         target_url=req.target_url.strip(),
-        secret_enc=secret_enc,
+        secret_enc="",
         events=filtered_events,
         status="active",
     ).model_dump()
 
-    await db.outreach_webhooks.insert_one(webhook_doc)
+    await _save_integration(db, ws_id, "webhook", webhook_doc, raw_secret, actor=current_user.get("user_id"))
 
     return {
         "id": webhook_doc["id"],
@@ -206,15 +226,13 @@ async def rotate_webhook_secret(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     ws_id = _workspace_id(current_user)
-    raw_secret = f"whsec_{secrets.token_hex(24)}"
-    secret_enc = encrypt_secret(raw_secret)
-
-    res = await db.outreach_webhooks.update_one(
-        {"id": webhook_id, "workspace_id": ws_id},
-        {"$set": {"secret_enc": secret_enc, "updated_at": datetime.now(timezone.utc)}},
-    )
-    if not res.matched_count:
+    previous = await db.outreach_webhooks.find_one({"id": webhook_id, "workspace_id": ws_id})
+    if not previous:
         raise HTTPException(status_code=404, detail="Webhook not found")
+    raw_secret = f"whsec_{secrets.token_hex(24)}"
+    row = {key: value for key, value in previous.items() if key != "_id"}
+    row["updated_at"] = datetime.now(timezone.utc)
+    await _save_integration(db, ws_id, "webhook", row, raw_secret, previous, actor=current_user.get("user_id"))
 
     return {"status": "rotated", "webhook_id": webhook_id, "new_secret": raw_secret}
 
@@ -226,15 +244,9 @@ async def delete_webhook(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     ws_id = _workspace_id(current_user)
-    res = await db.outreach_webhooks.delete_one({"id": webhook_id, "workspace_id": ws_id})
-    if not res.deleted_count:
+    removed = await _disconnect_integration(db, ws_id, "webhook", webhook_id, authority={"actor": current_user.get("user_id")})
+    if not removed:
         raise HTTPException(status_code=404, detail="Webhook not found")
-    # Cancel any pending deliveries for this webhook
-    await db.outreach_webhook_deliveries.delete_many({
-        "destination_id": webhook_id,
-        "workspace_id": ws_id,
-        "status": "pending",
-    })
     return {"status": "deleted", "webhook_id": webhook_id}
 
 
@@ -249,7 +261,8 @@ async def list_webhook_deliveries(
     ws_id = _workspace_id(current_user)
     cursor = db.outreach_webhook_deliveries.find(
         {"destination_id": webhook_id, "workspace_id": ws_id},
-        {"secret_enc": 0},
+        {"secret_enc": 0, "target_url_enc": 0, "payload": 0, "credential_digest": 0, "policy_digest": 0,
+         "immutable_digest": 0, "receipt": 0, "receipt_digest": 0, "attempt_receipts": 0, "lease_id": 0},
     ).sort("created_at", -1).skip(skip).limit(limit)
 
     deliveries = await cursor.to_list(length=limit)
@@ -274,26 +287,29 @@ async def replay_failed_delivery(
         raise HTTPException(status_code=409, detail=str(exc))
 
 
-@router.post("/webhooks/{webhook_id}/test", dependencies=[require_permission("webhook:manage")])
+@router.post("/webhooks/{webhook_id}/test", status_code=202, dependencies=[require_permission("webhook:manage")])
 async def test_webhook_ping(
     webhook_id: str,
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
+    request_id: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ):
     ws_id = _workspace_id(current_user)
     whk = await db.outreach_webhooks.find_one({"id": webhook_id, "workspace_id": ws_id})
     if not whk:
         raise HTTPException(status_code=404, detail="Webhook not found")
 
-    secret = decrypt_secret(whk.get("secret_enc", "")) if whk.get("secret_enc") else ""
-    ping_data = {
-        "event": "ping",
-        "ping_time": datetime.now(timezone.utc).isoformat(),
-        "workspace_id": ws_id,
-        "message": "Unravler webhook verification ping",
-    }
-    result = await dispatch_webhook(whk["target_url"], secret, "system.ping", ping_data)
-    return result
+    return await _queue_integration(db, ws_id, "webhook", webhook_id, current_user.get("user_id"), request_id=request_id)
+
+
+@router.get("/deliveries/{delivery_id}/status")
+async def get_integration_delivery_status(
+    delivery_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    ws_id = _workspace_id(current_user)
+    return await IntegrationDelivery(db)._result(IntegrationDelivery.scope(ws_id, delivery_id))
 
 
 # ── API Key Management Endpoints ───────────────────────────────────────────
@@ -421,12 +437,9 @@ async def update_slack_config(
         raise HTTPException(status_code=400, detail=str(ve))
 
     now = datetime.now(timezone.utc)
-    await db.outreach_integrations.update_one(
-        {"workspace_id": ws_id, "provider": "slack"},
-        {
-            "$set": {
+    previous = await db.outreach_integrations.find_one({"workspace_id": ws_id, "provider": "slack"})
+    row = {"workspace_id": ws_id, "provider": "slack", "created_at": (previous or {}).get("created_at", now),
                 "status": "connected" if req.enabled else "disabled",
-                "access_token_enc": encrypt_secret(clean_url),
                 "metadata": {
                     "channel_name": req.channel_name,
                     "notify_on_replies": req.notify_on_replies,
@@ -434,30 +447,23 @@ async def update_slack_config(
                     "daily_digest_enabled": req.daily_digest_enabled,
                 },
                 "updated_at": now,
-            },
-            "$setOnInsert": {"created_at": now},
-        },
-        upsert=True,
-    )
+    }
+    await _save_integration(db, ws_id, "slack", row, clean_url, previous, actor=current_user.get("user_id"))
     return {"status": "saved", "connected": req.enabled}
 
 
-@router.post("/slack/test", dependencies=[require_permission("outreach:manage")])
+@router.post("/slack/test", status_code=202, dependencies=[require_permission("outreach:manage")])
 async def test_slack_notification(
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
+    request_id: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ):
     ws_id = _workspace_id(current_user)
     doc = await db.outreach_integrations.find_one({"workspace_id": ws_id, "provider": "slack"})
     if not doc or not doc.get("access_token_enc"):
         raise HTTPException(status_code=400, detail="Slack integration is not configured")
 
-    webhook_url = decrypt_secret(doc["access_token_enc"])
-    test_card = format_slack_test_card()
-    success, code, err = await send_slack_notification(webhook_url, test_card)
-    if not success:
-        raise HTTPException(status_code=502, detail=err or "Failed to deliver Slack test card")
-    return {"success": True, "status_code": code}
+    return await _queue_integration(db, ws_id, "slack", "slack", current_user.get("user_id"), request_id=request_id)
 
 
 @router.delete("/slack", dependencies=[require_permission("outreach:manage")])
@@ -466,7 +472,7 @@ async def delete_slack_config(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     ws_id = _workspace_id(current_user)
-    await db.outreach_integrations.delete_one({"workspace_id": ws_id, "provider": "slack"})
+    await _disconnect_integration(db, ws_id, "slack", "slack", authority={"actor": current_user.get("user_id"), "permission": "outreach:manage"})
     return {"status": "disconnected"}
 
 
@@ -485,7 +491,8 @@ async def get_hubspot_config(
     return {
         "connected": doc.get("status") == "connected",
         "portal_id": meta.get("portal_id"),
-        "auto_sync_on_reply": meta.get("auto_sync_on_reply", True),
+        "auto_sync_on_reply": False,
+        "auto_sync_available": False,
         "last_sync_at": doc.get("last_sync_at"),
     }
 
@@ -497,28 +504,24 @@ async def update_hubspot_config(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     ws_id = _workspace_id(current_user)
+    if req.auto_sync_on_reply:
+        raise HTTPException(409, "Automatic reply syncing is not available; use manual synchronization")
     clean_token = req.access_token.strip()
     clean_portal = req.portal_id.strip()
     if not clean_token or not clean_portal:
         raise HTTPException(status_code=400, detail="Both access token and portal ID are required")
 
     now = datetime.now(timezone.utc)
-    await db.outreach_integrations.update_one(
-        {"workspace_id": ws_id, "provider": "hubspot"},
-        {
-            "$set": {
+    previous = await db.outreach_integrations.find_one({"workspace_id": ws_id, "provider": "hubspot"})
+    row = {"workspace_id": ws_id, "provider": "hubspot", "created_at": (previous or {}).get("created_at", now),
                 "status": "connected",
-                "access_token_enc": encrypt_secret(clean_token),
                 "metadata": {
                     "portal_id": clean_portal,
                     "auto_sync_on_reply": req.auto_sync_on_reply,
                 },
                 "updated_at": now,
-            },
-            "$setOnInsert": {"created_at": now},
-        },
-        upsert=True,
-    )
+    }
+    await _save_integration(db, ws_id, "hubspot", row, clean_token, previous, actor=current_user.get("user_id"))
     return {"status": "saved", "connected": True, "portal_id": clean_portal}
 
 
@@ -528,36 +531,23 @@ async def delete_hubspot_config(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     ws_id = _workspace_id(current_user)
-    await db.outreach_integrations.delete_one({"workspace_id": ws_id, "provider": "hubspot"})
+    await _disconnect_integration(db, ws_id, "hubspot", "hubspot", authority={"actor": current_user.get("user_id"), "permission": "outreach:manage"})
     return {"status": "disconnected"}
 
 
-@router.post("/hubspot/sync-lead/{lead_id}", dependencies=[require_permission("lead:update")])
+@router.post("/hubspot/sync-lead/{lead_id}", status_code=202, dependencies=[require_permission("lead:update")])
 async def manual_sync_lead_hubspot(
     lead_id: str,
     current_user: dict = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
+    request_id: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ):
     ws_id = _workspace_id(current_user)
     doc = await db.outreach_integrations.find_one({"workspace_id": ws_id, "provider": "hubspot", "status": "connected"})
     if not doc or not doc.get("access_token_enc"):
         raise HTTPException(status_code=400, detail="HubSpot integration is not connected")
 
-    token = decrypt_secret(doc["access_token_enc"])
-    portal_id = doc.get("metadata", {}).get("portal_id", "")
-    try:
-        res = await sync_lead_to_hubspot(
-            db=db,
-            workspace_id=ws_id,
-            lead_id=lead_id,
-            access_token=token,
-            portal_id=portal_id,
-        )
-        return res
-    except ValueError as ve:
-        raise HTTPException(status_code=404, detail=str(ve))
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"HubSpot sync failed: {str(exc)[:150]}")
+    return await _queue_integration(db, ws_id, "hubspot", "hubspot", current_user.get("user_id"), lead_id=lead_id, request_id=request_id)
 
 
 # ── Google Sheets / CSV Import Endpoints ───────────────────────────────────
@@ -857,6 +847,7 @@ def require_api_key_scope(required_scope: str) -> Callable:
         return {
             "workspace_id": workspace_id,
             "key_id": key_doc.get("id"),
+            "key_hash": key_hash,
             "scopes": list(key_scopes),
         }
 
@@ -1079,7 +1070,8 @@ async def public_subscribe_hook(
     """
     workspace_id = auth["workspace_id"]
     try:
-        validated_url = validate_webhook_url(req.target_url)
+        validate_webhook_url(req.target_url)
+        validated_url = req.target_url.strip()
     except SSRFSecurityError as ssrf_err:
         raise HTTPException(status_code=400, detail=f"Invalid callback destination: {ssrf_err}")
 
@@ -1108,13 +1100,13 @@ async def public_subscribe_hook(
         "target_url": validated_url,
         "events": [req.event],
         "status": "active",
-        "secret_enc": encrypt_secret(secret),
+        "secret_enc": "",
         "source": "rest_hook",
         "created_at": now,
         "consecutive_failures": 0,
         "last_delivery_at": None,
     }
-    await db.outreach_webhooks.insert_one(hook_doc)
+    await _save_integration(db, workspace_id, "webhook", hook_doc, secret, api_key=auth)
     return {"id": hook_id, "event": req.event, "target_url": validated_url}
 
 
@@ -1128,8 +1120,8 @@ async def public_unsubscribe_hook(
     Unsubscribes and cleans up a Zapier/Make REST hook subscription.
     """
     workspace_id = auth["workspace_id"]
-    res = await db.outreach_webhooks.delete_one({"id": hook_id, "workspace_id": workspace_id})
-    if res.deleted_count == 0:
+    removed = await _disconnect_integration(db, workspace_id, "webhook", hook_id, authority={"api_key_id": auth.get("key_id"), "key_hash": auth.get("key_hash")})
+    if not removed:
         raise HTTPException(status_code=404, detail="Hook subscription not found")
     return {"status": "unsubscribed", "id": hook_id}
 

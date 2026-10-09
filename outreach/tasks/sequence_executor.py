@@ -108,6 +108,9 @@ async def _recipient_has_reply(db, workspace_id: str, sender_id: str, lead: dict
         identities.append({"lead_profile_url": {"$in": sorted(urls)}})
     if not identities:
         return False
+    from outreach.core.restore_reply_stops import has_reply_stop
+    if await has_reply_stop(db, workspace_id, sender_id, members, urls):
+        return True
     # Fence existing conversations even before their first reply. A reply
     # update then conflicts with dispatch instead of hiding behind a negative
     # already-replied query. Excessive matches conservatively suppress work.
@@ -225,12 +228,12 @@ async def _defer_operation(db, lead, operation_id, intent_id, owner, reason, *, 
     return {"status": reason, "not_submitted": True}
 
 
-async def _approved_content(db, lead, expected, action, content):
+async def _approved_content(db, lead, expected, action, content, *, voice_clip=None):
     if action not in CONTENT_ACTIONS:
         return None
     service = ContentApproval(db)
     try:
-        binding = await service.require_sequence(lead, expected, action, content)
+        binding = await service.require_sequence(lead, expected, action, content, voice_clip=voice_clip)
     except ValueError as exc:
         raise RequestDenied("content_changed") from exc
     if not await service.allowed(binding):
@@ -241,26 +244,22 @@ async def _approved_content(db, lead, expected, action, content):
 async def _load_voice_clip(db, binding):
     service = VoiceArtifacts(db)
     artifact_id = canonical_hash(binding)
-    audio = await service.load(binding["workspace_id"], artifact_id)
-    artifact = await db.outreach_voice_artifacts.find_one({"_id": artifact_id, "workspace_id": binding["workspace_id"]})
-    if not artifact or hashlib.sha256(audio).hexdigest() != artifact.get("audio_digest"):
-        raise ValueError("Prepared voice clip changed")
-    return artifact, audio
+    return await service.prepare_load(binding["workspace_id"], artifact_id)
 
 
 async def _dispatch_action(db, lead: dict, expected: dict, node_type: str, operation_id: str,
                            intent_id: str, owner: str, factory, *, content: Any = None,
-                           skip_empty_post: bool = False) -> dict:
+                           skip_empty_post: bool = False, voice_clip=None) -> dict:
     """Lazy call after current ownership, final authority checks, and evidence."""
     outbox = ExecutionOutbox(db)
     workspace_id, sender_id = expected["workspace_id"], expected["sender_id"]
     try:
-        approval_binding = await _approved_content(db, lead, expected, node_type, content)
+        approval_binding = await _approved_content(db, lead, expected, node_type, content, voice_clip=voice_clip)
     except RequestDenied as exc:
         return await _defer_operation(db, lead, operation_id, intent_id, owner, exc.reason)
 
     async def require_captured_approval(current):
-        binding = await _approved_content(current, lead, expected, node_type, content)
+        binding = await _approved_content(current, lead, expected, node_type, content, voice_clip=voice_clip)
         if binding != approval_binding:
             raise RequestDenied("content_changed")
 
@@ -709,7 +708,8 @@ class SequenceExecutor:
                     base_binding = await sequence_binding(db, workspace_id, lead["id"])
                     if not base_binding or base_binding["action"] != "voice_note":
                         raise ValueError("Current step changed")
-                    artifact, audio_bytes = await _load_voice_clip(db, base_binding)
+                    clip = await _load_voice_clip(db, base_binding)
+                    artifact, audio_bytes = clip.document, clip.audio
                 except Exception as exc:
                     logger.error("Prepared voice unavailable (%s)", type(exc).__name__)
                     action_result = await _defer_operation(db, lead, operation_id, intent_id, operation_owner, "voice_preparation_required")
@@ -720,7 +720,7 @@ class SequenceExecutor:
                         audio_bytes=audio_bytes,
                         transcript=base_binding["content"]["body"],
                     ), content={**base_binding["content"], "audio_digest": artifact["audio_digest"],
-                        "voice_artifact_id": artifact["_id"], "voice_artifact_generation": artifact["generation_id"]})
+                        "voice_artifact_id": artifact["_id"], "voice_artifact_generation": artifact["generation_id"]}, voice_clip=clip)
 
         elif node_type == SequenceNodeType.FIND_EMAIL:
             if action_result is None:

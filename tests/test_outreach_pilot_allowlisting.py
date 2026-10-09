@@ -239,25 +239,16 @@ async def test_outbox_fanout_suppresses_non_pilot_workspace(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_webhook_delivery_cancels_non_pilot_workspace(monkeypatch):
+    from tests.outreach_memory import Database
+    from outreach.core.integration_delivery import IntegrationDelivery
+    from utils.encryption import encrypt
     monkeypatch.setenv("OUTREACH_INTEGRATIONS_ENABLED", "true")
-    monkeypatch.setenv("OUTREACH_INTEGRATIONS_PILOT_WORKSPACES", "ws_pilot")
-
-    db = MagicMock()
-    db.outreach_webhook_deliveries.find_one_and_update = AsyncMock(side_effect=[
-        {
-            "id": "del_1",
-            "event_id": "evt_1",
-            "workspace_id": "ws_non_pilot",
-            "target_url": "https://example.com/hook",
-            "attempt": 0,
-        },
-        None,
-    ])
-    db.outreach_webhook_deliveries.update_one = AsyncMock()
-
-    mock_client = AsyncMock()
-    await dispatch_due_deliveries(db, batch_size=1, safe_client=mock_client)
-    db.outreach_webhook_deliveries.update_one.assert_awaited_once()
-    call_args = db.outreach_webhook_deliveries.update_one.call_args[0]
-    assert call_args[1]["$set"]["status"] == "cancelled"
-    assert "Integrations not enabled for workspace in current pilot" in call_args[1]["$set"]["last_error"]
+    monkeypatch.delenv("OUTREACH_INTEGRATIONS_PILOT_WORKSPACES", raising=False)
+    db = Database(outreach_webhooks=[{"workspace_id": "ws_not_allowed", "id": "hook", "status": "active",
+        "target_url": "https://example.com/hook", "secret_enc": encrypt("secret")}])
+    job = await IntegrationDelivery(db).queue("ws_not_allowed", "webhook", "hook", "event", {})
+    monkeypatch.setenv("OUTREACH_INTEGRATIONS_PILOT_WORKSPACES", "ws_allowed")
+    provider = AsyncMock()
+    result = await IntegrationDelivery(db).run("ws_not_allowed", job["id"], provider=provider)
+    assert result["status"] == "cancelled"
+    provider.assert_not_awaited()

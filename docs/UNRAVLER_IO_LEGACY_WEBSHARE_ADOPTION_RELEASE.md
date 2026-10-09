@@ -1,0 +1,63 @@
+# Retained-evidence legacy Webshare adoption — v2.30
+
+Updated: 2026-10-08. Status: locally implemented and verified. Uncommitted and not deployed.
+
+## Result and eligibility
+
+The private stopped operator workflow can adopt an older Webshare inventory record **only when the record already retains complete original purchase, owner, term and transport facts**. It opens the existing strict-Fernet password and seals that same value into scoped proxy custody. It preserves an existing proxy generation and allocates only a missing proxy generation. Inventory, every matching sender proxy copy and permanent adoption provenance install together. Original provider term, plan/resource/order/operator/evidence, IP/transport/country, exact lease, LinkedIn cookie generation and stopped permission remain intact. No password replacement, new original facts, payment grant or activation is supplied.
+
+An eligible original record must be an available `webshare_plan` asset with exact existing `workspace_id` and `last_workspace_id`, natural `webshare:PLAN:RESOURCE` identity, bounded original plan/resource/order/operator/username, canonical public IPv4, valid HTTP port and uppercase country. It must already record dedicated static ISP confirmation, a SHA-256 original evidence digest, and native database `verified_at`/`expires_at` dates establishing a verified, unexpired term. Naive UTC BSON dates are supported; retained text dates are rejected rather than normalized into newly asserted evidence. Inventory and embedded proxy copies use explicit field allowlists and typed metadata; alternate plaintext credentials, unknown nested fields and partial modern/adoption/lifecycle markers deny before claim or key work. Existing aliases must match the original encrypted transport, owner and generation.
+
+Ordinary older Webshare helper rows lacking original purchase, sticky ownership, dedicated ISP confirmation, verification or term facts remain blocked. This workflow neither discovers nor supplies those missing facts. A password alone cannot establish ownership. Unproven or different owner/resource/IP/country, ambiguous leases, expired terms, active work, unfinished connection/physical outcomes and closed tenants deny. Original evidence must remain independently retained and reviewed; stored assertions and an operator digest are not vendor ownership or credential-validity attestation.
+
+## Review and ordering
+
+`inspect` returns only bounded workspace/asset references, exact normalized inspection digest, blocker names and `activation_allowed=false`. It captures original inventory, exact lease and sender copies, stopped sender/execution/campaign/connection/physical authorities, erasure state, custody policy, current proof and physical assignment. Applying adoption requires all four live outreach/integration/Voice Studio/voice-preparation gates off, scoped destination configuration, explicit all-workspace-writer/cache drain acknowledgement, operator identity, separate SHA-256 review evidence and that exact inspection digest. Drain is operator asserted; the command does not inspect an actual fleet or cache.
+
+Raw system-level read checks reject any current other inventory row at the same IP, any foreign/mismatched sender alias by host or asset, and any conflicting permanent physical claim. Lookup indexes cover both proxy copies by host and asset ID. These checks protect current retained records and participating guarded writers, not arbitrary raw writes, absent erased history or an actual vendor account. A snapshot/majority workspace-guard preflight revalidates the exact source and stopped authority, creates or confirms the permanent digest-only physical IP exclusion, and rereads the source to reject any other change. Actual standalone Mongo denies before key work; there is no transaction fallback.
+
+Strict opening and bounded same-password sealing occur outside Mongo. Full destination policy, disabled gates and original term are checked after awaited key work. Final snapshot/majority installation rechecks the post-claim snapshot, fences original inventory and exact whole sender copies, writes scoped fields plus managed/adoption proof, inserts the permanent journal, and validates saved history/material atomically. Pure policy/gate/term checks run after all final awaited readbacks immediately before callback completion. Commit can follow; this is process-local policy proof, not instantaneous fleet/clock consensus or kernel/socket enforcement.
+
+A committed preflight claim remains permanently excluded if opening/sealing fails, the final transaction rolls back, or acknowledgement is lost. It provides no managed capacity. If no saved adoption receipt exists, preserve original records and evidence and inspect again: the post-claim digest can differ from the initial digest. Do not enable flags or erase the claim to force the old review through. The final installation is atomic, but the permanent exclusion intentionally precedes key work and final installation.
+
+## Receipt and downstream proof
+
+One natural adoption journal binds workspace and asset; the exact request binds operator, review evidence and original inspection. An ordinary or guarded concurrent exact saved receipt takes precedence before original-source opening/sealing/installation. Lost final acknowledgement resolves through the permanent receipt. A different review cannot reuse that journal. Exact saved retries return historical completion, `current_matches`, `configuration_matches` and `activation_allowed=false`; they do not reopen secrets, reinstall, resume or prove current vendor validity. Two callers that both passed preflight before either commits can each seal once; this does not promise exactly-once KMS billing.
+
+The adopted inventory retains permanent `proxy_adoption_id` and original-source digest markers. Paid capacity, sender reconnect, stopped storage migration and subsequent reviewed lifecycle changes require the matching adoption journal through shared history validation. Removing both markers cannot downgrade a reviewed asset while its journal exists; partial, altered or mismatched lineage denies. A later reviewed term/password change preserves the adopted basis as its original root. Same-generation storage conversion preserves proof, which excludes storage ciphertext. Lifecycle and adoption provenance remain separate from vendor receipts.
+
+The TTL-free metadata journal records hashed source/review/operator/order/generation/policy/material, original verification and provider expiry, whether a missing generation was allocated, and `retained_legacy_evidence_storage_adoption` provenance. It contains no password, ciphertext, raw IP, cookie generation or raw operator. Startup removes relevant TTLs before strict unique workspace/asset adoption indexing. Conflicting duplicates require separate drained repair; index failures are not swallowed. This protocol does not protect against deletion or arbitrary alteration of all database history.
+
+Account erasure retains minimal hashed `proxy_legacy_adoption` evidence while purging the ordinary journal. Permanent tenant closure and physical IP exclusion remain; a closed tenant cannot recreate authority or reinstall after purge. Existing provider-term retention, remote cleanup, legal retention and backup/whole-product erasure limits remain separate.
+
+Implementation: `outreach/core/proxy_adoption.py`, shared `proxy_lifecycle_proof.py`, private `outreach/ops/proxy_adoption.py`, retention/index additions in `outreach/core/erasure.py` and `db/indexes.py`. New evidence is in the three `tests/test_outreach_proxy_adoption*.py` modules.
+
+## Private procedure
+
+Independently verify the original retained record and external evidence. Keep live outreach, integrations, Voice Studio and voice preparation disabled; configure the scoped destination and drain all participating workspace writers/caches. Inspect the exact record on the trusted backend host:
+
+```text
+python -m outreach.ops.proxy_adoption inspect --workspace WORKSPACE --asset webshare:PLAN:RESOURCE
+```
+
+Review blockers and preserve the exact returned digest. Only an eligible original record may proceed:
+
+```text
+python -m outreach.ops.proxy_adoption adopt --workspace WORKSPACE --asset webshare:PLAN:RESOURCE --operator OPERATOR --evidence-digest REVIEW_EVIDENCE_SHA256 --review-digest INSPECTION_DIGEST --workers-drained I_PAUSED_AND_DRAINED_ALL_WORKSPACE_WRITERS_AND_CACHES
+```
+
+There are no new password/URL/cookie, order, owner or expiry arguments. The command reads the original encrypted value directly; it accepts neither replacement credentials nor missing purchase facts. Parser/runtime errors are sanitized and the Mongo client closes even after database-selection failure. References and digests must contain no secrets. Retain the original external evidence and metadata receipt; inspect any mismatch separately. See the [paid pilot guide](OUTREACH_PROXY_PROVIDERS.md).
+
+## Verification
+
+All **72 new focused cases** pass in **26.26 seconds**: 40 service/proof/compatibility cases, eight CLI cases, 23 actual replica-set cases and one actual standalone denial. Dedicated new-module statement coverage is **93% combined** (service93/proof96/CLI94). Real database cases cover default naive-UTC BSON and native alias metadata, key work outside transactions, inventory/alias/journal rollback, seal-time owner/order/alias/lease/permission/foreign-sender/physical/config/erasure changes, late awaited-readback policy/gate/expiry rollback, concurrent receipt precedence, late prepared competitors, lost acknowledgement, retention-first strict indexes and minimal closed-tenant erasure. No new HTTP, SIGKILL, Redis or broker redelivery case is claimed.
+
+Independent review reproduced an embedded plaintext-password gap; both proxy-copy regressions failed before the explicit alias shape checks were added. A separate two-case red regression confirmed retained ISO date strings reached key work despite downstream native Mongo date queries; the original-date checks now deny before claim/key work. All corrected regressions pass. Initial erasure-fixture argument and fake microsecond/BSON timestamp precision failures were corrected; a real BSON metadata case verifies preserved native fields. These initial failures are not green release evidence.
+
+Compilation, medium/high Bandit, both Compose configurations and whitespace checks pass with existing warnings. Frontend is unchanged; prior 99 frontend tests/build are historical. Independent final source/CLI review approves the corrected implementation, with 158 unit/CLI/affected-consumer cases passing; the reviewer inspected real database cases without running services. The complete normal outreach suite plus account/auth companions passes **2,216 backend checks** (2,196 outreach plus 20 account/auth), with **44 historical opt-in skips** and two existing warnings, in **627.55 seconds**. All 72 new cases are included; no failure is excluded, and no crash-test timeout or production source was adjusted during the full run. Broad verification runs without coverage; coverage is dedicated to the new modules because the v2.29 report already records the existing instrumented subprocess interaction.
+
+Owned temporary databases are absent (zero remained to purge). The exact validated Mongo process/storage and explicit final test directory are removed; 27028/27029/6389 are closed and no Redis was started. Diagnostic logs and explicit temporary coverage files remain; pre-existing repository coverage/unrelated files are preserved. Three v2.30 repo/Desktop specifications, the runbook and all 29 linked release reports byte-match, with all 110 local specification links verified. Backup before editing contains eight original repo/Desktop specification/runbook copies in `/tmp/unravler-docs-before-v2-30-20261008`. No production database, IAM, AWS/vendor operation, purchase, payment grant or flag was changed. Default legacy custody and disabled flags remain; the new workflow requires explicit scoped destination configuration but installs no configuration itself.
+
+## Remaining work
+
+Older Webshare records **missing original facts** still need a separately justified evidence/adoption protocol; they do not gain support from this slice. Remaining shared-provider credentials and installed older-artifact cutover, explicit integration activation, different-key/unproven voice evidence and actual IAM/temporary-role/kernel-egress/backup-restore/authorized-pilot checks remain outstanding. v2.23–v2.30 are local, uncommitted and undeployed; no commit, push or deployment occurs here.

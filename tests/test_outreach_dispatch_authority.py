@@ -140,7 +140,7 @@ async def test_committed_dispatch_is_distinct_from_a_later_stop(ready_db):
     factory.assert_awaited_once()
 
 
-async def test_standalone_database_denies_before_transport(monkeypatch, tmp_path):
+async def test_standalone_database_denies_before_transport(ready_db, monkeypatch, tmp_path):
     from utils import encryption
     executable = shutil.which("mongod")
     assert executable, "This opt-in integration suite requires a local mongod"
@@ -153,8 +153,9 @@ async def test_standalone_database_denies_before_transport(monkeypatch, tmp_path
         "--dbpath", str(storage), "--logpath", str(storage / "mongo.log")],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     client = AsyncIOMotorClient(f"mongodb://127.0.0.1:{port}", tz_aware=True, serverSelectionTimeoutMS=200)
-    key = Fernet.generate_key()
-    monkeypatch.setattr(encryption, "_fernet", Fernet(key))
+    # Normal grants now require transactions. Copy granted fixture evidence
+    # from the replica set while preserving its configured dummy encryption key.
+    replica, _ = ready_db
     monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", "true")
     try:
         async with asyncio.timeout(10):
@@ -166,7 +167,9 @@ async def test_standalone_database_denies_before_transport(monkeypatch, tmp_path
                 except PyMongoError:
                     await asyncio.sleep(0.1)
         db = client["test_unravler_standalone_" + uuid.uuid4().hex]
-        await seed(db, "manual", key)
+        for name in await replica.list_collection_names():
+            rows = await replica[name].find({}).to_list(length=100)
+            if rows: await db[name].insert_many(rows)
         job = await db.outreach_manual_actions.find_one({"_id": "j"})
         await db.outreach_manual_actions.update_one({"_id": "j"}, {"$set": {"status": "in_flight", "owner": "owner"}})
         await SenderExecution(db).acquire("w", "a", "owner")

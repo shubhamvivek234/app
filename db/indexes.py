@@ -92,6 +92,116 @@ async def ensure_voice_studio_indexes(db) -> None:
         name='voice_vendor_active_v1', partialFilterExpression={'status': {'$in': READ_ACTIVE}})
 
 
+async def remove_other_evidence_ttls(db) -> None:
+    """Remove all other touched evidence TTLs before even the first strict build.
+
+    Mailbox jobs keep their own retention-first inspection because its TTL
+    presence also determines whether legacy-running work needs quarantine.
+    """
+    for name in ("outreach_webhook_deliveries", "outreach_voice_studio_jobs",
+                 "outreach_voice_source_migrations", "outreach_voice_vendor_reads",
+                 "outreach_integration_reviews", "outreach_integration_controls", "outreach_credential_migrations", "outreach_proxy_lifecycle_reviews",
+                 "account_proxy_ip_guards", "outreach_proxy_adoptions", "outreach_health_controls", "outreach_execution_epochs",
+                 "outreach_restore_proxy_exclusions", "account_proxy_ip_restore_fences", "outreach_restore_invoices", "account_invoice_guards", "outreach_restore_exclusions", "outreach_restore_suppressions", "outreach_restore_reply_stops", "outreach_reply_stops", "outreach_do_not_contact",
+                 "outreach_email_suppressions", "account_erasure_tombstones", "outreach_suppression_guards"):
+        collection = db[name]
+        for index, definition in (await collection.index_information()).items():
+            if "expireAfterSeconds" in definition:
+                await collection.drop_index(index)
+
+
+async def ensure_integration_indexes(db) -> None:
+    """Drained cutover preserves possible/received integration evidence first."""
+    await db.outreach_restore_proxy_exclusions.create_index([('workspace_id', 1), ('execution_epoch', 1), ('source_digest', 1)],
+        unique=True, name='restore_proxy_exclusion_source_v1')
+    await db.outreach_restore_invoices.create_index([('workspace_id', 1), ('execution_epoch', 1), ('source_digest', 1)],
+        unique=True, name='restore_invoice_source_v1')
+    await db.outreach_restore_reply_stops.create_index([('workspace_id', 1), ('execution_epoch', 1), ('source_digest', 1)],
+        unique=True, name='restore_reply_stop_source_v1')
+    await db.outreach_reply_stops.create_index([('workspace_id', 1), ('sender_id', 1), ('field', 1), ('value', 1)],
+        unique=True, name='reply_stop_identity_v1')
+    await db.outreach_restore_suppressions.create_index([('workspace_id', 1), ('execution_epoch', 1), ('source_digest', 1)],
+        unique=True, name='restore_suppression_source_v1')
+    # Duplicate recipient rows must fail the cutover instead of weakening lookup.
+    await db.outreach_email_suppressions.create_index([('workspace_id', 1), ('email', 1)], unique=True)
+    from outreach.core.integration_delivery import ACTIVE
+    await db.outreach_restore_exclusions.create_index([('workspace_id', 1), ('execution_epoch', 1), ('source_digest', 1)],
+        unique=True, name='restore_exclusion_source_v1')
+    await db.outreach_execution_epochs.create_index([('workspace_id', 1), ('kind', 1), ('execution_epoch', 1)],
+        unique=True, name='execution_epoch_journal_v1', partialFilterExpression={'kind': 'journal'})
+    await db.outreach_execution_epochs.create_index([('workspace_id', 1), ('kind', 1)],
+        unique=True, name='execution_epoch_root_v1', partialFilterExpression={'kind': 'root'})
+    await db.outreach_health_controls.create_index([('workspace_id', 1), ('sender_id', 1)], unique=True,
+        name='health_sender_active_v1', partialFilterExpression={'status': 'armed'})
+    await db.outreach_health_controls.create_index([('status', 1), ('next_check_at', 1), ('_id', 1)],
+        name='health_control_due_v1')
+    # Every evidence TTL is removed before uniqueness can fail elsewhere.
+    for collection in (db.outreach_integration_reviews, db.outreach_integration_controls, db.outreach_credential_migrations):
+        for name, definition in (await collection.index_information()).items():
+            if 'expireAfterSeconds' in definition:
+                await collection.drop_index(name)
+    deliveries = db.outreach_webhook_deliveries
+    indexes = await deliveries.index_information()
+    first_cutover = "integration_active_slot_v2" not in indexes
+    for name, definition in indexes.items():
+        if "expireAfterSeconds" in definition:
+            await deliveries.drop_index(name)
+    if first_cutover:
+        await deliveries.update_many({"custody_protocol_version": {"$ne": 2}, "status": {"$in": ["pending", "retry", "leased"]}},
+            {"$set": {"status": "review_required", "error_sanitized": "Legacy delivery requires drained review"}})
+    await db.outreach_webhooks.create_index([("workspace_id", 1), ("id", 1)], unique=True)
+    await db.outreach_integrations.create_index([("workspace_id", 1), ("provider", 1)], unique=True)
+    await db.outreach_external_mappings.create_index([("workspace_id", 1), ("provider", 1),
+        ("external_account_id", 1), ("object_type", 1), ("internal_id", 1)], unique=True)
+    await deliveries.create_index([("workspace_id", 1), ("id", 1)], unique=True)
+    if "event_id_1_destination_id_1" in indexes:
+        await deliveries.drop_index("event_id_1_destination_id_1")
+    await deliveries.create_index([("workspace_id", 1), ("event_id", 1),
+        ("destination_type", 1), ("destination_id", 1)], unique=True)
+    await deliveries.create_index([("workspace_id", 1), ("active_slot", 1)], unique=True,
+        name="integration_active_slot_v2", partialFilterExpression={"custody_protocol_version": 2,
+        "active_slot": {"$type": "string"}, "status": {"$in": ACTIVE}})
+    await deliveries.create_index([("custody_protocol_version", 1), ("status", 1), ("next_attempt_at", 1)])
+    await db.outreach_integration_reviews.create_index([('workspace_id', 1), ('id', 1)], unique=True,
+        name='integration_review_original_v1')
+    await db.outreach_integration_controls.create_index([('workspace_id', 1), ('_id', 1)], unique=True,
+        name='integration_resource_stop_v1')
+    await db.outreach_credential_migrations.create_index([('workspace_id', 1), ('resource_kind', 1),
+        ('resource_id', 1), ('before_digest', 1)], unique=True, name='integration_migration_inspection_v1',
+        partialFilterExpression={'kind': 'integration'})
+
+
+async def ensure_managed_proxy_indexes(db) -> None:
+    """Require sender uniqueness; a conflicting legacy lease stops startup."""
+    for name, definition in (await db.account_proxy_ip_guards.index_information()).items():
+        if 'expireAfterSeconds' in definition:
+            await db.account_proxy_ip_guards.drop_index(name)
+    await db.outreach_proxy_leases.create_index([('workspace_id', 1), ('sender_id', 1)],
+        unique=True, partialFilterExpression={'sender_id': {'$type': 'string'}})
+    await db.outreach_proxy_inventory.create_index([('host', 1)])
+    await db.outreach_proxy_lifecycle_reviews.create_index([('workspace_id', 1), ('proxy_id', 1), ('revision', 1)],
+        unique=True, name='proxy_lifecycle_revision_v1')
+    await db.outreach_proxy_adoptions.create_index([('workspace_id', 1), ('proxy_id', 1)],
+        unique=True, name='proxy_adoption_asset_v1')
+    for name in ('proxy', 'proxy_config'):
+        await db.outreach_accounts.create_index([(name + '.host', 1)])
+        await db.outreach_accounts.create_index([(name + '.proxy_id', 1)])
+
+
+async def ensure_voice_artifact_migration_indexes(db) -> None:
+    """Permanent per-generation conversion proof; conflicts require drained repair."""
+    await db.outreach_credential_migrations.create_index(
+        [('workspace_id', 1), ('artifact_id', 1), ('generation_digest', 1)], unique=True,
+        name='voice_artifact_migration_generation_v1', partialFilterExpression={'kind': 'voice_artifact'})
+    await db.outreach_content_approvals.create_index([('workspace_id', 1), ('binding.context.voice_artifact_id', 1)])
+    await db.outreach_credential_migrations.create_index([('workspace_id', 1), ('job_id', 1)],
+        unique=True, name='voice_studio_result_migration_original_v1',
+        partialFilterExpression={'kind': 'voice_studio_result'})
+    await db.outreach_credential_migrations.create_index([('workspace_id', 1), ('job_id', 1)],
+        unique=True, name='voice_studio_input_stop_original_v1',
+        partialFilterExpression={'kind': 'voice_studio_input_stop'})
+
+
 async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
     if client is None:
         client = await get_client()
@@ -100,9 +210,13 @@ async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
     db = client[os.environ["DB_NAME"]]
     # Retention comes first: Mongo's TTL monitor keeps running while unrelated
     # collection indexes build, even when application writers are drained.
+    await remove_other_evidence_ttls(db)
     await ensure_mailbox_job_indexes(db)
+    await ensure_managed_proxy_indexes(db)
     await ensure_mailbox_sync_indexes(db)
     await ensure_voice_studio_indexes(db)
+    await ensure_integration_indexes(db)
+    await ensure_voice_artifact_migration_indexes(db)
 
     # posts
     await _safe_create_index(db.posts, [("id", 1)], unique=True)
@@ -309,11 +423,11 @@ async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
     await _safe_create_index(db.outreach_event_outbox, [("lease_id", 1), ("leased_until", 1)])
     await _safe_create_index(db.outreach_webhooks, [("workspace_id", 1), ("id", 1)], unique=True)
     await _safe_create_index(db.outreach_webhooks, [("workspace_id", 1), ("status", 1)])
-    await _safe_create_index(db.outreach_webhook_deliveries, [("event_id", 1), ("destination_id", 1)], unique=True)
+    await _safe_create_index(db.outreach_webhook_deliveries, [("workspace_id", 1), ("event_id", 1), ("destination_type", 1), ("destination_id", 1)], unique=True)
     await _safe_create_index(db.outreach_webhook_deliveries, [("status", 1), ("next_attempt_at", 1)])
     await _safe_create_index(db.outreach_webhook_deliveries, [("workspace_id", 1), ("status", 1), ("created_at", -1)])
     await _safe_create_index(db.outreach_webhook_deliveries, [("destination_id", 1), ("status", 1), ("created_at", -1)])
-    await _safe_create_index(db.outreach_webhook_deliveries, [("created_at", 1)], expireAfterSeconds=7776000)
+    await _safe_create_index(db.outreach_webhook_deliveries, [("created_at", 1)])
     await _safe_create_index(db.outreach_api_keys, [("workspace_id", 1), ("id", 1)], unique=True)
     await _safe_create_index(db.outreach_api_keys, [("key_hash", 1)], unique=True)
     await _safe_create_index(db.outreach_api_keys, [("workspace_id", 1), ("revoked_at", 1)])

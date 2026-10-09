@@ -1,0 +1,63 @@
+# Reviewed Webshare term and password recording — v2.29
+
+Updated: 2026-10-08. Status: locally implemented and verified. Uncommitted and not deployed.
+
+## Result and boundary
+
+The private operator workflow now records a renewal or password change **already completed externally** for a proven v2.27 manually imported Webshare asset. A renewal changes only the provider expiry and review lineage. Password recording creates a new proxy credential generation and updates inventory plus every matching sender proxy alias atomically. Both preserve the original plan/resource/order/owner/evidence, transport, permanent physical IP exclusion, exact lease/reservation, LinkedIn cookie generation and stopped permission. Neither changes payment authority or launches work.
+
+Original purchase/import fields remain intact. The first lifecycle change preserves the original `import_basis_digest` as `root_import_basis_digest`; current compatibility basis is recomputed for the new term/generation. Each incremented lifecycle revision requires its permanent matching journal. Capacity, reconnect and stopped storage migration all check that proof. Missing, partial, malformed or mismatched markers deny; removing all markers cannot downgrade a reviewed asset while its journal exists. Same-generation Fernet-to-scoped storage conversion preserves lifecycle proof because that proof excludes ciphertext/storage format. It does not authorize assigning a different IP, owner or provider resource.
+
+Only original proven managed Webshare assets are supported here. Older/unproven Webshare records, different resource/transport/country and IPRoyal term/password changes need separate protocols. The operator supplies a reference and SHA-256 evidence digest; these are assertions about an external provider change, not verified vendor receipts. No Webshare HTTP call, purchase, renewal, cancellation, password change at the vendor, provider ownership validation, real KMS request, sender grant or flag enablement occurs in this slice.
+
+## Review and atomic installation
+
+`inspect-renew` and `inspect-rotate` return bounded record references, the operation, exact normalized review digest, blockers and `activation_allowed=false`. They expose no proxy IP/password/ciphertext or raw records. The snapshot covers original inventory/basis/permanent IP claim, lease and aliases, previous journal, tenant erasure, custody policy and stopped execution/campaign/connection/physical authorities. All four live outreach/integration/Voice Studio/voice-preparation gates must be off, with identified all-workspace-writer/cache drain acknowledged. Drain is an operator assertion, not an actual fleet/cache inspection.
+
+Renewal requires an explicit timezone, UTC BSON-millisecond normalization, a strictly extended expiry later than server time and at most 366 days ahead. An expired original term can be extended only while its original available asset, ownership/claim and all other required authority remain proven. Deleted, retired, released, ambiguous or changed resources do not gain adoption. Password recording requires an unexpired original term and accepts only a bounded new password with no control characters. Strict known legacy-Fernet/scoped format must agree with the current custody mode. It does not open or compare the old password and cannot attest that the newly supplied value works at the vendor.
+
+The first snapshot/majority workspace-guard transaction rechecks any exact concurrently saved receipt before comparing original material or requesting a password. New work revalidates and fences the exact review. After that preflight, password input is read lazily and sealed outside Mongo using a new generation; renewal requires no password/key work. Complete policy and disabled gates are checked after sealing. Final guarded installation rechecks original owner/basis/claim/lease/aliases/authority, conditionally writes inventory and rotation aliases, and inserts the permanent journal together. Actual standalone Mongo denies before password/key work; no transaction fallback exists.
+
+After the final awaited history and saved-receipt readbacks, pure policy/gate/term checks run immediately before callback completion. Mongo commit can follow those checks; they do not establish instantaneous cross-process configuration or expiry consensus. No kernel/socket/first-byte guarantee is added. Transaction retries reuse prepared material rather than reopening/sealing secrets inside callbacks. Two concurrent callers that both passed preflight before either commits can each seal once, so this is not exactly-once KMS billing.
+
+## Idempotency and retention
+
+Journal identity binds workspace, asset, operation and provider reference. The exact request binds operator, evidence, original inspection and normalized target term. Reusing that reference for a different review or target denies. An ordinary or guarded concurrent exact retry returns historical completion plus `current_matches`, `configuration_matches` and `activation_allowed=false`; it requests no password, repeats no key work and installs nothing. A saved renewal remains readable after its recorded target expiry. Historical completion is not current provider validity, available paid capacity or permission to act. Lost final commit acknowledgement recovers from the atomic journal.
+
+The TTL-free journal contains workspace/asset references, hashed operator/provider-reference/generation/review/material, normalized before/after terms, revision, time and `operator_recorded_provider_change` provenance. It contains no password, ciphertext, raw IP, cookie generation, raw provider reference or raw operator. Original evidence must be retained independently. Retention-first startup strips relevant TTLs before strict unique `(workspace_id, proxy_id, revision)` indexing; `_id` supplies unique reference identity. Duplicate/conflicting history requires drained repair rather than swallowed index failure. This protects participating writers and retained evidence, not arbitrary database tampering or deletion of all history.
+
+Account erasure keeps only minimal lifecycle metadata in `proxy_lifecycle_review` retention evidence while purging ordinary journals. Workspace stop/UID exclusion and permanent physical-IP exclusion remain in force. Closed tenants block new changes and cannot reinstall or recreate authority after purge. Separate provider-term retention, remote cleanup, legal retention, backup and whole-product erasure limits remain unchanged.
+
+## Private operator procedure
+
+Keep live outreach, integrations, Voice Studio and voice preparation disabled and drain all participating workspace writers/caches. Independently verify the original asset and the completed external provider renewal/password change. Record a nonsecret provider reference and evidence digest, then inspect the current operation:
+
+```text
+python -m outreach.ops.proxy_lifecycle inspect-renew --workspace WORKSPACE --asset webshare:PLAN:RESOURCE
+python -m outreach.ops.proxy_lifecycle inspect-rotate --workspace WORKSPACE --asset webshare:PLAN:RESOURCE
+```
+
+After reviewing the exact digest and resolving blockers separately, record the renewal:
+
+```text
+python -m outreach.ops.proxy_lifecycle renew --workspace WORKSPACE --asset webshare:PLAN:RESOURCE --operator OPERATOR --evidence-digest EVIDENCE_SHA256 --provider-reference CHANGE_REFERENCE --review-digest INSPECTION_DIGEST --expires-at 2027-01-01T00:00:00Z --workers-drained I_PAUSED_AND_DRAINED_ALL_WORKSPACE_WRITERS_AND_CACHES
+```
+
+For `rotate`, supply the same review fields, omit `--expires-at`, and enter the new already-changed password through the hidden prompt. Explicit `--stdin` provides bounded input when needed. There is no password/URL/cookie argument. Hidden-input failures have no echo fallback. Parser/runtime errors are sanitized, the Mongo client closes even after database-selection failure, and receipt retries read no input. References/digests are metadata; keep secrets out of them, shell history, logs and chat. See the [paid pilot guide](OUTREACH_PROXY_PROVIDERS.md).
+
+## Verification
+
+All **77 new focused cases** pass: 44 service/compatibility/malformed-input cases, ten private CLI cases, 21 actual replica-set cases and two actual standalone denials. Real Mongo coverage includes default naive-UTC BSON, strict retention-first/unique indexes, atomic rollback of inventory/aliases/journal, key work outside transactions, authority/source/config/erasure replacement, concurrent saved-receipt precedence, lost commit acknowledgement, history downgrade denial, paid-capacity/reconnect enforcement and minimal erasure retention. Standalone tests use owned dynamic-port processes and prove denial before password/key work for each operation. No new HTTP/SIGKILL/Redis/redelivery case or real AWS/vendor behavior is claimed.
+
+Independent review reproduced history-marker downgrade and late awaited-readback policy/gate gaps, plus an expired-target historical receipt incompatibility. Six added regressions failed before correction; all pass after fixes. Follow-up real Mongo tests verify rollback on late policy/gate/expiry changes and deny stripped history. Independent source review approved the corrected code and reran 69 then-current focused cases. Independent report/runbook/spec review agreed with the scope; its inspection-versus-apply wording correction and journal-reference precision are included. Affected verification passes 191 cases (69 then-current new cases plus 122 existing Webshare/migration/storage checks), with 94% combined new-module statement coverage (service93/proof93/CLI94). Eight further tests were added without source changes; all 77 now pass. Initial paid-capacity fixture argument/import failures were corrected before these clean runs and are not release evidence.
+
+Dedicated final focused coverage passes all 77 new cases in 40.30 seconds, with 94% combined statement coverage (service93/proof100/CLI95). Compilation, medium/high Bandit, both Compose configurations and whitespace checks pass. Existing multipart/deprecation and unset Compose-variable warnings remain. Frontend is unchanged; prior 99 frontend tests/build are historical. The final clean complete normal suite passes **2,144 backend checks** (2,124 outreach plus 20 account/auth), with 44 historical opt-in skips and two existing warnings, in **678.75 seconds**. All 77 new cases and both existing integration process-crash cases pass; no test failure is excluded from this final run. Independent source/contract review approves the corrected implementation and accurately separates the evidence below.
+
+Coverage-instrumented broad verification hit both existing `test_outreach_integration_crash.py` child-boundary assertions. The two cases pass together without coverage instrumentation (5.40 seconds); a separate run with the same module-coverage instrumentation reproduces both boundary failures. The identified broad run was interrupted with 1,271 passes, two failures and 40 skips; this partial run is not release evidence. No production code or crash-test timeout was changed and no test was excluded. Final verification separates a complete normal test run from dedicated coverage of all 77 new cases; the coverage/subprocess interaction itself remains unmodified.
+
+
+Owned temporary databases are absent with no leftover database to purge. The exact validated Mongo process/storage and both explicitly owned final test directories are removed; 27028/27029/6389 are closed. No Redis service was started. Diagnostic logs and temporary coverage files remain; pre-existing repository coverage/unrelated files are preserved. The three v2.29 repo/Desktop specifications, runbook and all 28 linked release reports byte-match, with all 107 local specification links verified. Backup contains eight original repo/Desktop specification/runbook copies in `/tmp/unravler-docs-before-v2-29-20261008`.
+
+## Remaining work
+
+Unproven/older native Webshare adoption still requires original owner/purchase/transport/term/physical-exclusion evidence and its own stopped review; supplying a password cannot supply missing ownership. Remaining shared-provider credentials and installed older-artifact cutover, explicit integration activation, different-key/unproven voice evidence and actual IAM/temporary-role/kernel-egress/backup-restore/approved-pilot checks remain outstanding. Default legacy custody and disabled flags are retained. v2.23–v2.29 are local, uncommitted and undeployed; no production configuration, AWS/vendor operation, purchase, grant, push or deployment was changed. Backup of the eight original specification/runbook copies: `/tmp/unravler-docs-before-v2-29-20261008`.

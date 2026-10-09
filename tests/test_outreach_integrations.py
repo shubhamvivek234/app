@@ -1,6 +1,6 @@
 """Tests for outreach integrations, webhooks, and public REST API."""
 import os
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from cryptography.fernet import Fernet
 import pytest
 from httpx import Response
@@ -68,8 +68,16 @@ async def test_create_webhook_enforces_ssrf():
     from fastapi import HTTPException
     
     db = AsyncMock()
+    db.users.find_one = AsyncMock(return_value={"user_id": "usr_1", "status": "active"})
+    db.users.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
+    db.account_erasure_tombstones.find_one = AsyncMock(return_value=None)
+    db.outreach_integration_controls.find_one = AsyncMock(return_value=None)
+    db.workspace_members.find_one = AsyncMock(return_value={"workspace_id": "ws_1", "user_id": "usr_1", "role": "owner"})
+    db.workspace_members.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
     user = {"user_id": "usr_1", "default_workspace_id": "ws_1"}
     
+    db.outreach_webhooks.find_one = AsyncMock(return_value=None)
+
     # Unsafe URL should raise 400
     with pytest.raises(HTTPException) as exc:
         await create_webhook(
@@ -80,12 +88,11 @@ async def test_create_webhook_enforces_ssrf():
     assert exc.value.status_code == 400
     
     # Safe public URL succeeds
-    with patch("outreach.api.integrations.is_safe_url", return_value=True):
-        result = await create_webhook(
-            CreateWebhookRequest(target_url="https://api.myapp.com/webhooks/unravler"),
-            current_user=user,
-            db=db,
-        )
+    result = await create_webhook(
+        CreateWebhookRequest(target_url="https://api.myapp.com/webhooks/unravler"),
+        current_user=user,
+        db=db,
+    )
     assert result["target_url"] == "https://api.myapp.com/webhooks/unravler"
     assert result["secret"].startswith("whsec_")
     assert db.outreach_webhooks.insert_one.await_count == 1
@@ -97,6 +104,12 @@ async def test_api_key_lifecycle():
     from fastapi import HTTPException
     
     db = AsyncMock()
+    db.users.find_one = AsyncMock(return_value={"user_id": "usr_1", "status": "active"})
+    db.users.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
+    db.account_erasure_tombstones.find_one = AsyncMock(return_value=None)
+    db.outreach_integration_controls.find_one = AsyncMock(return_value=None)
+    db.workspace_members.find_one = AsyncMock(return_value={"workspace_id": "ws_1", "user_id": "usr_1", "role": "owner"})
+    db.workspace_members.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
     db.outreach_api_keys.insert_one = AsyncMock()
     user = {"user_id": "usr_1", "default_workspace_id": "ws_1"}
     
@@ -130,18 +143,24 @@ async def test_slack_config():
     from outreach.api.integrations import SlackConfigRequest
     
     db = AsyncMock()
-    db.outreach_integrations.update_one = AsyncMock()
+    db.users.find_one = AsyncMock(return_value={"user_id": "usr_1", "status": "active"})
+    db.users.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
+    db.account_erasure_tombstones.find_one = AsyncMock(return_value=None)
+    db.outreach_integration_controls.find_one = AsyncMock(return_value=None)
+    db.workspace_members.find_one = AsyncMock(return_value={"workspace_id": "ws_1", "user_id": "usr_1", "role": "owner"})
+    db.workspace_members.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
+    db.outreach_integrations.insert_one = AsyncMock()
+    db.outreach_integrations.find_one = AsyncMock(return_value=None)
     user = {"user_id": "usr_1", "default_workspace_id": "ws_1"}
     
-    with patch("outreach.api.integrations.is_safe_url", return_value=True):
-        res = await update_slack_config(
-            SlackConfigRequest(
-                webhook_url="https://hooks.slack.com/services/T00/B00/XXXX",
-                channel_name="#deals",
-            ),
-            current_user=user,
-            db=db,
-        )
+    res = await update_slack_config(
+        SlackConfigRequest(
+            webhook_url="https://hooks.slack.com/services/T00/B00/XXXX",
+            channel_name="#deals",
+        ),
+        current_user=user,
+        db=db,
+    )
     assert res["status"] == "saved"
     assert res["connected"] is True
-    assert db.outreach_integrations.update_one.await_count == 1
+    assert db.outreach_integrations.insert_one.await_count == 1

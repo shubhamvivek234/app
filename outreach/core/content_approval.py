@@ -10,6 +10,7 @@ from outreach.core.dag_compiler import interpolate_template, contains_ai_prompt_
 from outreach.core.inbox_freshness import credential_generation
 from outreach.core.paid_access import _utc
 from outreach.core.sequence_versions import load_sequence
+from outreach.core.voice_artifact_custody import PreparedClip
 
 POLICY_VERSION = 1
 POLICY = {"mode": "exact_human_review", "max_content_chars": 10000, "valid_seconds": 86400}
@@ -155,7 +156,8 @@ class ContentApproval:
             "reviewed_by": {"$nin": [None, ""]}},
             {"$set": {"last_authorized_at": now}, "$inc": {"authorized_submissions": 1}}, return_document=ReturnDocument.AFTER)
 
-    async def require_sequence(self, lead: dict, expected: dict, action: str, content: dict | str | None) -> dict | None:
+    async def require_sequence(self, lead: dict, expected: dict, action: str, content: dict | str | None,
+                               *, voice_clip: PreparedClip | None = None) -> dict | None:
         if action not in CONTENT_ACTIONS:
             return None
         artifact = None
@@ -166,7 +168,15 @@ class ContentApproval:
             if (not artifact or artifact.get("audio_digest") != content.get("audio_digest")
                     or artifact.get("generation_id") != content.get("voice_artifact_generation")):
                 raise ValueError("Prepared voice recording changed")
-            await VoiceArtifacts(self.db).load(expected["workspace_id"], artifact["_id"])
+            if voice_clip is None:
+                # Compatibility for independent callers; scoped transactions
+                # require a worker-prepared clip and cannot open keys here.
+                voice_clip = await VoiceArtifacts(self.db).prepare_load(expected["workspace_id"], artifact["_id"])
+            if not voice_clip.matches(artifact):
+                raise ValueError('Prepared voice recording changed')
+            from outreach.core.dispatch_authority import AuthorityDatabase
+            if isinstance(self.db, AuthorityDatabase):
+                self.db.checks.append(lambda now: voice_clip.matches(artifact, now=now))
         binding = await sequence_binding(self.db, expected["workspace_id"], lead["id"], voice_artifact=artifact)
         rendered = {"body": content} if isinstance(content, str) else dict(content or {})
         rendered.pop("voice_artifact_id", None)

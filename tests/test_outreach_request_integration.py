@@ -79,7 +79,7 @@ async def test_verification_waits_for_operator_permission_without_discarding_pen
     monkeypatch.setattr(worker, "live_actions_enabled", lambda: True)
     monkeypatch.setenv("OUTREACH_MOCK_AUTH", "false")
     monkeypatch.setattr(worker, "get_active_entitlement", AsyncMock(return_value={"seats": 1}))
-    monkeypatch.setattr(worker, "_proxy_from_inventory", lambda row: ProxyConfig(proxy_id="p", host="proxy", port=8000, username="", password_enc="", country_code="US"))
+    monkeypatch.setattr(worker, "_proxy_from_inventory", lambda row: ProxyConfig(proxy_id="p", host="191.116.125.248", port=8000, username="", password_enc="", country_code="US"))
     monkeypatch.setattr(ExecutionPermission, "allowed", AsyncMock(return_value=False))
     health = AsyncMock(return_value=True)
     monkeypatch.setattr(worker.JITProxyManager, "test_proxy_health", health)
@@ -88,7 +88,7 @@ async def test_verification_waits_for_operator_permission_without_discarding_pen
         outreach_sender_slots=[{"workspace_id": "w", "sender_id": "a"}],
         outreach_connection_locks=[{"_id": "a", "job_id": "j", "workspace_id": "w"}],
         outreach_proxy_leases=[{"_id": "p", "workspace_id": "w", "sender_id": "a"}],
-        outreach_proxy_inventory=[{"_id": "p", "last_workspace_id": "w", "status": "available", "country_code": "US", "expires_at": datetime.now(timezone.utc) + timedelta(days=1)}])
+        outreach_proxy_inventory=[{"_id": "p", "last_workspace_id": "w", "status": "available", "country_code": "US", "host": "191.116.125.248", "expires_at": datetime.now(timezone.utc) + timedelta(days=1)}])
     result = await worker._verify_sender_connection("j", "w", "trace", db=db)
     assert result["status"] == "deferred"
     assert db.outreach_connection_jobs.docs[0]["status"] == "queued"
@@ -133,7 +133,7 @@ async def test_verification_cannot_activate_or_clean_up_after_losing_job_owner(m
     monkeypatch.setattr(worker, "get_active_entitlement", AsyncMock(return_value={"seats": 1}))
     monkeypatch.setattr(worker.ExecutionPermission, "allowed", AsyncMock(return_value=True))
     monkeypatch.setattr(worker, "pending_session", AsyncMock(return_value={"li_at": "local-cookie", "jsession_id": "ajax:local", "li_a": ""}))
-    monkeypatch.setattr(worker, "_proxy_from_inventory", lambda row: ProxyConfig(proxy_id="p", host="proxy", port=8000, username="", password_enc="", country_code="US"))
+    monkeypatch.setattr(worker, "_proxy_from_inventory", lambda row: ProxyConfig(proxy_id="p", host="191.116.125.248", port=8000, username="", password_enc="", country_code="US"))
     monkeypatch.setattr(worker.JITProxyManager, "test_proxy_health", AsyncMock(return_value=True))
     release = AsyncMock()
     monkeypatch.setattr(worker, "release_sender_reservation", release)
@@ -142,7 +142,7 @@ async def test_verification_cannot_activate_or_clean_up_after_losing_job_owner(m
         outreach_sender_slots=[{"workspace_id": "w", "sender_id": "a"}],
         outreach_connection_locks=[{"_id": "a", "job_id": "j", "workspace_id": "w"}],
         outreach_proxy_leases=[{"_id": "p", "workspace_id": "w", "sender_id": "a"}],
-        outreach_proxy_inventory=[{"_id": "p", "last_workspace_id": "w", "status": "available", "country_code": "US", "expires_at": datetime.now(timezone.utc) + timedelta(days=1)}])
+        outreach_proxy_inventory=[{"_id": "p", "last_workspace_id": "w", "status": "available", "country_code": "US", "host": "191.116.125.248", "expires_at": datetime.now(timezone.utc) + timedelta(days=1)}])
     inventory_find = db.outreach_proxy_inventory.find_one
     checks = 0
     async def raced_inventory(*args, **kwargs):
@@ -175,7 +175,7 @@ async def test_unknown_credential_write_retains_finalization_evidence_and_assets
     monkeypatch.setattr(worker, "get_active_entitlement", AsyncMock(return_value={"seats": 1}))
     monkeypatch.setattr(worker.ExecutionPermission, "allowed", AsyncMock(return_value=True))
     monkeypatch.setattr(worker, "pending_session", AsyncMock(return_value={"li_at": "local-cookie", "jsession_id": "ajax:local", "li_a": ""}))
-    monkeypatch.setattr(worker, "_proxy_from_inventory", lambda row: ProxyConfig(proxy_id="p", host="proxy", port=8000, username="", password_enc="", country_code="US"))
+    monkeypatch.setattr(worker, "_proxy_from_inventory", lambda row: ProxyConfig(proxy_id="p", host="191.116.125.248", port=8000, username="", password_enc="", country_code="US"))
     monkeypatch.setattr(worker.JITProxyManager, "test_proxy_health", AsyncMock(return_value=True))
     monkeypatch.setattr(worker.SessionAuthenticator, "validate_session_cookie", AsyncMock(return_value={"linkedin_urn": "urn:li:person:one"}))
     created = datetime.now(timezone.utc) - timedelta(minutes=1)
@@ -185,7 +185,7 @@ async def test_unknown_credential_write_retains_finalization_evidence_and_assets
         outreach_sender_slots=[{"workspace_id": "w", "sender_id": "a"}],
         outreach_connection_locks=[{"_id": "a", "job_id": "j", "workspace_id": "w"}],
         outreach_proxy_leases=[{"_id": "p", "workspace_id": "w", "sender_id": "a"}],
-        outreach_proxy_inventory=[{"_id": "p", "last_workspace_id": "w", "status": "available", "country_code": "US", "expires_at": datetime.now(timezone.utc) + timedelta(days=1)}])
+        outreach_proxy_inventory=[{"_id": "p", "last_workspace_id": "w", "status": "available", "country_code": "US", "host": "191.116.125.248", "expires_at": datetime.now(timezone.utc) + timedelta(days=1)}])
     insert = db.outreach_accounts.insert_one
     async def committed_without_ack(doc):
         await insert(doc)

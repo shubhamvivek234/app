@@ -87,6 +87,7 @@ async def test_missing_permission_never_invokes_transport(monkeypatch):
 async def ready_envelope(monkeypatch, source="sequence"):
     from outreach.core import request_guard
     db = database()
+    db.outreach_accounts.docs[0]["proxy"] = {"host": "191.116.125.248"}
     await grant(db)
     monkeypatch.setattr(request_guard, "sender_is_ready", AsyncMock(return_value=True))
     monkeypatch.setattr(request_guard, "live_actions_enabled", lambda: True)
@@ -434,14 +435,14 @@ async def test_pending_verification_checks_reserved_capacity_at_physical_boundar
     db.outreach_sender_slots.docs = [{"workspace_id": "w", "sender_id": "a"}] if state != "slot_missing" else []
     db.outreach_proxy_leases.docs = [{"_id": "p", "workspace_id": "w", "sender_id": "a"}] if state != "lease_missing" else []
     db.outreach_proxy_inventory.docs = [{"_id": "p", "status": "available", "last_workspace_id": "w",
-        "country_code": "GB" if state == "country_changed" else "US", "expires_at": NOW + timedelta(days=1)}]
-    proxy = ProxyConfig(proxy_id="p", host="proxy", port=8000, username="", password_enc="", country_code="US")
+        "country_code": "GB" if state == "country_changed" else "US", "host": "191.116.125.248", "expires_at": NOW + timedelta(days=1)}]
+    proxy = ProxyConfig(proxy_id="p", host="191.116.125.248", port=8000, username="", password_enc="", country_code="US")
     monkeypatch.setattr(managed_proxy, "_proxy_from_inventory", lambda row: proxy)
     monkeypatch.setattr(request_guard, "get_active_entitlement", AsyncMock(return_value={"seats": 1}))
     monkeypatch.setattr(request_guard, "live_actions_enabled", lambda: True)
     monkeypatch.setattr(request_guard, "is_shutting_down", lambda: False)
     await ExecutionPermission(db).grant("w", "a", "pending:j", ["verify"], "operator", now=NOW)
-    envelope = RequestEnvelope(db, "w", "a", "pending:j", "verify", "http://proxy:8000", connection_job_id="j")
+    envelope = RequestEnvelope(db, "w", "a", "pending:j", "verify", "http://191.116.125.248:8000", connection_job_id="j")
     transport = AsyncMock(return_value=httpx.Response(200, json={"elements": []}))
     if state == "valid":
         await envelope.call("GET", "/me", transport, now=NOW)

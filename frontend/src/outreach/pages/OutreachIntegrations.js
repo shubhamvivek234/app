@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Webhook,
   Key,
@@ -19,6 +19,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { requestIntegrationTest, integrationTestMessage } from '../utils/integrationDelivery';
 
 const AVAILABLE_EVENTS = [
   { id: 'lead.replied', label: 'Lead Replied', desc: 'Prospect replies to a LinkedIn message or email' },
@@ -30,6 +31,35 @@ const AVAILABLE_EVENTS = [
 ];
 
 export default function OutreachIntegrations() {
+  const testControllers = useRef(new Set());
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    const controllers = testControllers.current;
+    return () => {
+      mounted.current = false;
+      controllers.forEach(controller => controller.abort());
+      controllers.clear();
+    };
+  }, []);
+  const runConnectionTest = async (url) => {
+    const controller = new AbortController();
+    testControllers.current.add(controller);
+    try {
+      const token = localStorage.getItem('token');
+      const result = await requestIntegrationTest(url, {
+        signal: controller.signal,
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+        onQueued: () => toast.info('Test queued. Waiting for delivery confirmation…'),
+      });
+      const message = integrationTestMessage(result);
+      toast[message.level](message.text);
+    } catch (error) {
+      if (error.name !== 'AbortError') toast.error(error.message || 'Could not confirm the request; it may still be queued.');
+    } finally {
+      testControllers.current.delete(controller);
+    }
+  };
   const [activeSection, setActiveSection] = useState('webhooks'); // 'webhooks' | 'apikeys' | 'apps'
 
   // ── Webhooks State ──────────────────────────────────────────────────────────
@@ -66,7 +96,6 @@ export default function OutreachIntegrations() {
   const [hubspotConnected, setHubspotConnected] = useState(false);
   const [hubspotPortalId, setHubspotPortalId] = useState('');
   const [hubspotToken, setHubspotToken] = useState('');
-  const [hubspotAutoSync, setHubspotAutoSync] = useState(true);
   const [savingHubspot, setSavingHubspot] = useState(false);
 
   // ── Google Sheets / CSV Import State ───────────────────────────────────────
@@ -150,7 +179,6 @@ export default function OutreachIntegrations() {
         const data = await res.json();
         setHubspotConnected(Boolean(data.connected));
         if (data.portal_id) setHubspotPortalId(data.portal_id);
-        if (typeof data.auto_sync_on_reply === 'boolean') setHubspotAutoSync(data.auto_sync_on_reply);
       }
     } catch (_) {}
   }, []);
@@ -243,25 +271,8 @@ export default function OutreachIntegrations() {
     }
   };
 
-  const handleTestWebhook = async (webhookId) => {
-    toast.info('Sending test ping with HMAC signature...');
-    try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`/api/v1/outreach/integrations/webhooks/${webhookId}/test`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { Authorization: token ? `Bearer ${token}` : '' },
-      });
-      const data = await res.json();
-      if (data.success) {
-        toast.success(`Ping delivered (HTTP ${data.status_code})`);
-      } else {
-        toast.error(`Ping failed: ${data.error || `HTTP ${data.status_code}`}`);
-      }
-    } catch (_) {
-      toast.error('Network error sending test ping');
-    }
-  };
+  const handleTestWebhook = (webhookId) =>
+    runConnectionTest(`/api/v1/outreach/integrations/webhooks/${webhookId}/test`);
 
   // ── Delivery History ────────────────────────────────────────────────────────
   const openDeliveryLogs = async (whk) => {
@@ -281,26 +292,6 @@ export default function OutreachIntegrations() {
       toast.error('Failed to load deliveries');
     } finally {
       setLoadingDeliveries(false);
-    }
-  };
-
-  const handleReplayDelivery = async (deliveryId) => {
-    try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`/api/v1/outreach/integrations/deliveries/${deliveryId}/replay`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { Authorization: token ? `Bearer ${token}` : '' },
-      });
-      if (res.ok) {
-        toast.success('Delivery queued for immediate retry');
-        if (selectedWebhookForLogs) openDeliveryLogs(selectedWebhookForLogs);
-      } else {
-        const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'Could not replay delivery');
-      }
-    } catch (_) {
-      toast.error('Failed to replay delivery');
     }
   };
 
@@ -398,22 +389,9 @@ export default function OutreachIntegrations() {
   const handleTestSlack = async () => {
     setTestingSlack(true);
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch('/api/v1/outreach/integrations/slack/test', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { Authorization: token ? `Bearer ${token}` : '' },
-      });
-      const data = await res.json();
-      if (data.success) {
-        toast.success('Slack test notification sent!');
-      } else {
-        toast.error(`Slack test failed (HTTP ${data.status_code})`);
-      }
-    } catch (_) {
-      toast.error('Network error testing Slack');
+      await runConnectionTest('/api/v1/outreach/integrations/slack/test');
     } finally {
-      setTestingSlack(false);
+      if (mounted.current) setTestingSlack(false);
     }
   };
 
@@ -455,7 +433,7 @@ export default function OutreachIntegrations() {
         body: JSON.stringify({
           access_token: hubspotToken.trim(),
           portal_id: hubspotPortalId.trim(),
-          auto_sync_on_reply: hubspotAutoSync,
+          auto_sync_on_reply: false,
         }),
       });
       if (res.ok) {
@@ -889,7 +867,7 @@ export default function OutreachIntegrations() {
                 </div>
                 <div>
                   <h4 className="text-sm font-semibold text-gray-900">HubSpot CRM</h4>
-                  <p className="text-xs text-gray-500">One-way contact sync on verified prospect replies</p>
+                  <p className="text-xs text-gray-500">One-way manual contact synchronization</p>
                 </div>
               </div>
               <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
@@ -905,7 +883,7 @@ export default function OutreachIntegrations() {
                   <span className="font-semibold">Portal ID:</span> {hubspotPortalId}
                 </div>
                 <div className="text-xs text-gray-600">
-                  Confirmed prospect replies and stage updates are automatically synced as HubSpot contacts.
+                  Contacts can be synchronized manually. Automatic reply syncing is not available yet.
                 </div>
                 <div className="pt-1">
                   <button
@@ -920,10 +898,11 @@ export default function OutreachIntegrations() {
             ) : (
               <form onSubmit={handleSaveHubSpot} className="space-y-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                  <label htmlFor="hubspot-access-token" className="block text-xs font-medium text-gray-700 mb-1">
                     Private App Token / Access Token
                   </label>
                   <input
+                    id="hubspot-access-token"
                     type="password"
                     required
                     placeholder="pat-na1-..."
@@ -933,25 +912,24 @@ export default function OutreachIntegrations() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">HubSpot Portal ID</label>
+                  <p className="text-xs text-gray-500">
+                    Automatic reply syncing is not available yet.
+                  </p>
+                </div>
+                <div>
+                  <label htmlFor="hubspot-portal-id" className="block text-xs font-medium text-gray-700 mb-1">
+                    Portal ID
+                  </label>
                   <input
+                    id="hubspot-portal-id"
                     type="text"
                     required
-                    placeholder="e.g. 12345678"
+                    placeholder="Your HubSpot portal ID"
                     value={hubspotPortalId}
                     onChange={(e) => setHubspotPortalId(e.target.value)}
                     className="w-full text-xs px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 </div>
-                <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={hubspotAutoSync}
-                    onChange={(e) => setHubspotAutoSync(e.target.checked)}
-                    className="rounded text-blue-600"
-                  />
-                  Automatically sync contact when a prospect replies
-                </label>
                 <button
                   type="submit"
                   disabled={savingHubspot}
@@ -1355,14 +1333,14 @@ export default function OutreachIntegrations() {
                   <tbody className="divide-y divide-gray-100">
                     {deliveries.map((del) => (
                       <tr key={del.id} className="hover:bg-gray-50/50">
-                        <td className="py-2 px-3 font-mono">{del.payload?.type || 'event'}</td>
+                        <td className="py-2 px-3 font-mono">{del.event_type || 'event'}</td>
                         <td className="py-2 px-3">
                           <span className={`px-2 py-0.5 rounded text-[11px] font-medium ${
                             del.status === 'delivered' ? 'bg-emerald-50 text-emerald-700' :
                             del.status === 'retry' ? 'bg-amber-50 text-amber-700' :
                             del.status === 'dead_letter' ? 'bg-red-50 text-red-700' : 'bg-gray-100 text-gray-600'
                           }`}>
-                            {del.status}
+                            {['review_required', 'held_received'].includes(del.status) ? 'Needs review' : del.status}
                           </span>
                         </td>
                         <td className="py-2 px-3 font-mono">
@@ -1373,15 +1351,8 @@ export default function OutreachIntegrations() {
                           {new Date(del.created_at).toLocaleTimeString()}
                         </td>
                         <td className="py-2 px-3 text-right">
-                          {(del.status === 'dead_letter' || del.status === 'failed') && (
-                            <button
-                              type="button"
-                              onClick={() => handleReplayDelivery(del.id)}
-                              className="px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-[11px] inline-flex items-center gap-1 font-medium"
-                            >
-                              <RefreshCw className="w-3 h-3" /> Replay
-                            </button>
-                          )}
+                          {['review_required', 'held_received'].includes(del.status) ?
+                            <span className="text-amber-700">Needs review</span> : '—'}
                         </td>
                       </tr>
                     ))}

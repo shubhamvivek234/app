@@ -102,7 +102,66 @@ class ConnectionRepair:
             raise ValueError("Connection was stopped during preparation")
 
     async def install(self, job: dict, owner: str, generation: str, updates: dict,
-                      *, now: datetime | None = None) -> bool:
+                      *, now: datetime | None = None, prepared_proxy=None) -> bool:
+        from outreach.core import suppression
+        from outreach.core.restore_epoch import positive, EpochUnavailable
+        async def apply(current):
+            epoch = await positive(current, job['workspace_id'])
+            result = await ConnectionRepair(current)._install_control(job, owner, generation, updates,
+                now=now, prepared_proxy=prepared_proxy)
+            if not epoch.live():
+                raise EpochUnavailable('Restore configuration changed during installation')
+            return result
+        return await suppression.mutate_suppression(self.db, job['workspace_id'], apply)
+
+    async def _install_control(self, job: dict, owner: str, generation: str, updates: dict,
+                               *, now: datetime | None = None, prepared_proxy=None) -> bool:
+        if (updates.get('proxy') or {}).get('provider') == 'iproyal_static':
+            from outreach.core import suppression
+            from outreach.core.dispatch_authority import AuthorityDatabase
+            from outreach.core.proxy_identity import restore_ip_allowed
+            authority = (AuthorityDatabase(self.db.database, self.db.session, 'iproyal-restore-install')
+                         if isinstance(self.db, suppression.SuppressionDatabase) else self.db)
+            inventory = await authority.outreach_proxy_inventory.find_one({
+                '_id': job['proxy_id'], 'last_workspace_id': job['workspace_id']})
+            if not inventory:
+                return False
+            hosts = [(updates.get('proxy') or {}).get('host')]
+            if inventory.get('host') is not None:
+                hosts.append(inventory['host'])
+            for host in set(hosts):
+                if not await restore_ip_allowed(authority, host):
+                    return False
+            return await ConnectionRepair(authority)._install(job, owner, generation, updates, now=now)
+        if (updates.get('proxy') or {}).get('provider') == 'webshare_plan':
+            from outreach.core import suppression
+            from outreach.core.dispatch_authority import AuthorityDatabase
+            from outreach.core.webshare_provisioning import managed_webshare_valid
+            from outreach.core.proxy_custody import proxy_digest
+            from outreach.core.paid_access import live_actions_enabled
+            async def install(current):
+                authority = (AuthorityDatabase(current.database, current.session, 'managed-webshare-install')
+                             if isinstance(current, suppression.SuppressionDatabase) else current)
+                workspace = job['workspace_id']; checked_at = now or datetime.now(timezone.utc)
+                inventory = await authority.outreach_proxy_inventory.find_one({'_id': job['proxy_id']})
+                lease = await authority.outreach_proxy_leases.find_one({'_id': job['proxy_id'],
+                    'workspace_id': workspace, 'sender_id': job['sender_id'],
+                    'provider': 'webshare_plan', 'country_code': job['country_code']})
+                slot = await authority.outreach_sender_slots.find_one({'workspace_id': workspace, 'sender_id': job['sender_id']})
+                if (not inventory or not lease or not slot or not live_actions_enabled()
+                        or not await managed_webshare_valid(authority, inventory, workspace, now=checked_at)
+                        or not await get_active_entitlement(authority, workspace, checked_at)
+                        or proxy_digest(inventory) != proxy_digest(updates['proxy'])
+                        or prepared_proxy is None or not prepared_proxy.matches(inventory, workspace)):
+                    return False
+                return await ConnectionRepair(authority)._install(job, owner, generation, updates, now=checked_at)
+            return await suppression.mutate_suppression(self.db, job['workspace_id'], install)
+        return await self._install(job, owner, generation, updates, now=now)
+
+    async def _install(self, job: dict, owner: str, generation: str, updates: dict,
+                       *, now: datetime | None = None) -> bool:
+        from outreach.core.restore_epoch import positive
+        epoch = await positive(self.db, job['workspace_id'])
         now = now or datetime.now(timezone.utc)
         current = await self.db.outreach_connection_jobs.find_one({**self.scope(job), "status": "finalizing",
             "verification_owner_token": owner, "credential_generation": generation, "custody_expired_at": {"$exists": False}})
@@ -120,6 +179,7 @@ class ConnectionRepair:
             "connection_finalization.custody_expires_at": {"$gt": now},
             "credential_generation": fence.get("base_generation"), "is_deleted": {"$ne": True},
             "$expr": {"$gt": ["$connection_finalization.custody_expires_at", "$$NOW"]}}
+        await positive(self.db, job['workspace_id'], captured=epoch.captured)
         changed = await self.db.outreach_accounts.update_one(query, {"$set": {
             **updates, "credential_generation": generation, "connection_finalization.state": "installed",
             "connection_finalization.ever_installed": True, "connection_finalization.installed_at": now,
@@ -246,6 +306,12 @@ class ConnectionRepair:
         account = await self.db.outreach_accounts.find_one(self.account_scope(job))
         fence = (account or {}).get("connection_finalization") or {}
         inventory = await self.db.outreach_proxy_inventory.find_one({"_id": job["proxy_id"]})
+        if inventory and inventory.get('provider') == 'webshare_plan':
+            from outreach.core.webshare_provisioning import managed_webshare_valid
+            from outreach.core.proxy_custody import proxy_digest
+            if (not await managed_webshare_valid(self.db, inventory, job['workspace_id'])
+                    or proxy_digest(inventory) != proxy_digest((account or {}).get('proxy') or {})):
+                raise ValueError('Installed Webshare asset needs ownership review')
         lease = await self.db.outreach_proxy_leases.find_one({"_id": job["proxy_id"], "workspace_id": job["workspace_id"], "sender_id": job["sender_id"]})
         slot = await self.db.outreach_sender_slots.find_one({"workspace_id": job["workspace_id"], "sender_id": job["sender_id"]})
         if (not account or account.get("credential_generation") != job.get("credential_generation")

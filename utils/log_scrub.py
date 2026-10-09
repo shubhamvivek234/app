@@ -9,6 +9,9 @@ import logging
 from collections.abc import Mapping, Sequence
 
 _PATTERNS = [
+    (re.compile(r'([\'\"]?(?:webshare_api_key|outreach_webshare_api_key_enc)[\'\"]?[\s:=]+[\'\"]?)[^\s\"\',&}]+', re.IGNORECASE), r'\1[REDACTED]'),
+    (re.compile(r'([\'\"]?Authorization[\'\"]?\s*[:=]\s*[\'\"]?Token\s+)[^\s\"\',&}]+', re.IGNORECASE), r'\1[REDACTED]'),
+    (re.compile(r'(https://hooks\.(?:gov-)?slack\.com/services/)[^\s"\'<>]+', re.IGNORECASE), r'\1[REDACTED]'),
     (re.compile(r'([\'\"]?(?:xi-api-key|elevenlabs_api_key)[\'\"]?[\s:=]+[\'\"]?)[^\s\"\',&}]+', re.IGNORECASE), r'\1[REDACTED]'),
     # httpx emits credential-bearing URLs as strings/URL arguments. Match short
     # values and percent-encoded keys/separators before they reach handlers.
@@ -40,6 +43,8 @@ _SENSITIVE_KEYS = {
     "xi-api-key",
     "elevenlabs_api_key",
     "outreach_elevenlabs_api_key_enc",
+    "webshare_api_key",
+    "outreach_webshare_api_key_enc",
 }
 
 

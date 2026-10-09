@@ -175,6 +175,8 @@ class RequestEnvelope:
         self.campaign_limits = campaign_limits or {}
         self.operation_id = operation_id
         self.approval_binding = approval_binding
+        from outreach.core.restore_epoch import policy
+        self.epoch_policy = policy()
 
     def content_binding(self) -> dict | None:
         parent = _PARENT.get()
@@ -261,6 +263,12 @@ class RequestEnvelope:
                 "_id": job["proxy_id"], "workspace_id": self.workspace_id, "sender_id": self.sender_id})
             inventory = await self.db.outreach_proxy_inventory.find_one({"_id": job["proxy_id"]})
             expiry = _utc((inventory or {}).get("expires_at"))
+            if inventory and inventory.get('provider') == 'webshare_plan':
+                from outreach.core.webshare_provisioning import managed_webshare_valid
+                if (not await managed_webshare_valid(self.db, inventory, self.workspace_id, now=now)
+                        or (lease or {}).get('provider') != 'webshare_plan'
+                        or (lease or {}).get('country_code') != job.get('country_code')):
+                    raise RequestDenied('proxy_changed')
             if (not slot or not lease or not inventory or inventory.get("status") != "available" or not expiry or expiry <= now
                     or inventory.get("last_workspace_id") != self.workspace_id
                     or inventory.get("workspace_id", self.workspace_id) != self.workspace_id
@@ -281,6 +289,18 @@ class RequestEnvelope:
                     "last_workspace_id": self.workspace_id})
                 if not inventory or inventory.get("workspace_id") != self.workspace_id or not self._proxy_config_matches(inventory):
                     raise RequestDenied("proxy_changed")
+        from outreach.core.proxy_identity import restore_ip_allowed
+        hosts = [inventory.get('host')] if self.connection_job_id else [(account.get('proxy') or {}).get('host')]
+        if not self.connection_job_id:
+            # Legacy transport may differ from its inventory; neither IP may
+            # evade a restored negative. Missing legacy inventory host is not proof.
+            asset = await self.db.outreach_proxy_inventory.find_one({
+                '_id': (account.get('proxy') or {}).get('proxy_id'), 'last_workspace_id': self.workspace_id})
+            if asset and asset.get('host') is not None:
+                hosts.append(asset['host'])
+        for host in set(hosts):
+            if not await restore_ip_allowed(self.db, host):
+                raise RequestDenied('proxy_restore_review_required')
         if parent and parent.validator:
             reason = await parent.validator()
             if reason:
@@ -396,6 +416,8 @@ class RequestEnvelope:
             permission_expiry = _utc((boundary.get("permission") or {}).get("expires_at"))
             if not permission_expiry or permission_expiry <= clock():
                 raise RequestDenied("execution_permission_required")
+            if self.prepared_proxy is not None and not self.prepared_proxy.current(self.proxy_url):
+                raise RequestDenied('proxy_changed')
             started = True
             if parent and mutation:
                 parent.mutation_attempted = True

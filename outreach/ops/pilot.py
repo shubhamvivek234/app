@@ -175,7 +175,9 @@ async def _run_db(args, db) -> None:
             db, args.workspace, args.invoice_id, args.operator,
             args.seats, args.paid_through,
         )
-        print(f"Activated {result['workspace_id']} seats={result['seats']} paid_through={result['paid_through'].isoformat()}")
+        print(json.dumps({"workspace_id": result["workspace_id"], "status": result.get("status", "unknown"),
+            "is_revoked": result.get("is_revoked") is True, "seats": result["seats"],
+            "paid_through": _utc(result["paid_through"]).isoformat()}, sort_keys=True))
     elif args.command == "extend-ip":
         if args.verified_in_provider != "I_VERIFIED_THIS_ORDER":
             raise ValueError("Confirm the extension in IPRoyal before updating its local term")

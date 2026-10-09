@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import ipaddress
+import os
 import uuid
 from dataclasses import dataclass, field
 from urllib.parse import quote
@@ -19,6 +20,13 @@ from outreach.core.crypto import encrypt_secret
 
 TRANSPORT_FIELDS = ('proxy_id', 'provider', 'host', 'port', 'username', 'country_code')
 BINDING_FIELDS = (*TRANSPORT_FIELDS, 'password_enc', 'credential_generation', 'custody_workspace_id')
+
+
+def policy() -> tuple[str, ...]:
+    """Capture complete configured key/environment authority without key access."""
+    from outreach.core.oauth_app_custody import KMS_SETTINGS
+    return (session_custody.custody_mode(), os.getenv('OUTREACH_CUSTODY_ENVIRONMENT_ID', '').strip(),
+            *(os.getenv(name, '').strip() for name in KMS_SETTINGS))
 
 
 def proxy_record(proxy: dict[str, Any] | ProxyConfig) -> dict[str, Any]:
@@ -62,12 +70,18 @@ class PreparedProxy:
     scoped: bool
     url: str = field(repr=False)
     _url_digest: str = field(repr=False)
+    captured_policy: tuple[str, ...] = field(repr=False)
+
+    def current(self, url: str) -> bool:
+        """Pure adapter-entry proof; no await, storage read or key access."""
+        return bool(url == self.url and self.captured_policy == policy()
+                    and hmac.compare_digest(self._url_digest, hashlib.sha256(self.url.encode()).hexdigest()))
 
     def matches(self, proxy: dict[str, Any] | ProxyConfig, workspace: str) -> bool:
         """Compare exact captured material without unwrapping inside a transaction."""
         return bool(workspace == self.workspace_id
+            and self.current(self.url)
             and self.scoped == (session_custody.custody_mode() == 'kms_v1')
-            and hmac.compare_digest(self._url_digest, hashlib.sha256(self.url.encode()).hexdigest())
             and hmac.compare_digest(self.binding_digest, proxy_digest(proxy)))
 
 
@@ -77,8 +91,11 @@ async def seal_proxy_password(password: str, proxy: dict[str, Any] | ProxyConfig
     row = proxy_record(proxy)
     row.update(credential_generation=generation or str(uuid.uuid4()), custody_workspace_id=workspace)
     mode = session_custody.custody_mode()
+    captured = policy()
     encrypted = (await session_custody.configured_custody().seal(password, _context(row, workspace))
         if mode == 'kms_v1' else encrypt_secret(password))
+    if captured != policy():
+        raise CustodyUnavailable('Proxy custody policy changed')
     return {name: row[name] for name in ('credential_generation', 'custody_workspace_id')} | {'password_enc': encrypted}
 
 
@@ -87,6 +104,7 @@ async def prepare_proxy(proxy: dict[str, Any] | ProxyConfig, workspace: str) -> 
     row = proxy_record(proxy)
     captured_digest = proxy_digest(row)
     mode = session_custody.custody_mode()
+    captured = policy()
     if mode == 'kms_v1':
         password = await session_custody.configured_custody().open(row.get('password_enc'), _context(row, workspace))
         url = f"http://{quote(row['username'], safe='')}:{quote(password, safe='')}@{row['host']}:{row['port']}"
@@ -95,4 +113,6 @@ async def prepare_proxy(proxy: dict[str, Any] | ProxyConfig, workspace: str) -> 
             raise CustodyUnavailable('Scoped proxy credentials cannot use legacy custody')
         from outreach.core.proxy_manager import JITProxyManager
         url = JITProxyManager.format_proxy_url(proxy)
-    return PreparedProxy(workspace, captured_digest, mode == 'kms_v1', url, hashlib.sha256(url.encode()).hexdigest())
+    if captured != policy():
+        raise CustodyUnavailable('Proxy custody policy changed')
+    return PreparedProxy(workspace, captured_digest, mode == 'kms_v1', url, hashlib.sha256(url.encode()).hexdigest(), captured)

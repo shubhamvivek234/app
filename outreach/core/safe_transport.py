@@ -3,10 +3,12 @@ Safe Egress Transport with DNS Rebinding and SSRF Defense.
 Pins outgoing TCP connections to pre-validated public IP addresses,
 preventing Time-Of-Check to Time-Of-Use (TOCTOU) DNS rebinding attacks.
 """
+import asyncio
 import ipaddress
 import logging
 import socket
-from typing import Any
+import ssl
+from typing import Any, Callable
 from urllib.parse import urlparse
 import httpcore
 from httpcore._backends.anyio import AnyIOBackend
@@ -94,11 +96,41 @@ def validate_webhook_url(url: str, *, allow_http: bool = False) -> None:
     # If hostname is an IP literal, validate directly
     try:
         ip = ipaddress.ip_address(hostname)
+    except ValueError:
+        # Domain names are resolved and pinned at connection time.
+        pass
+    else:
         if is_ip_blocked(ip):
             raise SSRFSecurityError(f"Target IP {ip} is in a blocked/private range")
-    except ValueError:
-        # Not an IP literal, domain name will be resolved during connection pinning
-        pass
+
+
+class FencedAsyncNetworkStream(httpcore.AsyncNetworkStream):
+    """Recheck a prepared authorization before every outbound write, including after TLS."""
+    def __init__(self, stream: httpcore.AsyncNetworkStream, preflight: Callable[[], bool]) -> None:
+        self.stream, self.preflight = stream, preflight
+
+    async def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
+        return await self.stream.read(max_bytes, timeout)
+
+    async def write(self, buffer: bytes, timeout: float | None = None) -> None:
+        if not self.preflight():
+            await self.stream.aclose()
+            raise SSRFSecurityError("Outbound authorization expired")
+        return await self.stream.write(buffer, timeout)
+
+    async def aclose(self) -> None:
+        await self.stream.aclose()
+
+    async def start_tls(self, ssl_context: ssl.SSLContext, server_hostname: str | None = None,
+                        timeout: float | None = None) -> httpcore.AsyncNetworkStream:
+        if not self.preflight():
+            await self.stream.aclose()
+            raise SSRFSecurityError("Outbound authorization expired")
+        stream = await self.stream.start_tls(ssl_context, server_hostname, timeout)
+        return FencedAsyncNetworkStream(stream, self.preflight)
+
+    def get_extra_info(self, info: str) -> Any:
+        return self.stream.get_extra_info(info)
 
 
 class PinnedAsyncNetworkBackend(httpcore.AsyncNetworkBackend):
@@ -108,7 +140,8 @@ class PinnedAsyncNetworkBackend(httpcore.AsyncNetworkBackend):
     directly to a pre-validated public IP address.
     """
 
-    def __init__(self, *, allow_private_for_tests: bool = False) -> None:
+    def __init__(self, *, allow_private_for_tests: bool = False, preflight: Callable[[], bool] | None = None) -> None:
+        self.preflight = preflight
         self.allow_private_for_tests = allow_private_for_tests
         self._anyio_backend = AnyIOBackend()
 
@@ -126,7 +159,8 @@ class PinnedAsyncNetworkBackend(httpcore.AsyncNetworkBackend):
 
         # Resolve host to all available address infos
         try:
-            addr_infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+            async with asyncio.timeout(min(timeout if timeout is not None else 5.0, 5.0)):
+                addr_infos = await asyncio.to_thread(socket.getaddrinfo, host, port, proto=socket.IPPROTO_TCP)
         except socket.gaierror as exc:
             raise SSRFSecurityError(f"DNS resolution failed for '{host}': {exc}") from exc
 
@@ -145,15 +179,18 @@ class PinnedAsyncNetworkBackend(httpcore.AsyncNetworkBackend):
                 raise SSRFSecurityError(f"SSRF blocked: host '{host}' resolved to restricted IP {ip_str}")
             validated_ips.append(ip_str)
 
+        if self.preflight and not self.preflight():
+            raise SSRFSecurityError("Outbound authorization expired")
         # Pin the TCP socket directly to the first validated IP
         pinned_ip = validated_ips[0]
-        return await self._anyio_backend.connect_tcp(
+        stream = await self._anyio_backend.connect_tcp(
             pinned_ip,
             port,
             timeout=timeout,
             local_address=local_address,
             socket_options=socket_options,
         )
+        return FencedAsyncNetworkStream(stream, self.preflight) if self.preflight else stream
 
 
 class SafeAsyncHTTPTransport(httpx.AsyncHTTPTransport):
@@ -161,10 +198,10 @@ class SafeAsyncHTTPTransport(httpx.AsyncHTTPTransport):
     httpx transport that enforces connection pinning to eliminate DNS rebinding.
     """
 
-    def __init__(self, *args, allow_private_for_tests: bool = False, **kwargs) -> None:
+    def __init__(self, *args, allow_private_for_tests: bool = False, preflight=None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._pool._network_backend = PinnedAsyncNetworkBackend(
-            allow_private_for_tests=allow_private_for_tests
+            allow_private_for_tests=allow_private_for_tests, preflight=preflight
         )
 
 
@@ -172,6 +209,7 @@ def create_safe_client(
     *,
     timeout: float = 10.0,
     allow_private_for_tests: bool = False,
+    preflight: Callable[[], bool] | None = None,
 ) -> httpx.AsyncClient:
     """
     Returns an httpx.AsyncClient equipped with:
@@ -179,10 +217,11 @@ def create_safe_client(
     - Redirects disabled (follow_redirects=False)
     - Strict timeouts (connect/read/write)
     """
-    transport = SafeAsyncHTTPTransport(allow_private_for_tests=allow_private_for_tests)
+    transport = SafeAsyncHTTPTransport(allow_private_for_tests=allow_private_for_tests, preflight=preflight)
     client_timeout = httpx.Timeout(timeout, connect=5.0, read=timeout, write=5.0)
     return httpx.AsyncClient(
         transport=transport,
         follow_redirects=False,
         timeout=client_timeout,
+        trust_env=False,
     )

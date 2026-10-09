@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 PREFIX = "uc1:"
 MAX_SECRET_BYTES = 32768
 KEY_ARN = re.compile(r"arn:aws:kms:([a-z0-9-]+):([0-9]{12}):key/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\Z")
-PURPOSES = frozenset({"voice_provider_key", "voice_studio_key", "oauth_app_secret", "mailbox_sync_key", "mailbox_access_token", "mailbox_refresh_token", "oauth_code", "oauth_pkce", "finder_key", "proxy_password", "session_li_at", "session_jsession", "session_li_a",
+PURPOSES = frozenset({"voice_artifact_key", "proxy_provider_key", "integration_webhook", "integration_slack", "integration_hubspot", "voice_provider_key", "voice_studio_key", "oauth_app_secret", "mailbox_sync_key", "mailbox_access_token", "mailbox_refresh_token", "oauth_code", "oauth_pkce", "finder_key", "proxy_password", "session_li_at", "session_jsession", "session_li_a",
     "pending_li_at", "pending_jsession", "pending_li_a"})
 
 

@@ -6,21 +6,21 @@ active until its owner changes or cancels it in Webshare.
 For small pilots, IPRoyal supports a manually purchased static ISP IP configured
 server-side; this module never orders, renews, or cancels provider subscriptions.
 """
+import asyncio
 import hashlib
 import ipaddress
 import os
 import logging
+import time
 import httpx
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote, unquote, urlsplit
 from outreach.models import ProxyConfig, ProxyStatus
 from utils.encryption import encrypt, decrypt_strict
+from outreach.core import session_custody, webshare_key_custody
 
 logger = logging.getLogger(__name__)
-
-WEBSHARE_API_URL = "https://proxy.webshare.io/api/v2"
-
 
 class ProxyProvisioningError(Exception):
     pass
@@ -39,8 +39,20 @@ class JITProxyManager:
 
     def __init__(self, api_key: str | None = None):
         self.provider = os.getenv("OUTREACH_PROXY_PROVIDER", "webshare").strip().lower()
-        self.api_key = api_key or os.getenv("WEBSHARE_API_KEY", "mock")
-        self.is_mock = self.provider == "webshare" and self.api_key in ("mock", "test", "")
+        self._key_override = api_key
+
+    @property
+    def configuration_state(self) -> str:
+        """Configuration metadata; no key opening or provider health request."""
+        if self.provider == "iproyal":
+            return "live"
+        if self.provider != "webshare":
+            return "unavailable"
+        return webshare_key_custody.configuration_state(self._key_override)
+
+    @property
+    def is_mock(self) -> bool:
+        return self.provider == "webshare" and self.configuration_state == "mock"
 
     def _select_iproyal_proxy(self, country_code: str, excluded: set[str]) -> ProxyConfig:
         """Use one operator-configured public IP from a purchased IPRoyal ISP order."""
@@ -97,124 +109,136 @@ class JITProxyManager:
             assigned_at=datetime.now(timezone.utc),
         )
 
-    async def _get_pages(self, client: httpx.AsyncClient, path: str, params: dict[str, Any]) -> list[dict]:
-        records: list[dict] = []
-        page = 1
-        while page <= 100:
-            response = await client.get(
-                f"{WEBSHARE_API_URL}{path}",
-                params={**params, "page": page, "page_size": 100},
-                headers={"Authorization": f"Token {self.api_key}"},
-            )
-            if response.status_code in (401, 403):
-                raise ProxyProvisioningError("Webshare API key cannot access proxy plans")
-            if response.status_code != 200:
-                raise ProxyProvisioningError(f"Webshare proxy inventory is unavailable (HTTP {response.status_code})")
-            data = response.json()
-            if not isinstance(data, dict) or not isinstance(data.get("results"), list):
-                raise ProxyProvisioningError("Webshare returned an invalid proxy inventory")
-            records.extend(item for item in data["results"] if isinstance(item, dict))
-            if not data.get("next"):
-                return records
-            page += 1
-        raise ProxyProvisioningError("Webshare proxy inventory exceeds the supported page limit")
+    @staticmethod
+    def _webshare_proxy(record: dict, plan_id: int, country: str, excluded: set[str]) -> ProxyConfig | None:
+        """Accept bounded credentials for one public static IPv4, never a hostname."""
+        resource = record.get("id")
+        if not isinstance(resource, str) or not 1 <= len(resource) <= 128:
+            return None
+        if resource != resource.strip() or any(ord(char) < 32 or ord(char) == 127 for char in resource):
+            return None
+        proxy_id = f"webshare:{plan_id}:{resource}"
+        if proxy_id in excluded or record.get("valid") is not True or record.get("country_code") != country:
+            return None
+        host, username, password = (record.get(field) for field in ("proxy_address", "username", "password"))
+        if any(not isinstance(value, str) or not 1 <= len(value) <= bound
+               or any(ord(char) < 32 or ord(char) == 127 for char in value)
+               for value, bound in ((host, 256), (username, 256), (password, 4096))):
+            return None
+        try:
+            address = ipaddress.IPv4Address(host)
+            raw_port = record.get("port")
+            if type(raw_port) not in (int, str):
+                return None
+            port = int(raw_port)
+        except (TypeError, ValueError):
+            return None
+        if not address.is_global or not 1 <= port <= 65535:
+            return None
+        return ProxyConfig(
+            proxy_id=proxy_id, provider="webshare_plan", host=str(address), port=port,
+            username=username, password_enc="", country_code=country,
+            status=ProxyStatus.HEALTHY, assigned_at=datetime.now(timezone.utc),
+        )
 
     async def order_static_residential_proxy(
         self, country_code: str = "US", excluded_proxy_ids: set[str] | None = None,
+        *, workspace_id: str | None = None,
     ) -> ProxyConfig:
-        """Select a dedicated static ISP proxy already owned by the operator.
+        """Select an existing proxy; callers still must prove and reserve ownership.
 
-        The caller atomically reserves the returned proxy ID before using it.
-        ``excluded_proxy_ids`` lets a caller retry after another request wins
-        the reservation race.
+        This helper performs only bounded inventory GETs, never orders or renews.
+        Scoped selections require a workspace for sealing the returned password.
+        It is not the paid pilot's managed-inventory/import/assignment path.
         """
-        country_code = country_code.upper()
-        if self.provider == "iproyal":
-            return self._select_iproyal_proxy(country_code, excluded_proxy_ids or set())
-        if self.provider != "webshare":
-            raise ProxyProvisioningError("Unknown outreach proxy provider configured")
-        if self.is_mock:
-            mock_id = f"proxy_mock_{os.urandom(4).hex()}"
-            return ProxyConfig(
-                proxy_id=mock_id,
-                provider="webshare_mock",
-                host="127.0.0.1",
-                port=8080,
-                username=f"user_{mock_id}",
-                password_enc=encrypt("mock_secure_pass_123"),
-                country_code=country_code,
-                status=ProxyStatus.HEALTHY,
-                assigned_at=datetime.now(timezone.utc),
-            )
-
-        excluded = excluded_proxy_ids or set()
+        from outreach.core.webshare_inventory import InventoryRead, TOTAL_TIMEOUT
+        from outreach.core.proxy_custody import seal_proxy_password
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                plans = await self._get_pages(client, "/subscription/plan/", {})
-                eligible = [
-                    plan for plan in plans
-                    if plan.get("status") == "active"
-                    and plan.get("proxy_type") == "dedicated"
-                    and plan.get("proxy_subtype") == "isp"
-                    and not plan.get("automatic_refresh_frequency")
-                ]
-                if not eligible:
-                    raise ProxyPlanRequiredError(
-                        "Webshare has no active Dedicated Static Residential (ISP) plan. "
-                        "Add one in Webshare before connecting a LinkedIn sender."
-                    )
-
-                for plan in eligible:
-                    plan_id = plan.get("id")
-                    if plan_id is None:
-                        continue
-                    proxies = await self._get_pages(
-                        client,
-                        "/proxy/list/",
-                        {"mode": "direct", "country_code__in": country_code, "plan_id": plan_id},
-                    )
-                    for record in proxies:
-                        proxy_id = f"webshare:{plan_id}:{record.get('id', '')}"
-                        if (
-                            not record.get("id") or proxy_id in excluded
-                            or record.get("valid") is not True
-                            or record.get("country_code") != country_code
-                            or not record.get("proxy_address")
-                            or not record.get("username") or not record.get("password")
-                        ):
-                            continue
-                        try:
-                            port = int(record["port"])
-                        except (KeyError, TypeError, ValueError):
-                            continue
-                        if not 1 <= port <= 65535:
-                            continue
-                        return ProxyConfig(
-                            proxy_id=proxy_id,
-                            provider="webshare_plan",
-                            host=record["proxy_address"],
-                            port=port,
-                            username=record["username"],
-                            password_enc=encrypt(record["password"]),
-                            country_code=country_code,
-                            status=ProxyStatus.HEALTHY,
-                            assigned_at=datetime.now(timezone.utc),
-                        )
-                raise ProxyInventoryExhaustedError(
-                    f"No unassigned Dedicated Static Residential (ISP) proxy is available in {country_code}. "
-                    "Add a proxy for that country in Webshare."
+            mode = session_custody.custody_mode()
+            if not isinstance(country_code, str):
+                raise ProxyProvisioningError("A two-letter proxy country is required")
+            country_code = country_code.upper()
+            if len(country_code) != 2 or not country_code.isascii() or not country_code.isalpha():
+                raise ProxyProvisioningError("A two-letter proxy country is required")
+            if self.provider == "iproyal":
+                if mode == "kms_v1":
+                    raise ProxyProvisioningError("Scoped custody requires the managed IPRoyal inventory path")
+                return self._select_iproyal_proxy(country_code, excluded_proxy_ids or set())
+            if self.provider != "webshare":
+                raise ProxyProvisioningError("Unknown outreach proxy provider configured")
+            if self.is_mock:
+                if mode != "legacy_fernet":
+                    raise ProxyProvisioningError("Webshare custody changed before mock selection")
+                mock_id = f"proxy_mock_{os.urandom(4).hex()}"
+                proxy = ProxyConfig(
+                    proxy_id=mock_id, provider="webshare_mock", host="127.0.0.1", port=8080,
+                    username=f"user_{mock_id}", password_enc=encrypt("mock_secure_pass_123"),
+                    country_code=country_code, status=ProxyStatus.HEALTHY,
+                    assigned_at=datetime.now(timezone.utc),
                 )
+                if session_custody.custody_mode() != mode or not self.is_mock:
+                    raise ProxyProvisioningError("Webshare custody changed during mock selection")
+                return proxy
+            # Validate storage and tenant before KMS, DNS or HTTP. Scoped values
+            # never fall through to mock, constructor plaintext or old Fernet.
+            config = webshare_key_custody.capture_configuration(self._key_override)
+            if config.policy[0] != mode:
+                raise ProxyProvisioningError("Webshare custody changed before inventory selection")
+            mode = config.policy[0]
+            if mode == "kms_v1":
+                session_custody.context(workspace_id, "webshare-selection", "preflight", "proxy_password")
+            excluded = excluded_proxy_ids or set()
+            deadline = time.monotonic() + TOTAL_TIMEOUT
+            async with asyncio.timeout(TOTAL_TIMEOUT):
+                key = await webshare_key_custody.prepare_key(
+                    expected_digest=config.digest, override=self._key_override,
+                )
+                async with InventoryRead(key, deadline=deadline) as inventory:
+                    plans = await inventory.pages("/subscription/plan/", {})
+                    eligible = [
+                        plan for plan in plans
+                        if plan.get("status") == "active" and plan.get("proxy_type") == "dedicated"
+                        and plan.get("proxy_subtype") == "isp" and not plan.get("automatic_refresh_frequency")
+                    ]
+                    if not eligible:
+                        raise ProxyPlanRequiredError(
+                            "Webshare has no active Dedicated Static Residential (ISP) plan. "
+                            "Add one in Webshare before connecting a LinkedIn sender."
+                        )
+                    for plan in eligible:
+                        plan_id = plan.get("id")
+                        if type(plan_id) is not int or not 0 < plan_id <= 2**63 - 1:
+                            continue
+                        records = await inventory.pages("/proxy/list/", {
+                            "mode": "direct", "country_code__in": country_code, "plan_id": plan_id,
+                        })
+                        for record in records:
+                            proxy = self._webshare_proxy(record, plan_id, country_code, excluded)
+                            if proxy is None:
+                                continue
+                            if mode == "kms_v1":
+                                encrypted = await seal_proxy_password(record["password"], proxy, workspace_id)
+                                proxy = proxy.model_copy(update=encrypted)
+                            else:
+                                proxy = proxy.model_copy(update={"password_enc": encrypt(record["password"])})
+                            inventory.require_current()
+                            return proxy
+                    raise ProxyInventoryExhaustedError(
+                        f"No unassigned Dedicated Static Residential (ISP) proxy is available in {country_code}. "
+                        "Add a proxy for that country in Webshare."
+                    )
         except ProxyProvisioningError:
             raise
-        except (httpx.HTTPError, ValueError) as exc:
-            logger.warning("Webshare proxy inventory request failed: %s", type(exc).__name__)
-            raise ProxyProvisioningError("Could not read Webshare proxy inventory. Please retry.") from exc
+        except (httpx.HTTPError, httpx.StreamError, ValueError, TimeoutError, OSError):
+            # Do not preserve an exception cause that could retain headers,
+            # response bodies, private key-service details or proxy passwords.
+            raise ProxyProvisioningError("Webshare inventory or credential preparation is unavailable") from None
 
     async def release_proxy(self, proxy_id: str) -> bool:
         """Clear a local assignment; the provider retains the purchased proxy."""
         return bool(proxy_id)
 
-    async def test_proxy_health(self, proxy: ProxyConfig, *, prepared_proxy=None) -> bool:
+    async def test_proxy_health(self, proxy: ProxyConfig, *, prepared_proxy=None, allowed=None) -> bool:
         """
         Verifies that outgoing traffic through this proxy reaches the web and masks the host IP.
         """
@@ -228,6 +252,8 @@ class JITProxyManager:
         proxy_url = prepared_proxy.url if prepared_proxy else self.format_proxy_url(proxy)
         try:
             async with httpx.AsyncClient(proxy=proxy_url, timeout=10.0) as client:
+                if allowed is not None and not allowed():
+                    return False
                 resp = await client.get("https://httpbin.org/ip")
                 if resp.status_code == 200:
                     return True

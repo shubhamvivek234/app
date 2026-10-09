@@ -151,7 +151,7 @@ class ProxyConfig(BaseModel):
     host: str
     port: int
     username: str
-    password_enc: str  # Fernet or opt-in scoped KMS envelope
+    password_enc: str = Field(repr=False)  # Fernet or opt-in scoped KMS envelope
     credential_generation: str | None = None
     custody_workspace_id: str | None = None
     country_code: str = "US"

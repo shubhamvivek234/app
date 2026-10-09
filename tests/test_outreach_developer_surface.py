@@ -325,14 +325,16 @@ async def test_public_pause_lead_stops_lead_and_emits_stage_changed_event():
 
 @pytest.mark.asyncio
 async def test_rotate_webhook_secret():
-    """Secret rotation produces a new whsec_ secret and updates document."""
-    db = MagicMock()
-    db.outreach_webhooks.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
+    """Rotation installs a new generation, encrypted at rest, under current owner authority."""
+    from tests.outreach_memory import Database
+    from utils.encryption import encrypt, decrypt_strict
+    db = Database(users=[{"user_id": "usr_1", "status": "active"}],
+        workspace_members=[{"workspace_id": "ws_1", "user_id": "usr_1", "role": "owner"}],
+        outreach_webhooks=[{"workspace_id": "ws_1", "id": "wh_123", "target_url": "https://example.com/hook",
+            "status": "active", "secret_enc": encrypt("old-secret")}])
     user = {"user_id": "usr_1", "default_workspace_id": "ws_1"}
-
     res = await rotate_webhook_secret("wh_123", current_user=user, db=db)
-
-    assert res["status"] == "rotated"
-    assert res["webhook_id"] == "wh_123"
+    assert res["status"] == "rotated" and res["webhook_id"] == "wh_123"
     assert res["new_secret"].startswith("whsec_")
-    db.outreach_webhooks.update_one.assert_awaited_once()
+    row = await db.outreach_webhooks.find_one({"workspace_id": "ws_1", "id": "wh_123"})
+    assert decrypt_strict(row["secret_enc"]) == res["new_secret"] and row["credential_generation"]

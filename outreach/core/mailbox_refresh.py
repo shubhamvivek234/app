@@ -17,6 +17,8 @@ async def get_access(db: Any, mailbox: dict, *, parent_preflight=None, parent_al
     from outreach.core import mailbox_connection as connection
     now = connection.datetime.now(timezone.utc)
     workspace, sender = mailbox['workspace_id'], mailbox['sender_account_id']
+    from outreach.core.restore_epoch import positive
+    epoch = await positive(db, workspace)
     scope = {'workspace_id': workspace, 'sender_account_id': sender}
     if not connection._control_allowed(workspace) or not await connection._paid_sender(db, workspace, sender):
         raise connection.MailboxUnavailable('Paid sender access is unavailable')
@@ -27,9 +29,10 @@ async def get_access(db: Any, mailbox: dict, *, parent_preflight=None, parent_al
         raise connection.MailboxUnavailable('Mailbox is no longer active or requires refresh review')
     mailbox = deepcopy(current)
     async def prepared(row):
+        await positive(db, workspace, captured=epoch.captured)
         secret = await prepare_mailbox_access(row, workspace, sender)
         fresh = await db.outreach_mailboxes.find_one({**scope, 'status': 'active'})
-        if not fresh or not connection._control_allowed(workspace) or not secret.matches(fresh, workspace, sender):
+        if not epoch.live() or not fresh or not connection._control_allowed(workspace) or not secret.matches(fresh, workspace, sender):
             raise connection.MailboxUnavailable('Mailbox changed during credential opening')
         if secret.scoped and (not connection._utc(fresh.get('token_expires_at'))
                 or connection._utc(fresh['token_expires_at']) <= connection.datetime.now(timezone.utc)):
@@ -61,6 +64,7 @@ async def get_access(db: Any, mailbox: dict, *, parent_preflight=None, parent_al
             'refresh_token': refresh, 'grant_type': 'refresh_token'}
         if config.provider == 'microsoft': payload['scope'] = ' '.join(config.scopes)
         async def authorize(current):
+            await positive(current, workspace, captured=epoch.captured)
             fenced = AuthorityDatabase(current.database, current.session, nonce) if isinstance(current, suppression.SuppressionDatabase) else current
             row = await fenced.outreach_mailboxes.find_one({**owned, 'status': 'active', 'refresh_state': 'preparing',
                 'refresh_lease_until': {'$gt': connection.datetime.now(timezone.utc)}})
@@ -80,7 +84,7 @@ async def get_access(db: Any, mailbox: dict, *, parent_preflight=None, parent_al
         possible = True
         deadlines = await suppression.mutate_suppression(db, workspace, authorize)
         async with connection.httpx.AsyncClient(timeout=20) as client:
-            if (not app_secret.matches() or custody_stamp() != custody or not connection._control_allowed(workspace) or not connection._deadlines_live(deadlines)
+            if (not epoch.live() or not app_secret.matches() or custody_stamp() != custody or not connection._control_allowed(workspace) or not connection._deadlines_live(deadlines)
                     or parent_allowed and not parent_allowed()
                     or connection._utc(claimed['refresh_lease_until']) <= connection.datetime.now(timezone.utc)):
                 raise connection.MailboxUnavailable('Mailbox refresh authorization expired before transport')
@@ -100,6 +104,7 @@ async def get_access(db: Any, mailbox: dict, *, parent_preflight=None, parent_al
         now = connection.datetime.now(timezone.utc)
         updates = {**encrypted, 'token_expires_at': now + timedelta(seconds=max(60, int(data.get('expires_in') or 3600))), 'updated_at': now}
         async def install(current):
+            await positive(current, workspace, captured=epoch.captured)
             if parent_preflight: await parent_preflight(current)
             fenced = AuthorityDatabase(current.database, current.session, nonce) if isinstance(current, suppression.SuppressionDatabase) else current
             row = await fenced.outreach_mailboxes.find_one({**owned, 'status': 'active', 'refresh_state': 'possible'})
@@ -109,6 +114,7 @@ async def get_access(db: Any, mailbox: dict, *, parent_preflight=None, parent_al
             changed = await current.outreach_mailboxes.update_one({**owned, 'status': 'active', 'refresh_state': 'possible'},
                 {'$set': updates, '$unset': {'refresh_state': '', 'refresh_lease_nonce': '', 'refresh_lease_until': ''}})
             if changed.matched_count != 1: raise connection.MailboxUnavailable('Mailbox refresh owner changed')
+            epoch.assert_live()
         await suppression.mutate_suppression(db, workspace, install)
         finished = True
         return await prepared({**claimed, **updates, 'refresh_state': None})

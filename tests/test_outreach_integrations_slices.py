@@ -96,150 +96,52 @@ def test_format_slack_test_card():
 
 
 @pytest.mark.asyncio
-async def test_slack_fanout_and_delivery_end_to_end():
-    """Event outbox fans out to connected Slack integration and delivery engine delivers it."""
-    outbox_docs = []
-    deliveries = []
-    integrations = [{
-        "workspace_id": "ws_test",
-        "provider": "slack",
-        "status": "connected",
-        "access_token_enc": "enc_slack_url",
-        "metadata": {
-            "notify_on_replies": True,
-            "notify_on_accepts": True,
-        },
-    }]
-
-    mock_db = MagicMock()
-
-    # Outbox find_one_and_update
-    event_doc = {
-        "id": "evt_replied_01",
-        "workspace_id": "ws_test",
-        "type": "lead.replied",
-        "status": "pending",
-        "payload": {
-            "id": "evt_replied_01",
-            "type": "lead.replied",
-            "data": {"lead_id": "lead_123", "campaign_id": "camp_456", "channel": "linkedin"},
-        },
-    }
-
-    call_count = 0
-    async def mock_find_one_and_update_outbox(q, u, **kwargs):
-        nonlocal call_count
-        if call_count == 0:
-            call_count += 1
-            return event_doc
-        return None
-
-    mock_db.outreach_event_outbox.find_one_and_update = mock_find_one_and_update_outbox
-    mock_db.outreach_event_outbox.update_one = AsyncMock()
-
-    # Webhooks cursor returns empty list (no standard webhooks)
-    mock_cursor = MagicMock()
-    mock_cursor.to_list = AsyncMock(return_value=[])
-    mock_db.outreach_webhooks.find.return_value = mock_cursor
-
-    # Integrations find_one returns slack integration
-    async def mock_find_integration(q, **kwargs):
-        if q.get("provider") == "slack" and q.get("status") == "connected":
-            return integrations[0]
-        return None
-
-    mock_db.outreach_integrations.find_one = mock_find_integration
-    mock_db.outreach_integrations.update_one = AsyncMock()
-
-    # Deliveries insert
-    async def mock_insert_delivery(doc, **kwargs):
-        deliveries.append(doc)
-    mock_db.outreach_webhook_deliveries.insert_one = mock_insert_delivery
-
-    # 1. Fan-out
-    res = await scan_and_fanout_outbox(mock_db, batch_size=1)
-    assert len(deliveries) == 1
-    slack_delivery = deliveries[0]
-    assert slack_delivery["destination_id"] == "slack"
-    assert slack_delivery["destination_type"] == "slack"
-
-    # 2. Dispatch delivery via mock safe client
-    delivery_call_count = 0
-    async def mock_delivery_claim(q, u, **kwargs):
-        nonlocal delivery_call_count
-        if delivery_call_count == 0:
-            delivery_call_count += 1
-            return slack_delivery
-        return None
-
-    mock_db.outreach_webhook_deliveries.find_one_and_update = mock_delivery_claim
-    mock_db.outreach_webhook_deliveries.update_one = AsyncMock()
-
-    mock_client = AsyncMock()
-    mock_resp = MagicMock(status_code=200, text="ok")
-    mock_client.post = AsyncMock(return_value=mock_resp)
-
-    with patch("outreach.core.webhook_delivery.decrypt_secret", return_value="https://hooks.slack.com/services/T1/B2/token"):
-        dispatch_res = await dispatch_due_deliveries(mock_db, batch_size=1, safe_client=mock_client)
-
-    assert dispatch_res["delivered"] == 1
-    mock_client.post.assert_called_once()
-    posted_call = mock_client.post.call_args
-    assert posted_call[0][0] == "https://hooks.slack.com/services/T1/B2/token"
-    # Verify Block Kit was sent
+async def test_slack_fanout_and_delivery_end_to_end(monkeypatch):
+    """Slack fanout stores references; the current adapter sends bounded Block Kit."""
     import json
-    body_sent = json.loads(posted_call[1]["content"].decode("utf-8"))
-    assert "blocks" in body_sent
-    assert mock_db.outreach_integrations.update_one.called
+    import httpx
+    from tests.outreach_memory import Database
+    from utils.encryption import encrypt
+    from outreach.core.integration_delivery import IntegrationDelivery
+    db = Database(outreach_integrations=[{"workspace_id": "ws_test", "provider": "slack",
+        "status": "connected", "access_token_enc": encrypt("https://hooks.slack.com/services/T1/B2/token"),
+        "metadata": {"notify_on_replies": True}}])
+    event = {"id": "evt_replied_01", "workspace_id": "ws_test", "type": "lead.replied",
+        "payload": {"id": "evt_replied_01", "type": "lead.replied", "data": {"lead_id": "lead_123"}}}
+    db.outreach_event_outbox.find_one_and_update = AsyncMock(side_effect=[event, None])
+    assert (await scan_and_fanout_outbox(db, batch_size=1))["deliveries_created"] == 1
+    calls = []
+    def transport(request):
+        calls.append(request)
+        return httpx.Response(200)
+    monkeypatch.setattr("outreach.core.safe_transport.create_safe_client",
+        lambda **kwargs: httpx.AsyncClient(transport=httpx.MockTransport(transport)))
+    result = await IntegrationDelivery(db).dispatch_due()
+    assert result["delivered"] == 1 and len(calls) == 1
+    assert str(calls[0].url) == "https://hooks.slack.com/services/T1/B2/token"
+    assert "blocks" in json.loads(calls[0].content)
+    assert (await db.outreach_integrations.find_one({"workspace_id": "ws_test"}))["last_delivery_at"]
 
 
 # ── Slice 4: Automation Private Pilot (Zapier/Make REST Hooks) Tests ───────
 
 @pytest.mark.asyncio
 async def test_rest_hook_subscribe_and_unsubscribe():
-    """REST hook subscribe creates an active webhook with source='rest_hook' and unsubscribe removes it."""
+    """REST hooks save encrypted configuration and cancel known pending work on deletion."""
     from outreach.api.integrations import public_subscribe_hook, public_unsubscribe_hook, SubscribeRestHookRequest
-
-    webhooks_store = {}
-    mock_db = MagicMock()
-    mock_db.outreach_webhooks.count_documents = AsyncMock(return_value=0)
-
-    async def mock_insert_wh(doc):
-        webhooks_store[doc["id"]] = doc
-    mock_db.outreach_webhooks.insert_one = mock_insert_wh
-
-    async def mock_delete_wh(q):
-        hook_id = q.get("id")
-        if hook_id in webhooks_store:
-            del webhooks_store[hook_id]
-            res = MagicMock()
-            res.deleted_count = 1
-            return res
-        res = MagicMock()
-        res.deleted_count = 0
-        return res
-    mock_db.outreach_webhooks.delete_one = mock_delete_wh
-
-    req = SubscribeRestHookRequest(
-        event="lead.replied",
-        target_url="https://hooks.zapier.com/hooks/catch/12345/abcdef/",
-    )
-
-    auth = {"workspace_id": "ws_pilot_01", "scopes": ["leads:read"]}
-
-    with patch("outreach.api.integrations.validate_webhook_url", return_value=req.target_url), \
-         patch("outreach.api.integrations.encrypt_secret", return_value="enc_secret_mock"):
-        sub_resp = await public_subscribe_hook(req, auth=auth, db=mock_db)
-
-    assert "id" in sub_resp
-    assert sub_resp["event"] == "lead.replied"
-    assert sub_resp["id"] in webhooks_store
-    assert webhooks_store[sub_resp["id"]]["source"] == "rest_hook"
-
-    # Unsubscribe
-    unsub_resp = await public_unsubscribe_hook(sub_resp["id"], auth=auth, db=mock_db)
+    from tests.outreach_memory import Database
+    db = Database()
+    req = SubscribeRestHookRequest(event="lead.replied", target_url="https://hooks.zapier.com/hooks/catch/12345/abcdef/")
+    auth = {"workspace_id": "ws_pilot_01", "key_id": "key", "key_hash": "key-digest", "scopes": ["leads:read"]}
+    await db.outreach_api_keys.insert_one({"workspace_id": "ws_pilot_01", "id": "key", "key_hash": "key-digest", "scopes": ["leads:read"]})
+    sub_resp = await public_subscribe_hook(req, auth=auth, db=db)
+    row = await db.outreach_webhooks.find_one({"id": sub_resp["id"]})
+    assert sub_resp["event"] == "lead.replied" and row["source"] == "rest_hook"
+    assert row["target_url"] == req.target_url and row["credential_generation"]
+    assert row["secret_enc"] != row.get("secret")
+    unsub_resp = await public_unsubscribe_hook(sub_resp["id"], auth=auth, db=db)
     assert unsub_resp["status"] == "unsubscribed"
-    assert sub_resp["id"] not in webhooks_store
+    assert await db.outreach_webhooks.count_documents({}) == 0
 
 
 @pytest.mark.asyncio

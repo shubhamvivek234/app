@@ -10,7 +10,8 @@ from urllib.parse import unquote, urlsplit
 
 from outreach.models import ProxyConfig, ProxyStatus
 from outreach.core.paid_access import _utc
-from outreach.core.proxy_custody import seal_proxy_password
+from outreach.core.proxy_custody import policy, seal_proxy_password
+from outreach.core.proxy_identity import require_ip_binding, raw_options, restore_ip_allowed
 from outreach.core.credential_custody import PREFIX
 from outreach.core.session_custody import custody_mode
 from utils.ssrf_guard import is_safe_url
@@ -71,12 +72,17 @@ async def import_iproyal_proxy(
         "last_workspace_id": workspace_id, "provider_auto_renew_confirmed": False,
     }
     from outreach.core.suppression import mutate_suppression
+    captured_policy = policy()
     async def preflight(current):
         # Verify the workspace guard/transaction capability before any KMS call.
-        return None
+        if not await require_ip_binding(current, doc, workspace_id, claim=True):
+            raise ValueError("Physical IP is already assigned to another managed resource")
     await mutate_suppression(db, workspace_id, preflight)
     doc.update(await seal_proxy_password(password, doc, workspace_id))
     async def insert(current):
+        if captured_policy != policy():
+            raise ValueError("Proxy custody configuration changed")
+        await preflight(current)
         await current.outreach_proxy_inventory.insert_one({**doc, "workspace_id": workspace_id})
     await mutate_suppression(db, workspace_id, insert)
     return {
@@ -98,15 +104,38 @@ async def reserve_sender_proxy(
     *, now: datetime | None = None, reservation_job_id: str | None = None,
 ) -> ProxyConfig:
     """Atomically reserve one IP per sender; never reuse across customers."""
+    from outreach.core.suppression import mutate_suppression, SuppressionDatabase
+    from outreach.core.dispatch_authority import AuthorityDatabase
+    async def reserve(current):
+        authority = (AuthorityDatabase(current.database, current.session, 'managed-proxy-reservation')
+                     if isinstance(current, SuppressionDatabase) else current)
+        return await _reserve_sender_proxy(authority, workspace_id, sender_id, country_code,
+            now=now, reservation_job_id=reservation_job_id)
+    return await mutate_suppression(db, workspace_id, reserve)
+
+
+async def _reserve_sender_proxy(
+    db, workspace_id: str, sender_id: str, country_code: str,
+    *, now: datetime | None = None, reservation_job_id: str | None = None,
+) -> ProxyConfig:
     now = now or datetime.now(timezone.utc)
+    raw, options = raw_options(db)
     country_code = country_code.upper()
     existing = await db.outreach_proxy_leases.find_one({
         "workspace_id": workspace_id, "sender_id": sender_id,
     })
     if existing:
         inventory = await db.outreach_proxy_inventory.find_one({"_id": existing["_id"]})
+        if inventory and not await restore_ip_allowed(db, inventory.get('host')):
+            raise ManagedProxyUnavailable('Sender IP requires restore reconciliation. Contact support.')
         if inventory and not _compatible_inventory(inventory, workspace_id):
             raise ManagedProxyUnavailable("Sender IP custody or workspace changed. Contact support.")
+        if inventory and (inventory.get('provider') == 'webshare_plan' or str(existing['_id']).startswith('webshare:')):
+            from outreach.core.webshare_provisioning import webshare_basis_valid
+            from outreach.core.proxy_lifecycle_proof import valid_history
+            if (not webshare_basis_valid(inventory, workspace_id) or not await valid_history(db, inventory, workspace_id)
+                    or not await require_ip_binding(db, inventory, workspace_id)):
+                raise ManagedProxyUnavailable("Sender IP requires drained ownership review. Contact support.")
         if (inventory and _compatible_inventory(inventory, workspace_id) and inventory.get("status") == "available"
                 and inventory.get("country_code") == country_code
                 and _utc(inventory.get("expires_at"))
@@ -115,18 +144,18 @@ async def reserve_sender_proxy(
         if inventory and _utc(inventory.get("expires_at")) and _utc(inventory["expires_at"]) <= now:
             # The old provider term is gone. Preserve an audit entry and only
             # then allow this same sender to receive a new IP at reconnection.
-            await db.outreach_proxy_lease_history.insert_one({
+            await raw.outreach_proxy_lease_history.insert_one({
                 **existing, "retired_at": now, "reason": "provider_term_expired",
-            })
-            await db.outreach_proxy_leases.delete_one({
+            }, **options)
+            await raw.outreach_proxy_leases.delete_one({
                 "_id": existing["_id"], "workspace_id": workspace_id,
                 "sender_id": sender_id,
-            })
+            }, **options)
         else:
             raise ManagedProxyUnavailable("Sender IP is unavailable or its country changed. Contact support.")
 
     candidates = await db.outreach_proxy_inventory.find({
-        "provider": "iproyal_static", "country_code": country_code,
+        "provider": {"$in": ["iproyal_static", "webshare_plan"]}, "country_code": country_code,
         "status": "available", "expires_at": {"$gt": now},
         "last_workspace_id": workspace_id,
     }).to_list(length=100)
@@ -134,7 +163,18 @@ async def reserve_sender_proxy(
         expiry = _utc(candidate.get("expires_at"))
         if not expiry or expiry <= now or not _compatible_inventory(candidate, workspace_id):
             continue
+        if not await restore_ip_allowed(db, candidate.get('host')):
+            continue
+        if candidate.get('provider') == 'webshare_plan':
+            from outreach.core.webshare_provisioning import managed_webshare_valid
+            if not await managed_webshare_valid(db, candidate, workspace_id, now=now):
+                continue
         proxy_id = candidate["_id"]
+        # Inventory remains available while leased. Skip existing leases before
+        # insertion: duplicate-key errors abort a Mongo transaction, so they
+        # cannot serve as ordinary loop control for the next paid sender.
+        if await db.outreach_proxy_leases.find_one({'_id': proxy_id}):
+            continue
         # Sticky ownership is written first. Even if connection fails, this
         # IP cannot later be assigned to an unrelated customer.
         ownership = await db.outreach_proxy_inventory.update_one(
@@ -142,17 +182,19 @@ async def reserve_sender_proxy(
              "last_workspace_id": workspace_id},
             {"$set": {"last_workspace_id": workspace_id}},
         )
-        if not ownership.modified_count and candidate.get("last_workspace_id") != workspace_id:
+        if not ownership.matched_count:
             continue
         try:
-            await db.outreach_proxy_leases.insert_one({
+            await raw.outreach_proxy_leases.insert_one({
                 "_id": proxy_id, "workspace_id": workspace_id,
                 "sender_id": sender_id, "country_code": country_code,
-                "provider": "iproyal_static", "created_at": now,
+                "provider": candidate['provider'], "created_at": now,
                 **({"reservation_job_id": reservation_job_id} if reservation_job_id else {}),
-            })
+            }, **options)
             return _proxy_from_inventory(candidate)
         except DuplicateKeyError:
+            if options:
+                raise  # Retry the aborted transaction as a complete group.
             continue
     raise ManagedProxyUnavailable(
         f"No available dedicated ISP proxy in {country_code}. Request capacity; no country substitution is made."

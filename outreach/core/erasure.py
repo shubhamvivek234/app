@@ -34,14 +34,14 @@ outreach_content_approvals outreach_do_not_contact outreach_email_discoveries
 outreach_email_inbound_events outreach_email_operations outreach_email_suppressions
 outreach_engage_contacts outreach_engage_drafts outreach_engage_lists outreach_engage_posts
 outreach_entitlements outreach_event_outbox outreach_execution_permissions
-outreach_external_mappings outreach_health outreach_hunter_credentials outreach_import_jobs
+outreach_execution_epochs outreach_restore_proxy_exclusions outreach_restore_invoices outreach_restore_exclusions outreach_restore_suppressions outreach_restore_reply_stops outreach_reply_stops outreach_external_mappings outreach_health outreach_health_controls outreach_hunter_credentials outreach_import_jobs
 outreach_inbox_jobs outreach_inbox_reminders outreach_inbox_snippets outreach_inbox_tags
-outreach_inbox_threads outreach_integrations outreach_intents outreach_lead_notes outreach_leads
+outreach_inbox_threads outreach_integrations outreach_integration_reviews outreach_integration_controls outreach_intents outreach_lead_notes outreach_leads
 outreach_mailbox_connection_jobs outreach_mailbox_oauth_states outreach_mailboxes outreach_mailbox_exchange_budgets
 outreach_mailbox_sync_jobs outreach_mailbox_sync_reads outreach_mailbox_read_budgets
 outreach_manual_actions outreach_payment_receipts outreach_physical_requests
 outreach_provider_budgets outreach_proxy_inventory outreach_proxy_lease_history
-outreach_proxy_leases outreach_request_budgets outreach_sender_execution outreach_sender_slots
+outreach_proxy_leases outreach_proxy_lifecycle_reviews outreach_proxy_adoptions outreach_request_budgets outreach_sender_execution outreach_sender_slots
 outreach_sequence_jobs outreach_sequence_versions outreach_sequences outreach_swipe_files
 outreach_tasks outreach_templates outreach_voice_artifacts outreach_voices
 outreach_voice_preparation_jobs outreach_voice_preparation_budgets outreach_voice_studio_jobs outreach_voice_studio_budgets outreach_voice_source_migrations outreach_voice_vendor_reads outreach_credential_migrations
@@ -184,6 +184,8 @@ class OutreachErasure:
         await current.outreach_sender_execution.update_many(scope, {"$set": {
             "permission.latched": True, "permission.expires_at": now, "permission.stop_reason": "erasure_requested"},
             "$inc": {"permission_revision": 1}})
+        await current.outreach_health_controls.update_many({**scope, 'status': 'armed'}, {'$set': {
+            'status': 'stopped', 'stop_reason': 'erasure_requested', 'stopped_at': now}})
         scrub = {
             "outreach_accounts": ("session_cookie_enc", "encrypted_session_cookie", "jsession_id", "li_a_enc", "li_at_enc", "jsession_id_enc", "proxy", "proxy_config"),
             "outreach_connection_jobs": ("li_at_enc", "jsession_id_enc", "li_a_enc", "password_enc", "created_at"),
@@ -259,6 +261,43 @@ class OutreachErasure:
             kind = 'unresolved_submission' if row.get('status') in {'possible', 'read_interrupted'} else 'voice_vendor_evidence'
         elif name == 'outreach_voice_studio_jobs' and row.get('receipt'):
             kind = 'submission_receipt'
+        elif name == 'outreach_webhook_deliveries':
+            if row.get('status') in {'possible', 'review_required', 'held_received'}:
+                kind = 'unresolved_submission'
+            elif row.get('receipt'):
+                kind = 'submission_receipt'
+        elif name == 'outreach_integration_reviews':
+            kind = 'unresolved_submission' if row.get('outcome_at_review') == 'unknown' else 'integration_review'
+        elif name == 'outreach_integration_controls':
+            kind = 'integration_resource_stop'
+        elif name == 'outreach_execution_epochs':
+            kind = 'restore_epoch_provenance'
+        elif name == 'outreach_restore_exclusions':
+            kind = 'restore_exclusion_provenance'
+        elif name == 'outreach_restore_invoices':
+            kind = 'restore_invoice_provenance'
+        elif name == 'outreach_restore_proxy_exclusions':
+            kind = 'restore_proxy_exclusion_provenance'
+        elif name == 'outreach_restore_reply_stops':
+            kind = 'restore_reply_stop_provenance'
+        elif name == 'outreach_restore_suppressions':
+            kind = 'restore_suppression_provenance'
+        elif name == 'outreach_health_controls':
+            kind = 'execution_health_control'
+        elif name == 'outreach_credential_migrations' and row.get('kind') == 'integration':
+            kind = 'integration_custody_migration'
+        elif name == 'outreach_credential_migrations' and row.get('kind') == 'proxy':
+            kind = 'proxy_custody_migration'
+        elif name == 'outreach_credential_migrations' and row.get('kind') == 'voice_artifact':
+            kind = 'voice_artifact_custody_migration'
+        elif name == 'outreach_credential_migrations' and row.get('kind') == 'voice_studio_result':
+            kind = 'voice_studio_result_custody_migration'
+        elif name == 'outreach_credential_migrations' and row.get('kind') == 'voice_studio_input_stop':
+            kind = 'voice_studio_input_stop'
+        elif name == 'outreach_proxy_lifecycle_reviews':
+            kind = 'proxy_lifecycle_review'
+        elif name == 'outreach_proxy_adoptions':
+            kind = 'proxy_legacy_adoption'
         elif name == 'outreach_voice_studio_jobs' and (row.get('review') or {}).get('outcome_at_review') == 'unknown':
             kind = 'unresolved_submission'
         elif name in LEDGERS:
@@ -281,6 +320,73 @@ class OutreachErasure:
             "state": "held", "retained_at": datetime.now(timezone.utc)}
         if kind == "provider_term":
             hold.update({"asset_id": row["_id"], "expires_at": _utc(row.get("expires_at"))})
+        if kind == 'restore_epoch_provenance':
+            hold.update({key: row.get(key) for key in ('execution_epoch', 'before_digest', 'after_digest',
+                'evidence_digest', 'review_digest', 'prepared_at', 'version')})
+            hold.update({'operator_digest': canonical_hash(row.get('operator')), 'activation_allowed': False})
+        if kind == 'restore_invoice_provenance':
+            hold.update({key: row.get(key) for key in ('execution_epoch', 'source_digest', 'evidence_digest',
+                'review_digest', 'facts_digest', 'invoice_count', 'operator_digest', 'applied_at', 'version')})
+            hold.update({'activation_allowed': False, 'payment_restored': False})
+        if kind == 'restore_proxy_exclusion_provenance':
+            hold.update({key: row.get(key) for key in ('execution_epoch', 'source_digest', 'evidence_digest',
+                'review_digest', 'facts_digest', 'ip_count', 'operator_digest', 'applied_at', 'version')})
+            hold.update({'activation_allowed': False, 'assets_restored': False})
+        if kind == 'restore_exclusion_provenance':
+            hold.update({key: row.get(key) for key in ('execution_epoch', 'source_digest', 'evidence_digest',
+                'review_digest', 'identity_set_digest', 'facts_digest', 'identity_count', 'operator_digest', 'applied_at', 'version')})
+            hold.update({'activation_allowed': False, 'purged': False})
+        if kind in {'restore_suppression_provenance', 'restore_reply_stop_provenance'}:
+            hold.update({key: row.get(key) for key in ('execution_epoch', 'source_digest', 'evidence_digest',
+                'review_digest', 'facts_digest', 'fact_count', 'operator_digest', 'applied_at', 'version')})
+            hold.update({'activation_allowed': False, 'reply_history_restored': False})
+        if kind == 'execution_health_control':
+            hold.update({key: row.get(key) for key in ('provenance', 'operator_digest', 'evidence_digest',
+                'arm_digest', 'policy_digest', 'created_at', 'expires_at', 'stopped_at', 'stop_reason',
+                'stop_operator_digest', 'stop_evidence_digest', 'renewals')})
+            hold.update({'sender_digest': canonical_hash(row.get('sender_id')),
+                'generation_digest': canonical_hash(row.get('generation')), 'outcome_state': row.get('status'),
+                'activation_allowed': False})
+        if kind == 'proxy_legacy_adoption':
+            hold.update({key: row.get(key) for key in ('provenance', 'before_digest', 'after_digest',
+                'source_digest', 'adopted_basis_digest', 'operator_digest', 'evidence_digest',
+                'original_evidence_digest', 'original_order_digest', 'original_operator_digest',
+                'original_verified_at', 'provider_term_expires_at', 'target_policy_digest',
+                'generation_digest', 'generation_created', 'at')})
+            hold.update({'asset_id_digest': canonical_hash(row.get('proxy_id')),
+                'operation_kind': 'proxy_legacy_adoption', 'activation_allowed': False})
+        if kind == 'proxy_custody_migration':
+            hold.update({key: row.get(key) for key in ('provenance', 'before_digest', 'after_digest',
+                'target_policy_digest', 'generation_digest', 'original_basis_digest', 'at', 'evidence_digest')})
+            hold.update({'operator_digest': row.get('operator_digest') or canonical_hash(row.get('operator')),
+                'asset_id_digest': canonical_hash(row.get('proxy_id')), 'operation_kind': 'proxy_custody_migration',
+                'activation_allowed': False})
+        if kind == 'voice_artifact_custody_migration':
+            hold.update({key: row.get(key) for key in ('provenance', 'before_digest', 'after_digest',
+                'original_record_digest', 'original_job_digest', 'audio_digest', 'generation_digest',
+                'target_policy_digest', 'operator_digest', 'evidence_digest', 'prepared_at', 'expires_at', 'at')})
+            hold.update({'artifact_id_digest': canonical_hash(row.get('artifact_id')),
+                'operation_kind': 'voice_artifact_custody_migration', 'activation_allowed': False})
+        if kind == 'voice_studio_result_custody_migration':
+            hold.update({key: row.get(key) for key in ('provenance', 'before_digest', 'after_digest',
+                'original_job_digest', 'audio_digest', 'generation_digest', 'target_policy_digest',
+                'operator_digest', 'evidence_digest', 'received_at', 'expires_at', 'at')})
+            hold.update({'job_id_digest': canonical_hash(row.get('job_id')),
+                'operation_kind': 'voice_studio_result_custody_migration', 'activation_allowed': False})
+        if kind == 'voice_studio_input_stop':
+            hold.update({key: row.get(key) for key in ('provenance', 'before_digest', 'after_digest',
+                'original_job_digest', 'original_profile_digest', 'original_status', 'operation',
+                'owner_digest', 'input_digest', 'consent_digest', 'policy_digest', 'operator_digest',
+                'evidence_digest', 'at')})
+            hold.update({'job_id_digest': canonical_hash(row.get('job_id')),
+                'operation_kind': 'voice_studio_input_stop', 'activation_allowed': False})
+        if kind == 'proxy_lifecycle_review':
+            hold.update({key: row.get(key) for key in ('provenance', 'operation', 'revision',
+                'root_import_basis_digest', 'after_basis_digest', 'previous_review_digest', 'before_digest',
+                'after_digest', 'target_policy_digest', 'operator_digest', 'evidence_digest',
+                'provider_reference_digest', 'generation_digest', 'before_expires_at', 'after_expires_at', 'at')})
+            hold.update({'asset_id_digest': canonical_hash(row.get('proxy_id')),
+                'operation_kind': 'proxy_lifecycle_review', 'activation_allowed': False})
         if kind == 'voice_source_continuity':
             hold.update({key: row.get(key) for key in ('provenance', 'before_source', 'after_source',
                 'root_clone_digest', 'clone_source', 'remote_digest', 'review_digest', 'after_digest', 'at')})
@@ -296,6 +402,21 @@ class OutreachErasure:
                 'received_at': (row.get('receipt') or {}).get('received_at'), 'activation_allowed': False,
                 'release_digest': canonical_hash(release) if release else None,
                 'release_provenance': release.get('provenance'), 'released_at': release.get('at')})
+        if name == 'outreach_webhook_deliveries':
+            hold.update({'operation_kind': 'integration_delivery', 'outcome_state': row.get('status'),
+                'destination_digest': canonical_hash([row.get('destination_type'), row.get('destination_id')]),
+                'credential_digest': row.get('credential_digest') or canonical_hash([row.get('secret_enc'), row.get('target_url_enc')]),
+                'protocol_version': row.get('custody_protocol_version'), 'receipt_digest': row.get('receipt_digest'),
+                'possible_at': row.get('possible_at'), 'received_at': (row.get('receipt') or {}).get('received_at'),
+                'activation_allowed': False})
+        if name in {'outreach_integration_reviews', 'outreach_integration_controls', 'outreach_credential_migrations'} and kind in {
+                'unresolved_submission', 'integration_review', 'integration_resource_stop', 'integration_custody_migration'}:
+            hold.update({key: row.get(key) for key in ('provenance', 'outcome_at_review', 'original_status',
+                'original_owner_digest', 'credential_digest', 'receipt_digest', 'possible_at', 'received_at',
+                'inspection_digest', 'before_digest', 'after_digest', 'target_policy_digest', 'generation_digest', 'at')})
+            hold.update({'operation_kind': 'integration_review' if name == 'outreach_integration_reviews'
+                else 'integration_resource_stop' if name == 'outreach_integration_controls'
+                else 'integration_custody_migration', 'activation_allowed': False})
         if name in LEDGERS:
             status = row.get("status")
             outcome = (row.get("provider_outcome") or {}).get("status")

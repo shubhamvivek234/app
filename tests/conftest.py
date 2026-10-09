@@ -11,6 +11,7 @@ import pytest
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "atomic_dispatch: production transaction authorization over a disposable replica set")
+    config.addinivalue_line("markers", "restore_epoch: exercise actual restore admission with unit database fakes")
 
 
 @pytest.fixture(autouse=True)
@@ -47,6 +48,14 @@ def legacy_dispatch_fixtures(request, monkeypatch):
     # keep testing their historical behavior without an invented production fallback.
     from outreach.core import erasure
     monkeypatch.setattr(erasure, "workspace_is_open", AsyncMock(return_value=True))
+    if not request.node.get_closest_marker("restore_epoch"):
+        from outreach.core import restore_epoch
+        # Historical fakes isolate the new collection; real DB/restore tests
+        # retain the production checks, including sticky downgrade denial.
+        async def legacy_epoch(*args, **kwargs):
+            return restore_epoch.EpochProof(('false', ''))
+        monkeypatch.setattr(restore_epoch, 'require', legacy_epoch)
+        monkeypatch.setattr(restore_epoch, 'positive', legacy_epoch)
 
 
 @pytest.fixture
@@ -79,9 +88,11 @@ def outreach_paid_gate_stub(monkeypatch):
     monkeypatch.setattr("outreach.tasks.sequence_executor._approved_content", AsyncMock(return_value=None))
     async def legacy_voice_clip(db, binding):
         import hashlib
+        from types import SimpleNamespace
         from outreach.core.voice_cloner import generate_mock_voice_wav
         audio = generate_mock_voice_wav()
-        return {"_id": "legacy-voice-artifact", "audio_digest": hashlib.sha256(audio).hexdigest(), "generation_id": "legacy-test"}, audio
+        return SimpleNamespace(document={"_id": "legacy-voice-artifact", "audio_digest": hashlib.sha256(audio).hexdigest(),
+                                        "generation_id": "legacy-test"}, audio=audio)
     monkeypatch.setattr("outreach.tasks.sequence_executor._load_voice_clip", legacy_voice_clip)
     from outreach.tasks import sequence_executor
     advance = sequence_executor._advance_lead

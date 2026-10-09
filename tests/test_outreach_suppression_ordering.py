@@ -127,13 +127,14 @@ async def test_writer_waits_when_dispatch_already_holds_workspace_guard(ready_db
 async def test_suppression_failure_rolls_back_both_record_and_guard(ready_db):
     from outreach.core.suppression import mutate_suppression
     db, _ = ready_db
+    original_guard = await db.outreach_suppression_guards.find_one({"workspace_id": "w"})
     async def fail(current):
         await current.outreach_email_suppressions.insert_one({"workspace_id": "w", "email": "lead@example.com"})
         raise RuntimeError("test-only persistence interruption")
     with pytest.raises(RuntimeError):
         await mutate_suppression(db, "w", fail)
     assert not await db.outreach_email_suppressions.find_one({"workspace_id": "w"})
-    assert (await db.outreach_suppression_guards.find_one({"workspace_id": "w"}))["revision"] == 0
+    assert await db.outreach_suppression_guards.find_one({"workspace_id": "w"}) == original_guard
 
 
 async def test_other_workspace_suppression_cannot_block_current_recipient(ready_db):
@@ -236,6 +237,8 @@ async def test_email_reply_rollback_keeps_event_retryable_and_no_partial_stop(re
 async def test_concurrent_first_writers_share_one_stable_guard(ready_db):
     from outreach.core.email_finder import suppress_email
     db, _ = ready_db
+    # The permission fixture now creates a guard; remove it to exercise first-writer creation.
+    await db.outreach_suppression_guards.delete_one({"workspace_id": "w"})
     assert all(await asyncio.gather(*(suppress_email(db, workspace_id="w", email=f"person{n}@example.com", reason="test") for n in range(12))))
     assert await db.outreach_suppression_guards.count_documents({"workspace_id": "w"}) == 1
     assert (await db.outreach_suppression_guards.find_one({"workspace_id": "w"}))["revision"] == 12

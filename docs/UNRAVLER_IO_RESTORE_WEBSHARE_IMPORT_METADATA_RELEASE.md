@@ -1,0 +1,23 @@
+# Unravler.io v2.47 — stopped Webshare import metadata review
+
+Date: 2026-10-10. Local, uncommitted and undeployed.
+
+## Scope and limits
+
+The private restore inventory now checks selected retained Webshare import metadata. Provider plan/resource/order references must be bounded,nonempty and free of surrounding whitespace/control characters; plan/resource IDs must exclude colons and the asset ID must match webshare:plan:resource. Current,sticky and custody workspace must agree. Managed version must be integer1 (not boolean),dedicated_isp_confirmed exactly true,reviewer and credential-generation references valid,retained evidence/import-basis digests hex-shaped. Native verified_at must not be future,expiry must follow verification and remain future at inspection. Missing,malformed or contradictory metadata reports webshare_import_metadata_review_required; matching selected fields reports local_webshare_import_metadata_consistent.
+
+A consistent finding is not the production webshare_basis_valid result. The inventory does not select credential-bearing username/ciphertext/transport fields or recompute the original full import basis. A valid-looking stored digest is not proof that it matches original material. No original fact,invoice,payment,provider inventory,dedicated status or remote paid term is authenticated. No vendor ownership,decryptability,provider availability,whole history,source completeness or use authorization is established. Import metadata,adoption,lifecycle,lease and global binding findings remain independent; matching one never satisfies the others or activates anything.
+
+New projections bind provider_plan_id,provider_resource_id,provider_order_id,custody_workspace_id,managed_webshare_version,dedicated_isp_confirmed,verified_by,verified_at and evidence_digest. Nine selected collections remain,each limited to100 rows,with65,536 serialized reviewed metadata bytes across the whole report. These after-read limits are not wire/memory bounds. Expanded projection changes prior digest scope. Same matching prepared stopped epoch,five flags off,asserted all-writer/cache drain,guard/snapshot/majority session and late policy checks remain. Existing guard/root/journal fence counters may advance; domain resources,leases,credentials,financial/adoption/lifecycle receipts,reservations,held owner/token and physical evidence remain intact.
+
+No credentials are opened and no provider is contacted. Output remains aggregate findings/counts plus private linkable snapshot digest,without raw provider/resource/reviewer/IP/invoice/credential material. Credentials and unrelated fields remain excluded from digest changes; selected evidence marker changes invalidate the digest. Every result keeps activation_allowed/completeness_verified/provider_ownership_verified false. No new collection,schema,index,journal,apply command,grant,activation,replay,refund or provider action.
+
+## Verification
+
+126 focused checks pass(91 unit/CLI+35 native Mongo)in23.10s,18 new cases(13unit+5native);99%combined coverage(core99%,CLI97%). Eleven initial red unit cases preceded implementation. Added cases cover resource/ID mismatch,malformed plan,boolean version,foreign custody/sticky scope,nonboolean dedicated marker,malformed evidence/reviewer,future review and invalid term. Five native Mongo cases cover match,changed resource,custody,missing verification and expired term with default naive-BSON millisecond dates,exact original resource/physical evidence preservation,secret-only digest stability and changed evidence digest binding. Final independent Python review approves;91 independent unit/CLI checks pass. Its colon-in-plan/resource-ID finding was fixed with two regressions; no remaining material finding. Compile/scoped Bandit/whitespace pass. Final restore suite:607 passed,2 opt-in physical-backup drills skipped,one existing warning in125.19s. No fresh full-backend/frontend/physical-backup result is claimed.
+
+## Remaining work
+
+Authenticated original import/provider/payment facts and source completeness,unproven replies,explicit new-epoch activation design/drills and actual deployment/IAM/kernel egress/pilot evidence remain separate. All work is local: no commit,push,deploy,production source/config/flags/grants,real credential opening,AWS/provider call or purchase.
+
+Owned replica PID13131,matching owner manifests/private storage removed after confirming only admin/config/local databases remained;zero temporary databases,27028/27029/6389 closed,no Redis,user Mongo1735 preserved.28 earlier source/test/cache fingerprints unchanged;31 final fingerprints match. Three specs/runbook/report match Desktop copies,161links/46release reports/eight private backups verified. Session memory updated last.
