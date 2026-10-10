@@ -15,7 +15,7 @@ kombu==5.3.7
 
 # Auth
 firebase-admin==7.1.0
-PyJWT==2.14.0
+PyJWT==2.15.1
 pyotp==2.9.0              # Phase 6.5 — TOTP MFA
 
 # Security / Encryption
