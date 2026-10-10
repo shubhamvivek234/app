@@ -18,6 +18,14 @@ The older `81f1677` release includes four frontend integration-screen/delivery-f
 
 GitHub CLI initially selected an incompatible `/usr/local/bin/git`. Configuring the credential helper with `/usr/bin` first in the command's PATH resolved that tool invocation, without replacing the older executable or changing the user's shell configuration. Official GitHub CLI 2.102.0 is installed at `/opt/homebrew/bin/gh`; its Mac download checksum was verified after Homebrew could not supply a bottle for the preview OS.
 
+### Automated-check observations after the push
+
+GitHub successfully received the release and the documentation follow-up `cfe7bc3`. This synchronization is not a green-CI certification. For application-equivalent commit `12f0315`, the frontend workflow stopped during dependency installation: `npm ci` reported that package.json and package-lock.json disagree, with motion/framer-motion/motion-dom 13.5.1 and motion-utils 13.5.0 missing from the lock. The production build step did not run. [Frontend job](https://github.com/shubhamvivek234/app/actions/runs/38044167085/job/114190220097).
+
+Security workflow checks also reported failures. SAST annotations include a Git process exit 128; TruffleHog reports identical BASE and HEAD and therefore no scan. NPM/Python dependency audits and Trivy also failed; their causes have not been established by this synchronization check. Backend tests were still running at observation. Failed scans do not establish a clean security result. [Security workflow](https://github.com/shubhamvivek234/app/actions/runs/38044167066).
+
+The `12f0315` Vercel `app` deployment subsequently reported success; `app-fgv2` remained pending at the latest observation. The documentation follow-up triggered its own automatic deployment statuses. No completed `app-fgv2` deployment or green combined release is claimed. Application or workflow repairs were not made during this authentication/push step.
+
 ## Build and startup
 
 The existing production Compose configuration rebuilt API, worker, media worker, video worker, beat and MCP successfully. Previous images were retained under service-specific `rollback-81f1677-v254` tags.
