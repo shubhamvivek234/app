@@ -13,6 +13,7 @@ if not os.environ.get("ENCRYPTION_KEY"):
 
 import pytest
 from fastapi import HTTPException
+from tests.outreach_memory import matches
 
 from outreach.api.leads import (
     LeadFinderPreviewRequest,
@@ -94,17 +95,7 @@ class MockCollection:
 
     async def find_one(self, query=None, *args, **kwargs):
         for item in self.items:
-            match = True
-            for k, v in (query or {}).items():
-                if k == "$or":
-                    if not any(item.get(sub_k) == sub_v for cond in v for sub_k, sub_v in cond.items()):
-                        match = False
-                elif isinstance(v, dict) and "$ne" in v:
-                    if item.get(k) == v["$ne"]:
-                        match = False
-                elif item.get(k) != v:
-                    match = False
-            if match:
+            if matches(item, query or {}):
                 return dict(item)
         return None
 
@@ -118,14 +109,7 @@ class MockCollection:
 
     async def update_one(self, query, update, upsert=False):
         for item in self.items:
-            match = True
-            for k, v in (query or {}).items():
-                if k == "$or":
-                    if not any(all(item.get(sub_k) == sub_v for sub_k, sub_v in cond.items()) for cond in v):
-                        match = False
-                elif item.get(k) != v:
-                    match = False
-            if match:
+            if matches(item, query or {}):
                 if "$set" in update:
                     item.update(update["$set"])
                 if "$unset" in update:
