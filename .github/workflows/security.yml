@@ -19,9 +19,7 @@ jobs:
         uses: trufflesecurity/trufflehog@main
         with:
           path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
-          extra_args: --debug --only-verified
+          extra_args: --only-verified
 
   python-audit:
     name: Python Dependency Audit
@@ -33,8 +31,8 @@ jobs:
           python-version: "3.11"
       - name: Install pip-audit
         run: pip install pip-audit
-      - name: Run pip-audit (block on CRITICAL)
-        run: pip-audit -r requirements.txt --severity CRITICAL --fail-on-vulnerability
+      - name: Run pip-audit (block on known vulnerabilities)
+        run: pip-audit -r requirements.txt
 
   npm-audit:
     name: NPM Dependency Audit
