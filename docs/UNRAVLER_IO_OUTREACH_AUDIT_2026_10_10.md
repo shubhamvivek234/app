@@ -10,7 +10,7 @@ This review found nine concrete defect groups, including a workspace authorizati
 
 The deployed application remains a gated pilot. Deployment health, passing unit tests and the presence of recovery modules do not establish live outreach readiness or complete disaster recovery.
 
-Follow-up, 11 October 2026: **F1 is fixed locally in v2.55**, including verified workspace context, scalar tenant scope and subsidiary importer writes. See the [repair and verification report](/Users/shubham/Documents/Workspace/SocialEntangler/app/docs/UNRAVLER_IO_LEAD_WORKSPACE_ISOLATION_RELEASE.md). It is not deployed. F2–F9 and the operational recommendations remain pending. The findings and read-only evidence below describe the audited baseline, before this repair.
+Follow-up, 11 October 2026: **F1 is fixed and deployed in v2.55 at `b85b2df`**, including verified workspace context, scalar tenant scope and subsidiary importer writes. See the [repair and verification report](/Users/shubham/Documents/Workspace/SocialEntangler/app/docs/UNRAVLER_IO_LEAD_WORKSPACE_ISOLATION_RELEASE.md). The separate `648efd1` parity-fixture correction changes tests only. Production health/source checks pass; backend/security CI is still red. F2–F9 and the operational recommendations remain pending. The findings and read-only evidence below describe the audited baseline, before this repair.
 
 ## Scope and evidence limits
 
