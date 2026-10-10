@@ -8,7 +8,15 @@ The commit contains the three offline restore helpers, 95 focused tests, correct
 
 All 95 focused checks passed again immediately before commit in 1.49 seconds, with one existing multipart deprecation warning. Unrelated worktrees, coverage data and wedding artifacts were excluded from the commit.
 
-GitHub pushes failed on both the local computer and production server because usable authentication was unavailable. GitHub `main` remained at `04ca28b5d1dd7bd213ea67e951970e19fd93bdf3`; neither the earlier v2.23–v2.50 commit nor this release is confirmed pushed. The deployment used a verified Git bundle over the existing SSH connection to the established EC2 checkout `/opt/socialentagler`, with a fast-forward-only update to the exact application commit. No frontend files changed and no frontend deployment is claimed.
+At backend deployment time, GitHub pushes failed on both the local computer and production server because usable authentication was unavailable. GitHub `main` was still at `04ca28b5d1dd7bd213ea67e951970e19fd93bdf3`; the earlier v2.23–v2.50 commit and this release had not been pushed then. The deployment used a verified Git bundle over the existing SSH connection to the established EC2 checkout `/opt/socialentagler`, with a fast-forward-only update to the exact application commit. The v2.54 helper commit itself contains no frontend changes; frontend deployment was not part of that SSH operation.
+
+## GitHub synchronization after sign-in
+
+After the user signed in, GitHub CLI verified the active `shubhamvivek234` account using macOS keyring storage. All three pending commits (`81f1677`, `ccf5819`, `12f0315`) were pushed successfully to `origin/main`, and a separate remote-ref read confirmed `12f0315cf11df54bb225040902c907f61be7a8db`. Authentication is no longer blocking local pushes.
+
+The older `81f1677` release includes four frontend integration-screen/delivery-formatting source/test files; those earlier changes are included in this synchronization. GitHub reported automatic Vercel deployments for both `app` and `app-fgv2` as pending at the synchronization check. That observed status does not confirm a completed frontend deployment. The follow-up synchronization record changes documentation only.
+
+GitHub CLI initially selected an incompatible `/usr/local/bin/git`. Configuring the credential helper with `/usr/bin` first in the command's PATH resolved that tool invocation, without replacing the older executable or changing the user's shell configuration. Official GitHub CLI 2.102.0 is installed at `/opt/homebrew/bin/gh`; its Mac download checksum was verified after Homebrew could not supply a bottle for the preview OS.
 
 ## Build and startup
 
