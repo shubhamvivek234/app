@@ -1,7 +1,7 @@
 # Unravler.io — User Lifecycle and IP Provisioning
-Version: 2.54.0 | Updated: 2026-10-10 | Status: Corrected baseline and implementation contract
+Version: 2.55.0 | Updated: 2026-10-11 | Status: Corrected baseline and implementation contract
 
-Current verified scope: v2.50 stopped inventory plus corrected v2.51–v2.54 offline metadata/signature/input validators. Authenticated external-source reconciliation, completeness, actual transactional activation, reply recovery and operational/live verification remain pending; offline helper success cannot authorize restart.
+Current verified scope: v2.50 stopped inventory plus corrected v2.51–v2.54 offline metadata/signature/input validators. Local v2.55 repairs customer-facing lead workspace isolation; it is not deployed. Authenticated external-source reconciliation, completeness, actual transactional activation, reply recovery and operational/live verification remain pending; offline helper success cannot authorize restart.
 
 ## Evidence and scope
 This specification covers LinkedIn outreach. Social publishing and Smart Bio belong to the wider Unravler product and have separate integration permissions.
@@ -566,3 +566,9 @@ Reverification found and corrected self-comparison falsely claiming completeness
 ## Deployment verification — 2026-10-10
 
 Application release `e506747cc25f2dd400250c7a8af0b60037a449a3` is pushed and verified on EC2 and both Vercel production projects. The frontend build and 99 outreach frontend, 39 authentication/account and 95 offline-helper checks pass. API/MCP are healthy, all three workers answer ping and beat runs; production configuration and rollout flags are unchanged, including disabled live outreach actions and the pre-existing enabled integration flag. The password-reset readiness warning and wider security findings remain, and the full backend CI suite was still running at inspection. This deployment does not complete the authenticated recovery/activation, remaining migrations or real pilot work described above. Exact rollout evidence, failed security checks and domain observations are in the [deployment report](UNRAVLER_IO_V2_54_DEPLOYMENT.md).
+
+## v2.55 — local lead workspace-isolation repair (11 October 2026)
+
+Audit F1 is implemented locally. All 22 lead routes use the workspace context returned by the role dependency and check deletion admission on that same context. Lead/campaign/import-job access requires exact scalar workspace scope; creator identity, missing/null scope and array aliases grant no access. Related activity reads, staged edits, job cancellation and campaign counters are scoped, including the common CSV/URL importer counter. Staged commit verifies its workspace campaign before modifying leads. Proven existing personal workspaces remain supported; ambiguous legacy records are retained without automatic adoption or migration.
+
+Fresh verification: 349 selected backend checks, including 74 new offline route/scope cases, plus 14 distinct native loopback Mongo cases; independent code/security review passes. Changed-statement coverage is 57/58 (98.3%), with 100% statement/branch coverage for the new scope helper. Compilation, scoped medium/high Bandit and whitespace checks pass. Native checks prove query/route isolation, not transactional membership revocation or live outreach. No production census, schema/index migration, frontend change, commit, deployment, flag/grant or real provider/AWS action is included. F2–F9 and the recovery/activation, security/release and operational targets remain pending; next is inbox draft recipient binding. Details and limits: [lead isolation release](UNRAVLER_IO_LEAD_WORKSPACE_ISOLATION_RELEASE.md).

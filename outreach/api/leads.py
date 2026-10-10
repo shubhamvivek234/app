@@ -15,9 +15,10 @@ from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 import uuid
-from api.deps import get_current_user, require_permission
+from api.deps import require_permission
 from db.mongo import get_db
 from outreach.core.sequence_versions import load_sequence
+from outreach.core.workspace_scope import workspace_scope
 from outreach.core.lead_importer import (
     LeadImporter,
     normalize_linkedin_url,
@@ -40,25 +41,41 @@ def _user_id(current_user: dict) -> str:
 
 
 def _workspace_id(current_user: dict) -> str:
-    return str(
+    workspace_id = (
         current_user.get("default_workspace_id")
         or current_user.get("current_workspace_id")
         or current_user.get("workspace_id")
-        or _user_id(current_user)
-        or "default_ws"
     )
+    if not isinstance(workspace_id, str) or not workspace_id.strip():
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No workspace context")
+    return workspace_id
+
+
+def _lead_permission(permission: str) -> Any:
+    """Use one resolved tenant for role, deletion and resource admission."""
+    async def authorized(
+        current_user: dict = require_permission(permission),
+        db: AsyncIOMotorDatabase = Depends(get_db),
+    ) -> dict:
+        from outreach.core.erasure import require_open_workspace
+
+        current_user = {**current_user, "default_workspace_id": _workspace_id(current_user)}
+        await require_open_workspace(current_user, db)
+        return current_user
+
+    return Depends(authorized)
+
+
+def _lead_filter(lead_id: str, current_user: dict) -> dict[str, Any]:
+    """Creator identity never substitutes for the authorized workspace."""
+    return {"id": lead_id, **workspace_scope(_workspace_id(current_user))}
 
 
 def _campaign_filter(campaign_id: str, current_user: dict) -> dict[str, Any]:
-    user_id = _user_id(current_user)
     return {
         "id": campaign_id,
+        **workspace_scope(_workspace_id(current_user)),
         "is_deleted": {"$ne": True},
-        "$or": [
-            {"user_id": user_id},
-            {"workspace_id": _workspace_id(current_user)},
-            {"workspace_id": user_id},
-        ],
     }
 
 
@@ -169,10 +186,10 @@ class UpdateLeadStageRequest(BaseModel):
 
 # ── Endpoints ──────────────────────────────────────────────────────────────
 
-@router.post("/preview", dependencies=[require_permission("lead:create")])
+@router.post("/preview")
 async def preview_leads_intake(
     req: LeadPreviewRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = _lead_permission("lead:create"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
@@ -209,10 +226,10 @@ async def preview_leads_intake(
     )
 
 
-@router.post("/import-urls", dependencies=[require_permission("lead:create")])
+@router.post("/import-urls")
 async def import_leads_urls(
     req: ImportURLsRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = _lead_permission("lead:create"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
@@ -224,7 +241,7 @@ async def import_leads_urls(
         raise HTTPException(status_code=409, detail="Pause conditional launch before changing its lead cohort")
     if campaign.get("status") == "active":
         linked_list_count = await db.outreach_engage_lists.count_documents({
-            "campaign_id": req.campaign_id, "workspace_id": workspace_id,
+            "campaign_id": req.campaign_id, **workspace_scope(workspace_id),
         })
         if linked_list_count:
             raise HTTPException(
@@ -233,7 +250,7 @@ async def import_leads_urls(
             )
         sender_count = await db.outreach_accounts.count_documents({
             "id": {"$in": campaign.get("sender_account_ids", [])},
-            "workspace_id": workspace_id,
+            **workspace_scope(workspace_id),
             "status": "active",
         })
         sequence = await load_sequence(db, workspace_id, req.campaign_id, campaign=campaign)
@@ -272,10 +289,10 @@ async def import_leads_urls(
     return result
 
 
-@router.post("/import-csv", dependencies=[require_permission("lead:create")])
+@router.post("/import-csv")
 async def import_leads_csv(
     req: ImportCSVRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = _lead_permission("lead:create"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
@@ -287,7 +304,7 @@ async def import_leads_csv(
         raise HTTPException(status_code=409, detail="Pause conditional launch before changing its lead cohort")
     if campaign.get("status") == "active":
         linked_list_count = await db.outreach_engage_lists.count_documents({
-            "campaign_id": req.campaign_id, "workspace_id": workspace_id,
+            "campaign_id": req.campaign_id, **workspace_scope(workspace_id),
         })
         if linked_list_count:
             raise HTTPException(
@@ -296,7 +313,7 @@ async def import_leads_csv(
             )
         sender_count = await db.outreach_accounts.count_documents({
             "id": {"$in": campaign.get("sender_account_ids", [])},
-            "workspace_id": workspace_id,
+            **workspace_scope(workspace_id),
             "status": "active",
         })
         sequence = await load_sequence(db, workspace_id, req.campaign_id, campaign=campaign)
@@ -334,10 +351,10 @@ async def import_leads_csv(
     return result
 
 
-@router.post("/import-staged", dependencies=[require_permission("lead:create")])
+@router.post("/import-staged")
 async def import_leads_staged(
     req: ImportStagedRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = _lead_permission("lead:create"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
@@ -349,7 +366,7 @@ async def import_leads_staged(
         raise HTTPException(status_code=409, detail="Pause conditional launch before changing its lead cohort")
     if campaign.get("status") == "active":
         linked_list_count = await db.outreach_engage_lists.count_documents({
-            "campaign_id": req.campaign_id, "workspace_id": workspace_id,
+            "campaign_id": req.campaign_id, **workspace_scope(workspace_id),
         })
         if linked_list_count:
             raise HTTPException(
@@ -358,7 +375,7 @@ async def import_leads_staged(
             )
         sender_count = await db.outreach_accounts.count_documents({
             "id": {"$in": campaign.get("sender_account_ids", [])},
-            "workspace_id": workspace_id,
+            **workspace_scope(workspace_id),
             "status": "active",
         })
         sequence = await load_sequence(db, workspace_id, req.campaign_id, campaign=campaign)
@@ -391,10 +408,10 @@ async def import_leads_staged(
     return result
 
 
-@router.post("/import-search", dependencies=[require_permission("lead:create")])
+@router.post("/import-search")
 async def import_search_url(
     req: ImportSearchRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = _lead_permission("lead:create"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
@@ -420,7 +437,7 @@ async def import_search_url(
 
     sender = await db.outreach_accounts.find_one({
         "id": req.sender_account_id,
-        "workspace_id": workspace_id,
+        **workspace_scope(workspace_id),
         "is_deleted": {"$ne": True},
     })
     if not sender:
@@ -456,7 +473,7 @@ async def import_search_url(
 
     # 5. Dedicated ISP IP proxy lease check
     lease = await db.outreach_proxy_leases.find_one({
-        "workspace_id": workspace_id,
+        **workspace_scope(workspace_id),
         "sender_id": req.sender_account_id,
     })
     inventory = await db.outreach_proxy_inventory.find_one({"_id": lease["_id"]}) if lease else None
@@ -468,6 +485,7 @@ async def import_search_url(
 
     # 6. Unique active import check for this sender
     existing_active = await db.outreach_import_jobs.find_one({
+        **workspace_scope(workspace_id),
         "sender_account_id": req.sender_account_id,
         "status": {"$in": [SearchImportJobStatus.QUEUED.value, SearchImportJobStatus.CRAWLING.value]},
     })
@@ -508,15 +526,15 @@ async def import_search_url(
     return job_dict
 
 
-@router.get("/import-jobs/{job_id}", dependencies=[require_permission("lead:read")])
+@router.get("/import-jobs/{job_id}")
 async def get_import_job(
     job_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = _lead_permission("lead:read"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Fetches real-time status and pacing metrics for a search import job."""
     workspace_id = _workspace_id(current_user)
-    job = await db.outreach_import_jobs.find_one({"id": job_id, "workspace_id": workspace_id})
+    job = await db.outreach_import_jobs.find_one({"id": job_id, **workspace_scope(workspace_id)})
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import job not found")
     if "_id" in job:
@@ -524,15 +542,15 @@ async def get_import_job(
     return job
 
 
-@router.post("/import-jobs/{job_id}/cancel", dependencies=[require_permission("lead:create")])
+@router.post("/import-jobs/{job_id}/cancel")
 async def cancel_import_job(
     job_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = _lead_permission("lead:create"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Gracefully halts a running search import job."""
     workspace_id = _workspace_id(current_user)
-    job = await db.outreach_import_jobs.find_one({"id": job_id, "workspace_id": workspace_id})
+    job = await db.outreach_import_jobs.find_one({"id": job_id, **workspace_scope(workspace_id)})
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import job not found")
 
@@ -540,7 +558,7 @@ async def cancel_import_job(
         return {"status": job.get("status"), "message": "Job is already completed or stopped."}
 
     await db.outreach_import_jobs.update_one(
-        {"id": job_id},
+        {"id": job_id, **workspace_scope(workspace_id)},
         {
             "$set": {
                 "status": SearchImportJobStatus.STOPPED.value,
@@ -554,17 +572,17 @@ async def cancel_import_job(
     return {"status": "stopped", "message": "Search import cancelled."}
 
 
-@router.get("/import-jobs/{job_id}/staged", dependencies=[require_permission("lead:read")])
+@router.get("/import-jobs/{job_id}/staged")
 async def get_staged_leads_for_job(
     job_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = _lead_permission("lead:read"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Retrieves all staged leads imported by this job for preview and review."""
     workspace_id = _workspace_id(current_user)
     cursor = db.outreach_leads.find({
         "import_job_id": job_id,
-        "workspace_id": workspace_id,
+        **workspace_scope(workspace_id),
         "execution_state": LeadExecutionState.STAGED.value,
     })
     leads = await cursor.to_list(length=3000)
@@ -574,11 +592,11 @@ async def get_staged_leads_for_job(
     return {"leads": leads, "count": len(leads)}
 
 
-@router.post("/import-jobs/{job_id}/commit", dependencies=[require_permission("lead:create")])
+@router.post("/import-jobs/{job_id}/commit")
 async def commit_staged_leads(
     job_id: str,
     req: CommitStagedLeadsRequest | None = None,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = _lead_permission("lead:create"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
@@ -586,13 +604,14 @@ async def commit_staged_leads(
     Clears staged_at to avoid 30-day TTL expiration.
     """
     workspace_id = _workspace_id(current_user)
-    job = await db.outreach_import_jobs.find_one({"id": job_id, "workspace_id": workspace_id})
+    job = await db.outreach_import_jobs.find_one({"id": job_id, **workspace_scope(workspace_id)})
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import job not found")
 
+    await _require_campaign(job["campaign_id"], current_user, db)
     query = {
         "import_job_id": job_id,
-        "workspace_id": workspace_id,
+        **workspace_scope(workspace_id),
         "execution_state": LeadExecutionState.STAGED.value,
     }
     if req and req.selected_lead_ids:
@@ -602,7 +621,7 @@ async def commit_staged_leads(
     if req and req.name_overrides:
         for lead_id, new_name in req.name_overrides.items():
             await db.outreach_leads.update_one(
-                {"id": lead_id, "import_job_id": job_id},
+                {"$and": [query, {"id": lead_id}]},
                 {"$set": {"first_name": new_name.strip()}},
             )
 
@@ -620,7 +639,7 @@ async def commit_staged_leads(
 
     # Increment campaign lead count
     await db.outreach_campaigns.update_one(
-        {"id": job["campaign_id"]},
+        _campaign_filter(job["campaign_id"], current_user),
         {
             "$inc": {"leads_count": res.modified_count},
             "$set": {"updated_at": datetime.now(timezone.utc)},
@@ -644,11 +663,8 @@ async def _lead_query(
     db: AsyncIOMotorDatabase,
 ) -> dict[str, Any]:
     workspace_id = _workspace_id(current_user)
-    user_id = _user_id(current_user)
 
-    clauses: list[dict[str, Any]] = [
-        {"$or": [{"workspace_id": workspace_id}, {"workspace_id": user_id}, {"user_id": user_id}]}
-    ]
+    clauses: list[dict[str, Any]] = [workspace_scope(workspace_id)]
 
     if campaign_id:
         await _require_campaign(campaign_id, current_user, db)
@@ -686,7 +702,7 @@ async def list_leads(
     location: str | None = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = _lead_permission("lead:read"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Returns filterable, paginated leads for the active workspace."""
@@ -730,7 +746,7 @@ async def export_leads(
     pipeline_stage: str | None = None,
     search: str | None = None,
     location: str | None = None,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = _lead_permission("lead:read"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Export every matching workspace lead, independent of the current UI page."""
@@ -755,19 +771,14 @@ async def export_leads(
     })
 
 
-@router.delete("/{lead_id}", dependencies=[require_permission("lead:delete")])
+@router.delete("/{lead_id}")
 async def delete_lead(
     lead_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = _lead_permission("lead:delete"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Deletes a lead from the CRM and updates campaign count."""
-    user_id = _user_id(current_user)
-    workspace_id = _workspace_id(current_user)
-    lead_filter = {
-        "id": lead_id,
-        "$or": [{"workspace_id": workspace_id}, {"workspace_id": user_id}, {"user_id": user_id}],
-    }
+    lead_filter = _lead_filter(lead_id, current_user)
     lead = await db.outreach_leads.find_one(lead_filter)
     if not lead:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
@@ -794,10 +805,10 @@ async def delete_lead(
     return {"status": "success", "message": "Lead removed"}
 
 
-@router.post("/do-not-contact", dependencies=[require_permission("lead:update")])
+@router.post("/do-not-contact")
 async def add_do_not_contact(
     req: DoNotContactRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = _lead_permission("lead:update"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Adds a contact (by URL, email, vanity, or URN) to the global Do-Not-Contact exclusion list."""
@@ -836,7 +847,7 @@ async def add_do_not_contact(
     }
 
     from outreach.core.authorization import canonical_hash
-    query = {"workspace_id": workspace_id, "_id": canonical_hash([workspace_id, "dnc", identifiers.model_dump()])}
+    query = {**workspace_scope(workspace_id), "_id": canonical_hash([workspace_id, "dnc", identifiers.model_dump()])}
 
     from outreach.core.suppression import mutate_suppression, SuppressionUnavailable
     async def save(current):
@@ -854,12 +865,12 @@ async def add_do_not_contact(
 
 @router.get("/do-not-contact")
 async def list_do_not_contact(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = _lead_permission("lead:read"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Lists all URLs on the Do-Not-Contact exclusion list for the workspace."""
     workspace_id = _workspace_id(current_user)
-    cursor = db.outreach_do_not_contact.find({"workspace_id": workspace_id}).sort("created_at", -1)
+    cursor = db.outreach_do_not_contact.find(workspace_scope(workspace_id)).sort("created_at", -1)
     dnc_list = await cursor.to_list(length=1000)
     for d in dnc_list:
         d.pop("_id", None)
@@ -867,10 +878,10 @@ async def list_do_not_contact(
 
 
 # ── Lead Finder & Post Engagers ────────────────────────────────────────────
-@router.post("/finder/preview", dependencies=[require_permission("lead:create")])
+@router.post("/finder/preview")
 async def preview_lead_finder(
     req: LeadFinderPreviewRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = _lead_permission("lead:create"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Live LinkedIn search is unavailable; never present seed data as prospects."""
@@ -880,10 +891,10 @@ async def preview_lead_finder(
     )
 
 
-@router.post("/finder/enroll", dependencies=[require_permission("lead:create")])
+@router.post("/finder/enroll")
 async def enroll_finder_leads(
     req: LeadFinderEnrollRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = _lead_permission("lead:create"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Keep enrollment closed until finder results come from a verified source."""
@@ -894,10 +905,10 @@ async def enroll_finder_leads(
     )
 
 
-@router.post("/import-post-engagers", dependencies=[require_permission("lead:create")])
+@router.post("/import-post-engagers")
 async def import_post_engagers(
     req: ImportPostEngagersRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = _lead_permission("lead:create"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Reject unsupported extraction instead of inventing post-engager profiles."""
@@ -913,19 +924,18 @@ async def import_post_engagers(
     )
 
 
-@router.patch("/{lead_id}/stage", dependencies=[require_permission("lead:update")])
+@router.patch("/{lead_id}/stage")
 async def update_lead_stage(
     lead_id: str,
     req: UpdateLeadStageRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = _lead_permission("lead:update"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
     Updates the CRM pipeline stage for a lead (Kanban / Vertical Stack support).
     Allowed stages: unassigned, in_campaign, contacted, replied, call_booked.
     """
-    workspace_id = _workspace_id(current_user)
-    user_id = _user_id(current_user)
+    lead_filter = _lead_filter(lead_id, current_user)
 
     valid_stages = ["unassigned", "in_campaign", "contacted", "replied", "call_booked"]
     if req.pipeline_stage not in valid_stages:
@@ -934,18 +944,12 @@ async def update_lead_stage(
             detail=f"Invalid pipeline stage. Must be one of: {valid_stages}",
         )
 
-    lead = await db.outreach_leads.find_one({
-        "id": lead_id,
-        "$or": [{"workspace_id": workspace_id}, {"workspace_id": user_id}, {"user_id": user_id}],
-    })
+    lead = await db.outreach_leads.find_one(lead_filter)
     if not lead:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
 
     result = await db.outreach_leads.update_one(
-        {
-            "id": lead_id,
-            "$or": [{"workspace_id": workspace_id}, {"workspace_id": user_id}, {"user_id": user_id}],
-        },
+        lead_filter,
         {"$set": {"pipeline_stage": req.pipeline_stage, "updated_at": datetime.now(timezone.utc)}},
     )
 
@@ -974,7 +978,7 @@ async def get_lead_activity(
     lead_id: str,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = _lead_permission("lead:read"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
@@ -982,11 +986,7 @@ async def get_lead_activity(
     Combines action outcomes, inbound replies, notes, state changes, and current sequence position.
     """
     workspace_id = _workspace_id(current_user)
-    user_id = _user_id(current_user)
-    lead_filter = {
-        "id": lead_id,
-        "$or": [{"workspace_id": workspace_id}, {"workspace_id": user_id}, {"user_id": user_id}],
-    }
+    lead_filter = _lead_filter(lead_id, current_user)
     lead = await db.outreach_leads.find_one(lead_filter)
     if not lead:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
@@ -995,14 +995,14 @@ async def get_lead_activity(
     # 1. Fetch assigned sender account details if present
     sender_name = None
     if lead.get("assigned_account_id") and hasattr(db, "outreach_accounts"):
-        account = await db.outreach_accounts.find_one({"id": lead["assigned_account_id"]})
+        account = await db.outreach_accounts.find_one({"id": lead["assigned_account_id"], **workspace_scope(workspace_id)})
         if account:
             sender_name = account.get("account_name") or account.get("vanity_name")
 
     # 2. Fetch campaign details if present
     campaign_name = None
     if lead.get("campaign_id") and hasattr(db, "outreach_campaigns"):
-        campaign = await db.outreach_campaigns.find_one({"id": lead["campaign_id"]})
+        campaign = await db.outreach_campaigns.find_one(_campaign_filter(lead["campaign_id"], current_user))
         if campaign:
             campaign_name = campaign.get("name")
 
@@ -1011,7 +1011,7 @@ async def get_lead_activity(
 
     # (a) Tasks / actions
     if hasattr(db, "outreach_tasks") and hasattr(db.outreach_tasks, "find"):
-        task_res = db.outreach_tasks.find({"lead_id": lead_id, "workspace_id": workspace_id})
+        task_res = db.outreach_tasks.find({"lead_id": lead_id, **workspace_scope(workspace_id)})
         if hasattr(task_res, "sort"):
             task_res = task_res.sort("created_at", -1)
         if hasattr(task_res, "__await__"):
@@ -1037,7 +1037,7 @@ async def get_lead_activity(
 
     # (b) Inbound/outbound thread messages
     if hasattr(db, "outreach_inbox_threads") and hasattr(db.outreach_inbox_threads, "find_one"):
-        thread_res = db.outreach_inbox_threads.find_one({"lead_id": lead_id, "workspace_id": workspace_id})
+        thread_res = db.outreach_inbox_threads.find_one({"lead_id": lead_id, **workspace_scope(workspace_id)})
         if hasattr(thread_res, "__await__"):
             thread_res = await thread_res
         if thread_res and isinstance(thread_res, dict):
@@ -1054,7 +1054,7 @@ async def get_lead_activity(
 
     # (c) Notes
     if hasattr(db, "outreach_lead_notes") and hasattr(db.outreach_lead_notes, "find"):
-        notes_res = db.outreach_lead_notes.find({"lead_id": lead_id, "workspace_id": workspace_id})
+        notes_res = db.outreach_lead_notes.find({"lead_id": lead_id, **workspace_scope(workspace_id)})
         if hasattr(notes_res, "sort"):
             notes_res = notes_res.sort("created_at", -1)
         if hasattr(notes_res, "__await__"):
@@ -1149,20 +1149,17 @@ async def get_lead_activity(
     }
 
 
-@router.post("/{lead_id}/notes", dependencies=[require_permission("lead:update")])
+@router.post("/{lead_id}/notes")
 async def add_lead_note(
     lead_id: str,
     req: AddLeadNoteRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = _lead_permission("lead:update"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Adds an internal note to the lead's activity history."""
     workspace_id = _workspace_id(current_user)
     user_id = _user_id(current_user)
-    lead_filter = {
-        "id": lead_id,
-        "$or": [{"workspace_id": workspace_id}, {"workspace_id": user_id}, {"user_id": user_id}],
-    }
+    lead_filter = _lead_filter(lead_id, current_user)
     lead = await db.outreach_leads.find_one(lead_filter)
     if not lead:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
@@ -1183,20 +1180,16 @@ async def add_lead_note(
     return {"status": "success", "note": note_doc}
 
 
-@router.post("/{lead_id}/pause", dependencies=[require_permission("lead:update")])
+@router.post("/{lead_id}/pause")
 async def pause_lead(
     lead_id: str,
     req: PauseLeadRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = _lead_permission("lead:update"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Pauses sequence execution for a specific lead and cancels pending tasks."""
     workspace_id = _workspace_id(current_user)
-    user_id = _user_id(current_user)
-    lead_filter = {
-        "id": lead_id,
-        "$or": [{"workspace_id": workspace_id}, {"workspace_id": user_id}, {"user_id": user_id}],
-    }
+    lead_filter = _lead_filter(lead_id, current_user)
     lead = await db.outreach_leads.find_one(lead_filter)
     if not lead:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
@@ -1209,17 +1202,17 @@ async def pause_lead(
 
     if hasattr(db, "outreach_tasks") and hasattr(db.outreach_tasks, "update_many"):
         await db.outreach_tasks.update_many(
-            {"lead_id": lead_id, "workspace_id": workspace_id, "status": "pending"},
+            {"lead_id": lead_id, **workspace_scope(workspace_id), "status": "pending"},
             {"$set": {"status": "skipped", "skip_reason": f"Lead paused: {pause_reason}", "resolved_at": datetime.now(timezone.utc)}}
         )
 
     return {"status": "paused", "lead_id": lead_id, "pause_reason": pause_reason}
 
 
-@router.post("/{lead_id}/resume", dependencies=[require_permission("lead:update")])
+@router.post("/{lead_id}/resume")
 async def resume_lead(
     lead_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = _lead_permission("lead:update"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
@@ -1229,11 +1222,7 @@ async def resume_lead(
     - Verifies assigned sender is healthy
     """
     workspace_id = _workspace_id(current_user)
-    user_id = _user_id(current_user)
-    lead_filter = {
-        "id": lead_id,
-        "$or": [{"workspace_id": workspace_id}, {"workspace_id": user_id}, {"user_id": user_id}],
-    }
+    lead_filter = _lead_filter(lead_id, current_user)
     lead = await db.outreach_leads.find_one(lead_filter)
     if not lead:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
@@ -1257,7 +1246,7 @@ async def resume_lead(
     if hasattr(db, "outreach_tasks") and hasattr(db.outreach_tasks, "count_documents"):
         count_res = db.outreach_tasks.count_documents({
             "lead_id": lead_id,
-            "workspace_id": workspace_id,
+            **workspace_scope(workspace_id),
             "status": {"$in": ["uncertain", "resolving"]},
         })
         if hasattr(count_res, "__await__"):
@@ -1272,7 +1261,7 @@ async def resume_lead(
     if lead.get("assigned_account_id") and hasattr(db, "outreach_accounts"):
         sender = await db.outreach_accounts.find_one({
             "id": lead["assigned_account_id"],
-            "workspace_id": workspace_id,
+            **workspace_scope(workspace_id),
             "status": "active",
         })
         if not sender:

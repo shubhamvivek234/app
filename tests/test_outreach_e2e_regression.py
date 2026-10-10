@@ -280,7 +280,7 @@ async def test_inbox_synchronization_and_campaign_kpi_impact():
         "workspace_id": "ws_sync",
         "user_id": "u_sync",
         "status": "active",
-        "session_cookie_enc": Fernet(os.environ["ENCRYPTION_KEY"].encode()).encrypt(b"mock_cookie").decode(),
+        "session_cookie_enc": encrypt_secret("mock_cookie"),
         "jsession_id": "ajax:12345",
         "proxy_config": {"host": "1.2.3.4", "port": 8080},
     }

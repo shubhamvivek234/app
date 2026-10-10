@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from outreach.models import OutreachLead, LeadExecutionState, LeadIdentifiers, generate_uuid
 from outreach.core.name_cleaner import clean_first_name
+from outreach.core.workspace_scope import workspace_scope
 
 logger = logging.getLogger(__name__)
 
@@ -842,7 +843,7 @@ class LeadImporter:
         if campaign is None:
             campaign = await db.outreach_campaigns.find_one({
                 "id": campaign_id,
-                "workspace_id": workspace_id,
+                **workspace_scope(workspace_id),
                 "is_deleted": {"$ne": True},
             })
         if not isinstance(campaign, dict):
@@ -853,7 +854,7 @@ class LeadImporter:
             active_sender_docs = await _fetch_cursor_docs(
                 db.outreach_accounts.find({
                     "id": {"$in": configured_sender_ids},
-                    "workspace_id": workspace_id,
+                    **workspace_scope(workspace_id),
                     "status": "active",
                 }),
                 length=100,
@@ -864,7 +865,7 @@ class LeadImporter:
         if active_senders:
             count_res = db.outreach_leads.count_documents({
                 "campaign_id": campaign_id,
-                "workspace_id": workspace_id,
+                **workspace_scope(workspace_id),
                 "assigned_account_id": {"$in": active_senders},
             })
             if hasattr(count_res, "__await__"):
@@ -1061,7 +1062,7 @@ class LeadImporter:
             await db.outreach_leads.insert_many(to_insert)
             # Update campaign lead count
             await db.outreach_campaigns.update_one(
-                {"id": campaign_id},
+                {"id": campaign_id, **workspace_scope(workspace_id)},
                 {"$inc": {"leads_count": len(to_insert)}, "$set": {"updated_at": datetime.now(timezone.utc)}}
             )
 

@@ -95,18 +95,10 @@ class MockCollection:
         return dict(self.docs[idx])
 
     async def update_many(self, query, update):
+        from tests.outreach_memory import matches
         matched = 0
         for i, d in enumerate(self.docs):
-            match = True
-            for k, v in query.items():
-                if isinstance(v, dict) and "$in" in v:
-                    if d.get(k) not in v["$in"]:
-                        match = False
-                        break
-                elif d.get(k) != v:
-                    match = False
-                    break
-            if match:
+            if matches(d, query):
                 matched += 1
                 if "$set" in update:
                     self.docs[i].update(update["$set"])
