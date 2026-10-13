@@ -71,6 +71,7 @@ async def test_cancel_schedules_end_of_paid_period_without_clearing_proxy():
     db = MagicMock()
     db.outreach_entitlements.find_one = AsyncMock(return_value=entitlement())
     db.outreach_entitlements.update_one = AsyncMock()
+    db.outreach_entitlements.update_one.return_value.matched_count = 1
     result = await billing.cancel_subscription(current_user=USER, db=db)
     assert result["status"] == "cancellation_scheduled"
     assert result["paid_through"] == entitlement()["paid_through"].isoformat()

@@ -112,7 +112,7 @@ describe('OutreachSettings page', () => {
 
   it('requests managed access without activating a trial or charging a card', async () => {
     global.fetch = jest.fn((url) => {
-      if (url === '/api/v1/outreach/billing/plans') return Promise.resolve(ok({ subscription: { status: 'none', seats: 0 } }));
+      if (url === '/api/v1/outreach/billing/plans') return Promise.resolve(ok({ access_active: false, subscription: { status: 'none', seats: 0 } }));
       if (url === '/api/v1/outreach/billing/request-access') return Promise.resolve(ok({ status: 'pending_quote' }));
       throw new Error(`Unexpected request: ${url}`);
     });
@@ -129,5 +129,16 @@ describe('OutreachSettings page', () => {
     expect(JSON.parse(request[1].body)).toEqual({ seats: 1, country_code: 'IN' });
     expect(global.fetch.mock.calls.some(([url]) => url.includes('start-trial'))).toBe(false);
     expect(container.textContent).toContain('awaiting availability and quote');
+  });
+
+  it('does not present a failed billing load as confirmed unpaid access', async () => {
+    global.fetch = jest.fn(async () => ({ ok: false, status: 503, json: async () => ({}) }));
+    await act(async () => root.render(<OutreachSettings initialTab="billing" />));
+    expect(container.textContent).toContain('Billing status unavailable');
+    expect(container.textContent).not.toContain('No paid sender access yet');
+    expect([...container.querySelectorAll('button')].find((button) => button.textContent === 'Cancel').disabled).toBe(true);
+    global.fetch.mockResolvedValue(ok({ access_active: true, subscription: { seats: 1, status: 'active' } }));
+    await act(async () => [...container.querySelectorAll('button')].find((button) => button.textContent === 'Retry billing').click());
+    expect(container.textContent).toContain('Paid access active');
   });
 });

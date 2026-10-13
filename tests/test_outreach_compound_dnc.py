@@ -248,6 +248,12 @@ https://linkedin.com/in/sarah-rocket,Sarah 🚀 | Founder,Smith,Tech Corp
     assert parsed[2]["cleaned_first_name"] == "Sarah"  # Emojis & title noise stripped!
 
     # Ingest into campaign
+    from tests.outreach_memory import Database, Collection
+    current = Database(outreach_campaigns=[{"id": campaign_id, "workspace_id": workspace_id, "status": "draft"}])
+    for collection in ("outreach_leads", "outreach_do_not_contact", "outreach_withdrawn_invites"):
+        if hasattr(db, collection):
+            current.collections[collection] = Collection(getattr(db, collection).docs)
+    db = current
     ingest_res = await LeadImporter.ingest_leads(
         leads=parsed,
         campaign_id=campaign_id,

@@ -42,27 +42,45 @@ export default function OutreachHome({ onNavigate, onOpenWizard, onOpenCampaign 
 
     loadOverview();
 
-    // Connect to real-time live activity SSE stream ($0 infra cost)
+    // Connect to the bounded activity stream using the existing session cookie.
     let eventSource;
+    let streamClosed = false;
+    let acceptingActivity = false;
     try {
       eventSource = new EventSource(`${env.BACKEND_URL}/api/v1/outreach/analytics/live-feed`, { withCredentials: true });
 
       eventSource.addEventListener('connected', () => {
+        if (streamClosed) return;
+        acceptingActivity = true;
         setStreamStatus('live');
       });
 
       eventSource.addEventListener('heartbeat', () => {
+        if (streamClosed || !acceptingActivity) return;
         setStreamStatus('live');
       });
 
       eventSource.addEventListener('task_completed', (e) => {
+        if (streamClosed || !acceptingActivity) return;
         try {
           const data = JSON.parse(e.data);
           setLiveEvents((prev) => [data, ...prev.slice(0, 19)]);
         } catch (_) {}
       });
 
+      eventSource.addEventListener('stream_closed', () => {
+        if (streamClosed) return;
+        streamClosed = true;
+        acceptingActivity = false;
+        eventSource.close();
+        setLiveEvents([]);
+        setStreamStatus('stopped');
+      });
+
       eventSource.onerror = () => {
+        if (streamClosed) return;
+        acceptingActivity = false;
+        setLiveEvents([]);
         setStreamStatus('standby');
       };
     } catch (err) {
@@ -70,6 +88,8 @@ export default function OutreachHome({ onNavigate, onOpenWizard, onOpenCampaign 
     }
 
     return () => {
+      streamClosed = true;
+      acceptingActivity = false;
       if (eventSource) {
         eventSource.close();
       }
@@ -228,7 +248,7 @@ export default function OutreachHome({ onNavigate, onOpenWizard, onOpenCampaign 
           )}
         </div>
 
-        {/* Real-Time Live Activity Stream ($0 infra cost SSE) */}
+        {/* Activity observations from the bounded stream */}
         <div className="bg-white rounded-2xl border border-gray-200/80 shadow-xs p-6 space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -248,16 +268,18 @@ export default function OutreachHome({ onNavigate, onOpenWizard, onOpenCampaign 
             ) : (
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-gray-50 text-gray-500 border border-gray-200">
                 <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
-                Standby
+                {streamStatus === 'stopped' ? 'Activity unavailable' : 'Standby'}
               </span>
             )}
           </div>
 
           {liveEvents.length === 0 ? (
             <div className="py-6 px-4 bg-gray-50/60 rounded-xl border border-gray-100 text-center">
-              <p className="text-xs font-medium text-gray-700">Listening to live outreach pipeline</p>
+              <p className="text-xs font-medium text-gray-700">
+                {streamStatus === 'stopped' ? 'Activity connection ended' : 'Listening to live outreach pipeline'}
+              </p>
               <p className="text-[11px] text-gray-400 mt-0.5">
-                Sent invitations, accepted invites, replies, and pre-warming visits stream here in real-time.
+                {streamStatus === 'stopped' ? 'Refresh to check access again.' : 'Sent invitations, accepted invites, replies, and pre-warming visits stream here in real-time.'}
               </p>
             </div>
           ) : (

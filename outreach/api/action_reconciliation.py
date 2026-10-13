@@ -14,8 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field, field_validator
 
-from api.deps import get_current_user, require_permission
 from db.mongo import get_db
+from outreach.api.dependencies import get_outreach_user, require_outreach_permission
 from outreach.models import LeadExecutionState
 
 
@@ -56,12 +56,12 @@ async def _email_operation(db, workspace_id: str, task: dict) -> dict | None:
         "acceptance_source": 1, "resolution": 1})
 
 
-@router.get("", dependencies=[require_permission("outreach:manage")])
+@router.get("")
 async def list_action_reviews(
     view: Literal["pending", "resolved"] = "pending",
     skip: int = Query(0, ge=0, le=5000),
     limit: int = Query(25, ge=1, le=50),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('outreach:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     workspace_id = _workspace_id(current_user)
@@ -114,11 +114,11 @@ async def list_action_reviews(
     return {"items": items, "total": total, "skip": skip, "limit": limit, "view": view}
 
 
-@router.post("/{task_id}/resolve", dependencies=[require_permission("outreach:manage")])
+@router.post("/{task_id}/resolve")
 async def resolve_uncertain_action(
     task_id: str,
     request: ResolutionRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('outreach:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     workspace_id = _workspace_id(current_user)

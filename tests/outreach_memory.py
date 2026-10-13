@@ -61,7 +61,7 @@ def matches(doc, query):
                         return False
                     if op == "$gte" and not actual >= operand:
                         return False
-        elif isinstance(actual, list):
+        elif isinstance(actual, list) and not isinstance(expected, list):
             if expected not in actual:
                 return False
         elif actual != expected:
@@ -145,6 +145,11 @@ class Collection:
             raise DuplicateKeyError("duplicate")
         self.docs.append(deepcopy(doc))
         return SimpleNamespace(inserted_id=doc.get("_id"))
+
+    async def insert_many(self, documents):
+        for document in documents:
+            await self.insert_one(document)
+        return SimpleNamespace(inserted_ids=[doc.get("_id") for doc in documents])
 
     async def update_one(self, query, update, upsert=False):
         for doc in self.docs:

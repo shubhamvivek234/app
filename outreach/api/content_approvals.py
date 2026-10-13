@@ -6,8 +6,8 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
-from api.deps import get_current_user, require_permission
 from db.mongo import get_db
+from outreach.api.dependencies import get_outreach_user, require_outreach_permission
 from outreach.core.content_approval import ContentApproval, sequence_binding
 from outreach.core.authorization import canonical_hash
 from outreach.core.voice_artifacts import VoiceArtifacts
@@ -55,9 +55,9 @@ async def current_binding(db: AsyncIOMotorDatabase, record: dict) -> dict | None
     return await service.binding(job, account, target)
 
 
-@router.get("", dependencies=[require_permission("outreach:manage")])
+@router.get("")
 async def list_content_reviews(view: Literal["pending", "history"] = "pending", skip: int = Query(0, ge=0, le=5000),
-                               limit: int = Query(25, ge=1, le=50), current_user: dict = Depends(get_current_user), db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
+                               limit: int = Query(25, ge=1, le=50), current_user: dict = require_outreach_permission('outreach:manage'), db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
     ws = workspace(current_user)
     query = {"workspace_id": ws, "status": "pending" if view == "pending" else {"$ne": "pending"}}
     records = await db.outreach_content_approvals.find(query).sort("updated_at", -1).skip(skip).limit(limit).to_list(length=limit)
@@ -82,9 +82,9 @@ async def list_content_reviews(view: Literal["pending", "history"] = "pending", 
     return {"items": items, "total": await db.outreach_content_approvals.count_documents(query)}
 
 
-@router.post("/prepare/{campaign_id}", dependencies=[require_permission("outreach:manage")])
+@router.post("/prepare/{campaign_id}")
 async def prepare_content_reviews(campaign_id: str, skip: int = Query(0, ge=0, le=50000),
-                                  limit: int = Query(50, ge=1, le=50), current_user: dict = Depends(get_current_user), db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
+                                  limit: int = Query(50, ge=1, le=50), current_user: dict = require_outreach_permission('outreach:manage'), db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
     ws = workspace(current_user)
     campaign = await db.outreach_campaigns.find_one({"id": campaign_id, "workspace_id": ws, "is_deleted": {"$ne": True}})
     if not campaign:
@@ -136,8 +136,8 @@ async def prepare_content_reviews(campaign_id: str, skip: int = Query(0, ge=0, l
             "next_skip": skip + len(leads) if skip + len(leads) < total else None}
 
 
-@router.post("/{approval_id}/decision", dependencies=[require_permission("outreach:manage")])
-async def decide_content(approval_id: str, req: ContentDecision, current_user: dict = Depends(get_current_user), db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
+@router.post("/{approval_id}/decision")
+async def decide_content(approval_id: str, req: ContentDecision, current_user: dict = require_outreach_permission('outreach:manage'), db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
     ws = workspace(current_user)
     record = await db.outreach_content_approvals.find_one({"_id": approval_id, "workspace_id": ws})
     if not record:
@@ -156,8 +156,8 @@ async def decide_content(approval_id: str, req: ContentDecision, current_user: d
     return {"status": "recorded", "execution_permission": "unchanged"}
 
 
-@router.post("/{approval_id}/cancel", dependencies=[require_permission("outreach:manage")])
-async def cancel_manual_content(approval_id: str, current_user: dict = Depends(get_current_user), db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
+@router.post("/{approval_id}/cancel")
+async def cancel_manual_content(approval_id: str, current_user: dict = require_outreach_permission('outreach:manage'), db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
     from outreach.core.manual_actions import ManualActions
     ws = workspace(current_user)
     record = await db.outreach_content_approvals.find_one({"_id": approval_id, "workspace_id": ws})
@@ -171,8 +171,8 @@ async def cancel_manual_content(approval_id: str, current_user: dict = Depends(g
     return {"status": "cancelled"}
 
 
-@router.get("/{approval_id}/audio", dependencies=[require_permission("outreach:manage")])
-async def content_audio(approval_id: str, current_user: dict = Depends(get_current_user), db: AsyncIOMotorDatabase = Depends(get_db)) -> Response:
+@router.get("/{approval_id}/audio")
+async def content_audio(approval_id: str, current_user: dict = require_outreach_permission('outreach:manage'), db: AsyncIOMotorDatabase = Depends(get_db)) -> Response:
     ws = workspace(current_user)
     record = await db.outreach_content_approvals.find_one({"_id": approval_id, "workspace_id": ws})
     artifact_id = (record or {}).get("binding", {}).get("context", {}).get("voice_artifact_id")

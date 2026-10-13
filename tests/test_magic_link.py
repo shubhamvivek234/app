@@ -13,6 +13,9 @@ class _FakeCollection:
     def __init__(self, docs=None):
         self.docs = [dict(doc) for doc in (docs or [])]
 
+    def with_options(self, **kwargs):
+        return self
+
     async def find_one(self, query, projection=None):
         for doc in self.docs:
             # simple key-value matching
@@ -61,6 +64,7 @@ class _FakeDB:
         self.workspace_invites = _FakeCollection()
         self.workspaces = _FakeCollection()
         self.workspace_members = _FakeCollection()
+        self.account_erasure_tombstones = _FakeCollection()
 
 
 class _FakeRedis:

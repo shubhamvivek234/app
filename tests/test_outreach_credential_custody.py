@@ -134,3 +134,24 @@ async def test_strict_json_rejects_ambiguous_or_coerced_versions_before_kms(inva
 def test_unhashable_context_purpose_and_noncanonical_key_fail_sanitized():
     with pytest.raises(CustodyUnavailable): scope(purpose=[]).kms_context()
     with pytest.raises(CustodyUnavailable): CredentialCustody(ARN[:-36] + '-' * 36, LocalKeys())
+
+
+@pytest.mark.asyncio
+async def test_metadata_inspection_never_opens_key_or_proves_ciphertext_authenticity():
+    keys = LocalKeys()
+    custody = CredentialCustody(ARN, keys)
+    envelope = await custody.seal('synthetic-session', scope())
+    keys.calls.clear()
+    custody.inspect(envelope, scope())
+    assert keys.calls == []
+    with pytest.raises(CustodyUnavailable):
+        custody.inspect(envelope, scope(sender_id='other'))
+    assert keys.calls == []
+    doc = json.loads(envelope[4:])
+    import base64
+    ciphertext = bytearray(base64.b64decode(doc['ciphertext'])); ciphertext[0] ^= 1
+    doc['ciphertext'] = base64.b64encode(ciphertext).decode()
+    tampered = 'uc1:' + json.dumps(doc)
+    custody.inspect(tampered, scope())  # Metadata is deliberately not authentication.
+    with pytest.raises(CustodyUnavailable):
+        await custody.open(tampered, scope())

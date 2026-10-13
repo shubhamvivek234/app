@@ -10,11 +10,13 @@ from typing import Any
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from fastapi import HTTPException
 from outreach.models import OutreachLead, LeadExecutionState, LeadIdentifiers, generate_uuid
 from outreach.core.name_cleaner import clean_first_name
 from outreach.core.workspace_scope import workspace_scope
 
 logger = logging.getLogger(__name__)
+MAX_ADMISSION_ROWS = 1000
 
 # Common header aliases for automated column discovery
 COLUMN_ALIASES = {
@@ -259,7 +261,7 @@ async def check_compound_suppression(
     if not clauses:
         return {}
 
-    query: dict[str, Any] = {"workspace_id": workspace_id, "$or": clauses}
+    query: dict[str, Any] = {**workspace_scope(workspace_id), "$or": clauses}
     if extra_filter:
         query.update(extra_filter)
 
@@ -829,37 +831,79 @@ class LeadImporter:
         source_metadata: dict[str, Any] | None = None,
         require_name: bool = False,
         include_rejections: bool = False,
+        *,
+        _ordered: bool = False,
+        _staged_rows: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """
         Deduplicates and bulk-inserts parsed leads into MongoDB for the given campaign.
         Enforces compound dedupe/DNC rules across URL, vanity, member URN, Sales Nav URN, and email.
         """
+        if len(leads) > MAX_ADMISSION_ROWS:
+            raise HTTPException(422, f"Import at most {MAX_ADMISSION_ROWS} contacts at a time.")
+        if not _ordered:
+            from outreach.core.suppression import mutate_suppression, SuppressionUnavailable
+            async def admit(current):
+                return await LeadImporter.ingest_leads(leads, campaign_id, workspace_id, current,
+                    skip_already_contacted, skip_do_not_contact, None, source, source_metadata,
+                    require_name, include_rejections, _ordered=True, _staged_rows=_staged_rows)
+            try:
+                return await mutate_suppression(db, workspace_id, admit)
+            except SuppressionUnavailable:
+                raise HTTPException(503, "Could not confirm this import. Reload campaign contacts before retrying.") from None
+
+        # Caller snapshots are advisory only. Admission uses the transaction's current parent.
+        campaign = await db.outreach_campaigns.find_one({
+            "id": campaign_id, **workspace_scope(workspace_id), "is_deleted": {"$ne": True}})
+        if not isinstance(campaign, dict):
+            raise HTTPException(404, "Campaign not found")
+        if campaign.get("status") not in {"draft", "paused", "active"}:
+            raise HTTPException(409, "Campaign cannot accept contacts in its current state.")
+        if campaign.get("launch_claim_token"):
+            raise HTTPException(409, "Campaign launch is being prepared. Wait for its outcome before importing contacts.")
+        if campaign.get("status") == "active":
+            linked_list = await db.outreach_engage_lists.find_one({
+                **workspace_scope(workspace_id), "campaign_id": campaign_id, "is_deleted": {"$ne": True}})
+            if campaign.get("engage_list_id") or linked_list:
+                raise HTTPException(409, "Pause this campaign before changing its engagement contacts.")
+        # Write the parent so concurrent status/config edits conflict with admission's snapshot.
+        parent = await db.outreach_campaigns.update_one({
+            "id": campaign_id, **workspace_scope(workspace_id), "status": campaign["status"],
+            "is_deleted": {"$ne": True}}, {"$inc": {"lead_admission_revision": 1}})
+        if getattr(parent, "matched_count", 0) != 1:
+            raise HTTPException(409, "Campaign changed. Reload before importing contacts.")
+
         if not leads:
             res = {"imported_count": 0, "skipped_count": 0, "duplicates_count": 0, "total_submitted": 0}
             if include_rejections:
                 res["rejections"] = []
             return res
 
-        if campaign is None:
-            campaign = await db.outreach_campaigns.find_one({
-                "id": campaign_id,
-                **workspace_scope(workspace_id),
-                "is_deleted": {"$ne": True},
-            })
-        if not isinstance(campaign, dict):
-            campaign = {}
         active_senders = []
         if campaign and campaign.get("status") == "active":
             configured_sender_ids = list(campaign.get("sender_account_ids", []))
+            if (not configured_sender_ids or len(configured_sender_ids) > 100
+                    or any(not isinstance(value, str) or not value for value in configured_sender_ids)
+                    or len(set(configured_sender_ids)) != len(configured_sender_ids)):
+                raise HTTPException(409, "Campaign sender assignment needs review before importing contacts.")
             active_sender_docs = await _fetch_cursor_docs(
                 db.outreach_accounts.find({
                     "id": {"$in": configured_sender_ids},
                     **workspace_scope(workspace_id),
                     "status": "active",
+                    "is_deleted": {"$ne": True},
                 }),
                 length=100,
             )
-            active_senders = [account["id"] for account in active_sender_docs if account.get("id")]
+            active_senders = sorted(account["id"] for account in active_sender_docs if account.get("id"))
+            if set(active_senders) != set(configured_sender_ids):
+                raise HTTPException(409, "Campaign sender assignment is no longer ready.")
+            for account in active_sender_docs:
+                checked = await db.outreach_accounts.update_one({
+                    "id": account["id"], **workspace_scope(workspace_id), "status": "active",
+                    "is_deleted": {"$ne": True}}, {"$inc": {"lead_admission_revision": 1}})
+                if getattr(checked, "matched_count", 0) != 1:
+                    raise HTTPException(409, "Campaign sender changed before importing contacts.")
         assigned_offset = 0
         root_node_id = None
         if active_senders:
@@ -875,6 +919,10 @@ class LeadImporter:
             sequence = await load_sequence(db, workspace_id, campaign_id, campaign=campaign)
             root_ids = (sequence or {}).get("compiled_dag", {}).get("root_node_ids", [])
             root_node_id = root_ids[0] if root_ids else None
+            revision, version = campaign.get("authorization_revision"), (sequence or {}).get("version")
+            if (not isinstance(root_node_id, str) or not root_node_id or len(root_ids) != 1
+                    or type(revision) is not int or revision < 1 or type(version) is not int or version < 1):
+                raise HTTPException(409, "Campaign sequence authorization needs review before importing contacts.")
 
         # 1. Fetch existing leads in this campaign for deduplication (compound)
         campaign_dupes = await check_compound_suppression(
@@ -882,7 +930,7 @@ class LeadImporter:
             candidates=leads,
             db=db,
             collection_name="outreach_leads",
-            extra_filter={"campaign_id": campaign_id},
+            extra_filter={"campaign_id": campaign_id, **({"id": {"$nin": [row["id"] for row in _staged_rows]}} if _staged_rows else {})},
         )
 
         # 2. Fetch cross-campaign contacted leads if enabled (compound)
@@ -903,6 +951,8 @@ class LeadImporter:
             db=db,
             collection_name="outreach_do_not_contact",
         )
+        email_matches = await check_compound_suppression(
+            workspace_id=workspace_id, candidates=leads, db=db, collection_name="outreach_email_suppressions")
 
         # 4. Fetch Withdrawn Invites within 21-day reinvite block window (mandatory compound check)
         now_dt = datetime.now(timezone.utc)
@@ -1009,6 +1059,12 @@ class LeadImporter:
                 continue
 
             # Check Withdrawn Invites cooldown (mandatory)
+            if idx in email_matches:
+                skipped_count += 1
+                rejections.append({"linkedin_url": url, "first_name": first_name,
+                    "rejection_code": "email_suppressed", "reason": "Email is on the workspace suppression list"})
+                continue
+
             if idx in withdrawn_matches:
                 skipped_count += 1
                 match_info = withdrawn_matches[idx]
@@ -1054,17 +1110,39 @@ class LeadImporter:
             ).model_dump()
 
             if active_senders:
-                lead_doc["authorized_revision"] = campaign.get("authorization_revision", 0)
-                lead_doc["sequence_version"] = (sequence or {}).get("version", 1)
+                lead_doc["authorized_revision"] = revision
+                lead_doc["sequence_version"] = version
+            if _staged_rows is not None:
+                original = _staged_rows[idx]
+                lead_doc = {**original, **lead_doc, "id": original["id"],
+                    "import_job_id": original["import_job_id"],
+                    "created_at": original.get("created_at", lead_doc["created_at"]), "staged_at": None}
+                if not active_senders:
+                    lead_doc.pop("authorized_revision", None)
+                    lead_doc.pop("sequence_version", None)
             to_insert.append(lead_doc)
 
         if to_insert:
-            await db.outreach_leads.insert_many(to_insert)
+            if _staged_rows is None:
+                await db.outreach_leads.insert_many(to_insert)
+            else:
+                for document in to_insert:
+                    saved = await db.outreach_leads.replace_one({
+                        "id": document["id"], **workspace_scope(workspace_id), "campaign_id": campaign_id,
+                        "import_job_id": document["import_job_id"], "execution_state": LeadExecutionState.STAGED.value}, document)
+                    if getattr(saved, "matched_count", 0) != 1:
+                        raise HTTPException(409, "Staged contacts changed. Reload before importing.")
             # Update campaign lead count
             await db.outreach_campaigns.update_one(
                 {"id": campaign_id, **workspace_scope(workspace_id)},
                 {"$inc": {"leads_count": len(to_insert)}, "$set": {"updated_at": datetime.now(timezone.utc)}}
             )
+            from outreach.core.event_outbox import record_outbox_event
+            from outreach.core.event_definitions import WebhookEvent
+            for document in to_insert:
+                await record_outbox_event(db, workspace_id, WebhookEvent.LEAD_CREATED, document["id"],
+                    f"lead.created:{document['id']}", {"lead_id": document["id"], "campaign_id": campaign_id,
+                    "linkedin_url": document["linkedin_url"], "channel": "linkedin", "source_status": "confirmed"})
 
         logger.info(
             "Campaign %s: Imported %s leads via %s (skipped: %s, duplicates: %s)",
@@ -1076,6 +1154,7 @@ class LeadImporter:
             "skipped_count": skipped_count,
             "duplicates_count": duplicates_count,
             "total_submitted": len(leads),
+            "lead_ids": [document["id"] for document in to_insert],
         }
         if include_rejections:
             res["rejections"] = rejections

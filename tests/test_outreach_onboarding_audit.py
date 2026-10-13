@@ -83,6 +83,11 @@ async def test_retired_credential_http_routes_do_not_parse_request_bodies():
     app = FastAPI()
     app.include_router(accounts_router, prefix="/api/v1/outreach")
     app.dependency_overrides[get_current_user] = lambda: USER
+    # Canonical read admission now resolves workspace membership and deletion.
+    from tests.outreach_memory import Database
+    db = Database(workspaces=[{"workspace_id": "workspace_a", "owner_id": "other"}],
+                  workspace_members=[{"workspace_id": "workspace_a", "user_id": "user_a", "role": "viewer"}])
+    app.dependency_overrides[get_db] = lambda: db
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         for route in ("login-start", "login-verify-2fa"):
             response = await client.post(
@@ -226,56 +231,39 @@ async def test_disconnect_pauses_sender_and_retains_paid_term_proxy():
     db.outreach_accounts.delete_one.assert_not_called()
     assert "session_cookie_enc" in db.outreach_accounts.update_one.await_args.args[1]["$unset"]
 @pytest.mark.asyncio
-async def test_launch_rejects_active_campaign_before_changing_anything():
-    db = MagicMock()
-    db.outreach_campaigns.find_one = AsyncMock(return_value={
-        "id": "campaign_a", "workspace_id": "workspace_a", "status": "active",
-    })
-    with pytest.raises(HTTPException) as exc:
-        await launch_campaign("campaign_a", req=LaunchCampaignRequest(), current_user=USER, db=db)
-    assert exc.value.status_code == 409
-    db.outreach_campaigns.update_one.assert_not_called()
+async def test_launch_rejects_active_campaign_before_changing_anything(monkeypatch):
+    from tests.campaign_readiness_fixtures import admission_database
+    db = admission_database(monkeypatch, 'workspace_a', 'campaign_a', 'account_a')
+    await db.outreach_campaigns.update_one({}, {'$set': {'status': 'active'}})
+    before = await db.outreach_campaigns.find_one({})
+    with pytest.raises(HTTPException) as failure:
+        await launch_campaign('campaign_a', req=LaunchCampaignRequest(), current_user=USER, db=db)
+    assert failure.value.status_code == 409
+    assert await db.outreach_campaigns.find_one({}) == before
 
 
 @pytest.mark.asyncio
-async def test_launch_rejects_sender_without_verified_session():
-    db = MagicMock()
-    db.outreach_sequences.find_one = AsyncMock(return_value=None)
-    db.outreach_campaigns.find_one = AsyncMock(return_value={
-        "id": "campaign_a", "workspace_id": "workspace_a", "status": "draft",
-        "sender_account_ids": ["account_a"],
-    })
-    cursor = MagicMock()
-    cursor.to_list = AsyncMock(return_value=[{
-        "id": "account_a", "workspace_id": "workspace_a", "status": "active",
-    }])
-    db.outreach_accounts.find.return_value = cursor
-    with pytest.raises(HTTPException) as exc:
-        await launch_campaign("campaign_a", req=LaunchCampaignRequest(), current_user=USER, db=db)
-    assert exc.value.status_code == 400
-    assert db.outreach_accounts.find.call_args.args[0]["workspace_id"] == "workspace_a"
+async def test_launch_rejects_sender_without_verified_session(monkeypatch):
+    from tests.campaign_readiness_fixtures import admission_database
+    db = admission_database(monkeypatch, 'workspace_a', 'campaign_a', 'account_a')
+    await db.outreach_accounts.update_one({}, {'$unset': {'session_cookie_enc': ''}})
+    before = await db.outreach_campaigns.find_one({})
+    with pytest.raises(HTTPException) as failure:
+        await launch_campaign('campaign_a', req=LaunchCampaignRequest(), current_user=USER, db=db)
+    assert failure.value.status_code == 400
+    assert await db.outreach_campaigns.find_one({}) == before
 
 
 @pytest.mark.asyncio
 async def test_launch_rejects_legacy_mock_cookie_even_with_proxy(monkeypatch):
-    monkeypatch.delenv("OUTREACH_MOCK_AUTH", raising=False)
-    db = MagicMock()
-    db.outreach_sequences.find_one = AsyncMock(return_value=None)
-    db.outreach_campaigns.find_one = AsyncMock(return_value={
-        "id": "campaign_a", "workspace_id": "workspace_a", "status": "draft",
-        "sender_account_ids": ["account_a"],
-    })
-    cursor = MagicMock()
-    cursor.to_list = AsyncMock(return_value=[{
-        "id": "account_a", "workspace_id": "workspace_a", "status": "active",
-        "session_cookie_enc": encrypt_secret("mock_old_session"),
-        "jsession_id": "ajax:123", "proxy": {"host": "198.51.100.3"},
-    }])
-    db.outreach_accounts.find.return_value = cursor
-    with pytest.raises(HTTPException) as exc:
-        await launch_campaign("campaign_a", req=LaunchCampaignRequest(), current_user=USER, db=db)
-    assert exc.value.status_code == 400
-    db.outreach_campaigns.update_one.assert_not_called()
+    from tests.campaign_readiness_fixtures import admission_database
+    db = admission_database(monkeypatch, 'workspace_a', 'campaign_a', 'account_a')
+    await db.outreach_accounts.update_one({}, {'$set': {'session_cookie_enc': encrypt_secret('mock_old_session')}})
+    before = await db.outreach_campaigns.find_one({})
+    with pytest.raises(HTTPException) as failure:
+        await launch_campaign('campaign_a', req=LaunchCampaignRequest(), current_user=USER, db=db)
+    assert failure.value.status_code == 400
+    assert await db.outreach_campaigns.find_one({}) == before
 
 
 @pytest.mark.asyncio
@@ -309,23 +297,12 @@ async def test_sequence_save_rejects_tree_that_does_not_match_execution_nodes():
 
 
 @pytest.mark.asyncio
-async def test_launch_never_activates_without_a_sequence_root():
-    db = MagicMock()
-    db.outreach_campaigns.find_one = AsyncMock(return_value={
-        "id": "campaign_a", "workspace_id": "workspace_a", "status": "draft",
-        "sender_account_ids": ["account_a"], "schedule": {}, "limits": {},
-    })
-    sender_cursor = MagicMock()
-    sender_cursor.to_list = AsyncMock(return_value=[{
-        "id": "account_a", "workspace_id": "workspace_a", "status": "active",
-        "session_cookie_enc": "encrypted", "proxy": {"host": "198.51.100.5"},
-    }])
-    db.outreach_accounts.find.return_value = sender_cursor
-    db.outreach_sequences.find_one = AsyncMock(return_value=None)
-    db.outreach_leads.count_documents = AsyncMock(return_value=1)
-    with patch("outreach.api.campaigns.OutboundRateLimiter.has_valid_working_window", return_value=True), \
-         patch("outreach.api.campaigns.DAGCompiler.get_prebuilt_templates", return_value=[]):
-        with pytest.raises(HTTPException) as exc:
-            await launch_campaign("campaign_a", req=LaunchCampaignRequest(), current_user=USER, db=db)
-    assert exc.value.status_code == 400
-    db.outreach_campaigns.update_one.assert_not_called()
+async def test_launch_never_activates_without_a_sequence_root(monkeypatch):
+    from tests.campaign_readiness_fixtures import admission_database
+    db = admission_database(monkeypatch, 'workspace_a', 'campaign_a', 'account_a')
+    await db.outreach_sequences.delete_one({})
+    before = await db.outreach_campaigns.find_one({})
+    with pytest.raises(HTTPException) as failure:
+        await launch_campaign('campaign_a', req=LaunchCampaignRequest(), current_user=USER, db=db)
+    assert failure.value.status_code == 400
+    assert await db.outreach_campaigns.find_one({}) == before

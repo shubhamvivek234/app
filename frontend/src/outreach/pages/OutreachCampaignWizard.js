@@ -22,6 +22,7 @@ import { toast } from 'sonner';
 import SequenceCanvas from '../components/sequence/SequenceCanvas';
 import ImportLeadsModal from '../components/ImportLeadsModal';
 import ConnectLinkedInModal from '../components/ConnectLinkedInModal';
+import useCampaignReadiness from '../hooks/useCampaignReadiness';
 
 const TIME_OPTIONS = [
   '12:00 AM', '12:30 AM', '01:00 AM', '01:30 AM', '02:00 AM', '02:30 AM',
@@ -135,9 +136,6 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
   const [enrolledLeads, setEnrolledLeads] = useState([]);
   const [loadingLeads, setLoadingLeads] = useState(false);
   const [leadsError, setLeadsError] = useState('');
-  const [preflightData, setPreflightData] = useState(null);
-  const [loadingPreflight, setLoadingPreflight] = useState(false);
-  const [preflightError, setPreflightError] = useState('');
 
   const [schedule, setSchedule] = useState(createDefaultSchedule);
   const sequenceSaveRef = React.useRef(null);
@@ -253,33 +251,14 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
     }
   };
 
-  const fetchPreflight = React.useCallback(async (cid) => {
-    const targetCid = cid || activeCampaignId || campaignId;
-    if (!targetCid || targetCid === 'new' || targetCid === 'new_campaign') return;
-    setLoadingPreflight(true);
-    setPreflightError('');
-    try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`/api/v1/outreach/campaigns/${targetCid}/preflight`, {
-        credentials: 'include',
-        headers: { Authorization: token ? `Bearer ${token}` : '' },
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || 'Launch checklist could not be verified.');
-      setPreflightData(data);
-    } catch (err) {
-      console.error('Failed to load campaign preflight:', err);
-      setPreflightError(err.message || 'Launch checklist could not be verified.');
-    } finally {
-      setLoadingPreflight(false);
-    }
-  }, [activeCampaignId, campaignId]);
-
-  useEffect(() => {
-    if (currentStep === 3) {
-      fetchPreflight(activeCampaignId || campaignId);
-    }
-  }, [currentStep, activeCampaignId, campaignId, fetchPreflight]);
+  const launchPayload = React.useMemo(() => ({ name: campaignName,
+    sender_account_ids: selectedSenders, schedule, timezone, daily_limits: limits, status: 'active' }),
+  [campaignName, selectedSenders, schedule, timezone, limits]);
+  const { data: preflightData, loading: loadingPreflight, error: preflightError,
+    refresh: fetchPreflight } = useCampaignReadiness(activeCampaignId, launchPayload, currentStep === 3);
+  const launchContext = React.useRef('');
+  const launchContextKey = JSON.stringify([campaignId, activeCampaignId, launchPayload, localStorage.getItem('token')]);
+  launchContext.current = launchContextKey;
 
   const copyToAllWeekdays = (sourceIdx) => {
     const sourceRanges = schedule[sourceIdx].ranges;
@@ -498,6 +477,13 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
       toast.error('Select a Social Warm-Up Cohort before arming conditional launch.');
       return;
     }
+    const capturedContext = launchContext.current;
+    const capturedToken = localStorage.getItem('token');
+    const assertCurrent = () => {
+      if (launchContext.current !== capturedContext || localStorage.getItem('token') !== capturedToken) {
+        throw new Error('Campaign inputs changed. Review the current checklist before launching.');
+      }
+    };
     setIsLaunching(true);
     try {
       const savedDraft = await syncDraft(campaignName, 3);
@@ -509,14 +495,15 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
         throw new Error('Sequence could not be saved. Please review it and try again.');
       }
       const token = localStorage.getItem('token');
-      const payload = {
-        name: campaignName,
-        sender_account_ids: selectedSenders,
-        schedule,
-        timezone,
-        daily_limits: limits,
-        status: 'active',
-      };
+      assertCurrent();
+      const payload = launchPayload;
+      if (!autoLaunchAfterWarmup) {
+        const currentReadiness = await fetchPreflight(targetId, payload);
+        assertCurrent();
+        if (currentReadiness?.can_launch !== true) {
+          throw new Error(currentReadiness?.blockers?.[0] || 'Launch checklist could not be verified.');
+        }
+      }
       const path = autoLaunchAfterWarmup ? 'arm-warmup' : 'launch';
       const res = await fetch(`/api/v1/outreach/campaigns/${targetId}/${path}`, {
         method: 'POST',
@@ -1326,7 +1313,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                       {loadingPreflight && <RefreshCw className="w-3.5 h-3.5 animate-spin text-gray-400" />}
                     </h3>
                     <p className="text-xs text-gray-500 mt-0.5">
-                      Automated audit of entitlement, senders, proxy, mailbox, sequence DAG, and safety constraints.
+                      Checks stored launch prerequisites. Workers separately verify approval, inbox freshness, permission and health before sending.
                     </p>
                   </div>
                   {preflightData && (
@@ -1335,7 +1322,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                         ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                         : 'bg-amber-50 text-amber-800 border border-amber-200'
                     }`}>
-                      {preflightData.can_launch ? 'Ready to Launch' : `${preflightData.blockers?.length || 0} Blocker(s)`}
+                      {preflightData.can_launch ? 'Launch prerequisites met' : `${preflightData.blockers?.length || 0} Blocker(s)`}
                     </span>
                   )}
                 </div>
@@ -1349,7 +1336,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                   <div className="space-y-2.5">
                     {(preflightData?.checklist || []).map((item) => (
                       <div
-                        key={item.item}
+                        key={item.id}
                         className={`p-3 rounded-xl border flex items-start gap-3 transition-colors ${
                           item.passed
                             ? 'bg-emerald-50/30 border-emerald-100 text-gray-800'
@@ -1362,9 +1349,9 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                           <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                         )}
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold">{item.label}</p>
-                          {item.reason && (
-                            <p className="text-[11px] text-amber-700 mt-0.5">{item.reason}</p>
+                          <p className="text-xs font-semibold">{item.name}</p>
+                          {item.message && (
+                            <p className="text-[11px] text-amber-700 mt-0.5">{item.message}</p>
                           )}
                         </div>
                       </div>
@@ -1372,19 +1359,24 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                   </div>
                 )}
 
+                {(preflightData?.execution_checks || []).map((item) => (
+                  <p key={item.id} className="text-xs text-gray-600">{item.message}</p>
+                ))}
+                {loadingPreflight && <p className="text-xs text-gray-500">Checking current launch prerequisites…</p>}
+
                 {/* Sequence Path & Variable Summary */}
-                {preflightData?.sequence_summary && (
+                {preflightData?.summary && (
                   <div className="pt-3 border-t border-gray-100 grid sm:grid-cols-2 gap-3 text-xs">
                     <div className="p-3 bg-gray-50 rounded-xl border border-gray-100 space-y-1">
                       <p className="text-[10px] uppercase font-bold text-gray-400">Branch Paths</p>
                       <p className="text-gray-800 font-medium">
-                        {(preflightData.sequence_summary.branch_paths || []).join(', ') || 'Single sequence path'}
+                        {(preflightData.summary.branch_paths || []).join(', ') || 'Single sequence path'}
                       </p>
                     </div>
                     <div className="p-3 bg-gray-50 rounded-xl border border-gray-100 space-y-1">
                       <p className="text-[10px] uppercase font-bold text-gray-400">Detected Template Variables</p>
                       <p className="font-mono text-gray-800 font-medium truncate">
-                        {(preflightData.sequence_summary.template_variables || []).map(v => `{{${v}}}`).join(', ') || 'No variables'}
+                        {(preflightData.summary.variables_detected || []).map(v => `{{${v}}}`).join(', ') || 'No variables'}
                       </p>
                     </div>
                   </div>
@@ -1482,7 +1474,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
               <button
                 type="button"
                 onClick={handleLaunch}
-                disabled={isLaunching}
+                disabled={isLaunching || (!autoLaunchAfterWarmup && (loadingPreflight || !!preflightError || preflightData?.can_launch !== true))}
                 className="flex-1 py-3 bg-[#5851ea] hover:bg-[#4a42e0] rounded-xl text-xs font-semibold text-white shadow-xs transition-colors disabled:opacity-50"
               >
                 {isLaunching ? 'Saving...' : autoLaunchAfterWarmup ? 'Confirm conditional launch' : 'Confirm and Launch 🚀'}

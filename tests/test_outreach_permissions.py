@@ -264,131 +264,23 @@ def test_outsider_blocked():
 # ── Outcome Provenance & Uncertain Task Lockout (P0-C) ──────────────────────
 
 @pytest.mark.asyncio
-async def test_launch_campaign_blocks_when_uncertain_tasks_exist():
-    """
-    P0-C: _launch_campaign_impl prevents launching/resuming any campaign
-    if there are unresolved 'uncertain' tasks in db.outreach_tasks.
-    """
-    now = datetime.now(timezone.utc)
-    campaign = {
-        "id": "camp-1",
-        "workspace_id": "ws-1",
-        "name": "Live Outreach",
-        "status": "paused",
-        "sender_account_ids": ["acc-1"],
-        "lead_count": 10,
-        "is_deleted": False,
-    }
-
-    db = MagicMock()
-    db.outreach_campaigns.find_one = AsyncMock(return_value=campaign)
-    db.outreach_tasks.count_documents = AsyncMock(return_value=1)
-    db.outreach_entitlements.find_one = AsyncMock(return_value={
-        "workspace_id": "ws-1",
-        "status": "active",
-        "seats": 1,
-        "paid_through": "2029-01-01T00:00:00Z",
-        "payment_source": "manual_verified_invoice",
-    })
-
-    with pytest.raises(HTTPException) as exc_info:
-        await _launch_campaign_impl(
-            campaign_id="camp-1",
-            req=None,
-            current_user={"user_id": "admin-1", "default_workspace_id": "ws-1", "workspace_ids": ["ws-1"]},
-            db=db,
-        )
-
-    assert exc_info.value.status_code == status.HTTP_409_CONFLICT
-    assert "uncertain provider outcomes requiring manual reconciliation" in exc_info.value.detail
+async def test_launch_campaign_blocks_when_uncertain_tasks_exist(monkeypatch):
+    from tests.campaign_readiness_fixtures import admission_database
+    db = admission_database(monkeypatch, 'ws-1', 'camp-1', 'acc-1')
+    await db.outreach_tasks.insert_one({'workspace_id': 'ws-1', 'campaign_id': 'camp-1', 'status': 'uncertain'})
+    with pytest.raises(HTTPException) as failure:
+        await _launch_campaign_impl('camp-1', None, {'user_id': 'admin-1', 'default_workspace_id': 'ws-1'}, db)
+    assert failure.value.status_code == 409
+    assert 'uncertain outcomes' in failure.value.detail
+    assert (await db.outreach_campaigns.find_one({}))['status'] == 'draft'
 
 
 @pytest.mark.asyncio
 async def test_launch_campaign_clears_pause_reason_when_resolved(monkeypatch):
-    """
-    P0-C: When no uncertain tasks exist, campaign resumes and clears pause_reason.
-    """
-    import base64
-    from unittest.mock import patch
-
-    monkeypatch.setenv("OUTREACH_MOCK_AUTH", "true")
-    monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", "true")
-    monkeypatch.setenv("ENCRYPTION_KEY", base64.urlsafe_b64encode(b"x" * 32).decode())
-    from outreach.core.crypto import encrypt_secret
-
-    campaign = {
-        "id": "camp-1",
-        "workspace_id": "ws-1",
-        "name": "Live Outreach",
-        "status": "paused",
-        "pause_reason": "Manual operator intervention required",
-        "sender_account_ids": ["acc-1"],
-        "lead_count": 1,
-        "is_deleted": False,
-        "sequence": [{"id": "step-1", "type": "visit_profile"}],
-    }
-    account = {
-        "id": "acc-1",
-        "workspace_id": "ws-1",
-        "status": "active",
-        "session_cookie_enc": encrypt_secret("li_at=mock_cookie"),
-        "jsession_id": "ajax:mock",
-        "proxy": {"host": "192.168.1.1"},
-        "daily_limits": {"connection_requests": 20, "messages": 50, "profile_views": 80},
-    }
-
-    db = MagicMock()
-    db.outreach_campaigns.find_one = AsyncMock(return_value=campaign)
-    db.outreach_tasks.count_documents = AsyncMock(return_value=0)
-
-    cursor_accounts = MagicMock()
-    cursor_accounts.to_list = AsyncMock(return_value=[account])
-    db.outreach_accounts.find = MagicMock(return_value=cursor_accounts)
-
-    db.outreach_sequences.find_one = AsyncMock(return_value={
-        "campaign_id": "camp-1",
-        "workspace_id": "ws-1",
-        "nodes": [{"id": "root-1", "type": "visit_profile", "config": {}}],
-        "edges": [],
-        "is_deleted": False,
-    })
-    db.outreach_sequences.update_one = AsyncMock()
-    db.outreach_sequence_versions.insert_one = AsyncMock()
-    db.outreach_campaigns.update_one = AsyncMock(return_value=MagicMock(matched_count=1, modified_count=1))
-    db.outreach_leads.count_documents = AsyncMock(return_value=1)
-
-    cursor_leads = MagicMock()
-    cursor_leads.to_list = AsyncMock(return_value=[{"id": "lead-1", "current_node_id": None}])
-    db.outreach_leads.find = MagicMock(return_value=cursor_leads)
-    db.outreach_leads.update_one = AsyncMock()
-    db.outreach_leads.update_many = AsyncMock()
-
-    cursor_empty = MagicMock()
-    cursor_empty.to_list = AsyncMock(return_value=[])
-    db.outreach_engage_lists.find = MagicMock(return_value=cursor_empty)
-    db.outreach_engage_contacts.find = MagicMock(return_value=cursor_empty)
-
-    db.outreach_entitlements.find_one = AsyncMock(return_value={
-        "workspace_id": "ws-1",
-        "status": "active",
-        "seats": 1,
-        "paid_through": "2029-01-01T00:00:00Z",
-        "payment_source": "manual_verified_invoice",
-    })
-
-    with patch("outreach.api.campaigns.sender_is_ready", new_callable=AsyncMock) as mock_ready:
-        mock_ready.return_value = True
-        result = await _launch_campaign_impl(
-            campaign_id="camp-1",
-            req=None,
-            current_user={"user_id": "admin-1", "default_workspace_id": "ws-1", "workspace_ids": ["ws-1"]},
-            db=db,
-        )
-
-    assert result["status"] == "launched"
-    activation_updates = [call.args[1]["$set"] for call in db.outreach_campaigns.update_one.await_args_list
-                          if call.args[1].get("$set", {}).get("status") == "active"]
-    assert len(activation_updates) == 1
-    update_doc = activation_updates[0]
-    assert update_doc["status"] == "active"
-    assert update_doc["pause_reason"] is None
+    from tests.campaign_readiness_fixtures import admission_database
+    db = admission_database(monkeypatch, 'ws-1', 'camp-1', 'acc-1')
+    await db.outreach_campaigns.update_one({}, {'$set': {'status': 'paused', 'pause_reason': 'Manual operator intervention required', 'pause_reasons': ['operator_pause']}})
+    result = await _launch_campaign_impl('camp-1', None, {'user_id': 'admin-1', 'default_workspace_id': 'ws-1'}, db)
+    assert result['status'] == 'launched'
+    saved = await db.outreach_campaigns.find_one({})
+    assert saved['status'] == 'active' and saved['pause_reason'] is None

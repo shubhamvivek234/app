@@ -6,7 +6,9 @@ import email.utils
 import html
 import logging
 import re
-import xml.etree.ElementTree as ET
+from defusedxml import ElementTree as ET
+from xml.etree.ElementTree import Element  # nosemgrep: python.lang.security.use-defused-xml.use-defused-xml
+# Element is a type annotation only; all XML parsing uses the defused parser above.
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -92,7 +94,7 @@ def parse_feed_xml(xml_content: str, source_url: str = "") -> tuple[dict[str, An
     try:
         # Strip potential XML declarations or byte order marks
         xml_content = xml_content.strip()
-        root = ET.fromstring(xml_content)
+        root = ET.fromstring(xml_content, forbid_dtd=True, forbid_entities=True, forbid_external=True)
     except Exception as exc:
         raise ValueError(f"Invalid XML feed structure: {exc}") from exc
 
@@ -103,7 +105,7 @@ def parse_feed_xml(xml_content: str, source_url: str = "") -> tuple[dict[str, An
     return _parse_rss2_feed(root, source_url)
 
 
-def _parse_rss2_feed(root: ET.Element, source_url: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _parse_rss2_feed(root: Element, source_url: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     channel = root.find("channel")
     if channel is None:
         channel = root
@@ -182,7 +184,7 @@ def _parse_rss2_feed(root: ET.Element, source_url: str) -> tuple[dict[str, Any],
     return feed_meta, items
 
 
-def _find_elem(parent: ET.Element, tag_names: list[str], ns: dict[str, str]) -> ET.Element | None:
+def _find_elem(parent: Element, tag_names: list[str], ns: dict[str, str]) -> Element | None:
     for tag in tag_names:
         try:
             el = parent.find(tag, ns)
@@ -206,14 +208,14 @@ def _find_elem(parent: ET.Element, tag_names: list[str], ns: dict[str, str]) -> 
     return None
 
 
-def _find_text(parent: ET.Element, tag_names: list[str], ns: dict[str, str], default: str = "") -> str:
+def _find_text(parent: Element, tag_names: list[str], ns: dict[str, str], default: str = "") -> str:
     el = _find_elem(parent, tag_names, ns)
     if el is not None and el.text:
         return el.text.strip()
     return default
 
 
-def _parse_atom_feed(root: ET.Element, source_url: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _parse_atom_feed(root: Element, source_url: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     ns = {"atom": "http://www.w3.org/2005/Atom", "media": "http://search.yahoo.com/mrss/", "yt": "http://www.youtube.com/xml/schemas/2015"}
     
     title = _find_text(root, ["atom:title", "title"], ns, "Untitled Feed")

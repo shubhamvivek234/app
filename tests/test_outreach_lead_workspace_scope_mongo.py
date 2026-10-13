@@ -19,6 +19,7 @@ from pymongo import MongoClient
 from pymongo.errors import PyMongoError
 
 from outreach.core.suppression import guard_scope
+from tests.outreach_native import replica_server, replica_db  # noqa: F401
 from tests.test_outreach_lead_workspace_scope import (
     FOREIGN, USER_ID, WORKSPACE, client_for, tenant_db,
 )
@@ -87,6 +88,15 @@ async def real_db(mongo_server):
         client.close()
 
 
+@pytest_asyncio.fixture
+async def admission_db(replica_db):
+    source = tenant_db(lead_scope={"workspace_id": FOREIGN})
+    for collection, rows in source.collections.items():
+        if rows.docs:
+            await replica_db[collection].insert_many(rows.docs)
+    return replica_db
+
+
 async def test_actual_list_and_export_exclude_creator_tagged_legacy_scopes(real_db):
     await real_db.outreach_leads.insert_many([
         {"id": "null", "workspace_id": None, "user_id": USER_ID, "email": "private-null@example.invalid"},
@@ -141,13 +151,15 @@ async def test_actual_stale_context_checks_resolved_workspace_erasure_hold(real_
     assert response.status_code == 409
 
 
-async def test_actual_import_updates_only_current_workspace_children(real_db):
+async def test_actual_import_updates_only_current_workspace_children(admission_db):
+    real_db = admission_db
     for workspace in (FOREIGN, WORKSPACE):
         await real_db.outreach_import_jobs.insert_one({
             "id": "job", "workspace_id": workspace, "campaign_id": "campaign", "status": "queued",
         })
         await real_db.outreach_leads.insert_one({
             "id": "staged", "workspace_id": workspace, "import_job_id": "job",
+            "campaign_id": "campaign", "linkedin_url": "https://linkedin.com/in/staged",
             "first_name": "Original", "execution_state": "staged",
         })
     await real_db.outreach_campaigns.insert_one({"id": "campaign", "workspace_id": FOREIGN, "leads_count": 10})
@@ -167,7 +179,8 @@ async def test_actual_import_updates_only_current_workspace_children(real_db):
     ("/leads/import-urls", {"urls_text": "https://linkedin.com/in/alice, Alice"}),
     ("/leads/import-csv", {"csv_text": "LinkedIn URL,First Name\nhttps://linkedin.com/in/alice,Alice"}),
 ])
-async def test_actual_common_import_counter_ignores_foreign_and_array_campaigns(real_db, path, payload):
+async def test_actual_common_import_counter_ignores_foreign_and_array_campaigns(admission_db, path, payload):
+    real_db = admission_db
     await real_db.outreach_campaigns.delete_many({})
     await real_db.outreach_campaigns.insert_many([
         {"id": "campaign", "workspace_id": FOREIGN, "leads_count": 10},

@@ -72,6 +72,7 @@ async def test_safety_shield_trip_and_withdraw():
         account_id="acc_123",
         reason="Voyager 429 rate limit triggered",
         db=mock_db,
+        workspace_id="ws_1",
     )
     assert trip_res["status"] == "circuit_breaker_tripped"
     assert trip_res["campaigns_paused"] == 2
@@ -121,12 +122,14 @@ async def test_plan_read_is_workspace_scoped_and_has_no_fake_checkout():
     assert result["trial_available"] is False
     assert result["checkout_available"] is False
     assert result["access_active"] is False
-    db.outreach_entitlements.find_one.assert_awaited_with({"workspace_id": "ws-1"})
+    from outreach.core.workspace_scope import workspace_scope
+    db.outreach_entitlements.find_one.assert_awaited_with(workspace_scope('ws-1'))
 
 
 @pytest.mark.asyncio
 async def test_cancel_schedules_paid_period_end_without_touching_sender_or_ip():
     db = AsyncMock()
+    db.outreach_entitlements.update_one.return_value.matched_count = 1
     paid_through = datetime.now(timezone.utc) + timedelta(days=30)
     db.outreach_entitlements.find_one.return_value = {
         "workspace_id": "ws-1", "status": "active", "seats": 1,

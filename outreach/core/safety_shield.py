@@ -10,6 +10,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from outreach.models import AccountStatus, CampaignStatus, LeadExecutionState, WithdrawnInvite
 from outreach.core.rate_budget import RateBudget
+from outreach.core.workspace_scope import workspace_scope
 
 logger = logging.getLogger(__name__)
 
@@ -96,15 +97,14 @@ class SafetyShield:
         """
         Immediately marks account as restricted and pauses all campaigns relying on it.
         """
+        scope = workspace_scope(workspace_id)
         logger.warning(
             "SAFETY SHIELD TRIPPED: Pausing account %s due to '%s'",
             account_id,
             reason,
         )
 
-        query: dict[str, Any] = {"id": account_id}
-        if workspace_id:
-            query["workspace_id"] = workspace_id
+        query: dict[str, Any] = {"id": account_id, **scope}
 
         now = datetime.now(timezone.utc)
         await db.outreach_accounts.update_one(
@@ -124,9 +124,8 @@ class SafetyShield:
         camp_query: dict[str, Any] = {
             "sender_account_ids": account_id,
             "status": CampaignStatus.ACTIVE.value,
+            **scope,
         }
-        if workspace_id:
-            camp_query["workspace_id"] = workspace_id
 
         paused_campaigns = None
         if hasattr(db, "outreach_campaigns") and hasattr(db.outreach_campaigns, "update_many"):
@@ -138,7 +137,8 @@ class SafetyShield:
 
         if hasattr(db, "outreach_tasks") and hasattr(db.outreach_tasks, "update_many"):
             await db.outreach_tasks.update_many(
-                {"assigned_account_id": account_id, "status": "pending"},
+                {**scope, "$or": [{"assigned_account_id": account_id}, {"account_id": account_id}],
+                 "status": {"$in": ["pending", "queued", "scheduled"]}},
                 {"$set": {"status": "paused", "skip_reason": f"Safety circuit breaker on sender {account_id}", "resolved_at": now}},
             )
 

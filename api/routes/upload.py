@@ -29,6 +29,7 @@ from api.models.media import (
 from api.task_queue import enqueue_task
 from utils.observability import capture_degraded_event, event_log, shorten_provider_error
 from utils.temp_audio_cleanup import TEMP_AUDIO_PURPOSE, temporary_audio_metadata
+from utils.private_temp import create_quarantine_file, private_scratch_path
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["upload"])
@@ -47,7 +48,8 @@ _PENDING_UPLOAD_LIMIT: dict[str, int] = {"starter": 10, "pro": 30, "agency": 75}
 
 _ALLOWED_MIME_PREFIXES = ("image/", "video/", "audio/")
 _QUEUE_DEPTH_LIMIT = 200
-_QUARANTINE_BASE = os.environ.get("QUARANTINE_PATH", "/tmp/quarantine")
+# Stable shared mount; create_quarantine_file enforces ownership, no-follow and exclusive creation.
+_QUARANTINE_BASE = os.environ.get("QUARANTINE_PATH", "/tmp/quarantine")  # nosec B108
 _UPLOAD_SESSION_EXPIRES_IN = int(os.environ.get("UPLOAD_SESSION_EXPIRES_IN_SECONDS", "14400"))
 
 
@@ -560,15 +562,13 @@ async def upload_media(
         safe_filename = f"{media_job_id}{ext}"
 
         # 6. Stream to quarantine path in chunks (never load entire file into RAM)
-        quarantine_dir = Path(_QUARANTINE_BASE) / user_id
-        quarantine_dir.mkdir(parents=True, exist_ok=True)
-        quarantine_path = str(quarantine_dir / safe_filename)
+        quarantine_file, quarantine_path = create_quarantine_file(_QUARANTINE_BASE, user_id, safe_filename)
 
         _STREAM_CHUNK_SIZE = 8 * 1024 * 1024  # 8 MB chunks
         total_bytes = len(header_bytes)
 
         try:
-            with open(quarantine_path, "wb") as fh:
+            with quarantine_file as fh:
                 fh.write(header_bytes)
                 while True:
                     chunk = await file.read(_STREAM_CHUNK_SIZE)
@@ -581,8 +581,8 @@ async def upload_media(
                             detail=f"File exceeds maximum size ({max_bytes // (1024*1024)} MB for {plan} plan)",
                         )
                     fh.write(chunk)
-        except HTTPException:
-            # Clean up partial file on size limit violation
+        except BaseException:
+            # No asset/job exists yet; this call exclusively owns the partial file.
             if os.path.exists(quarantine_path):
                 os.unlink(quarantine_path)
             raise
@@ -714,9 +714,7 @@ async def auto_fit_vertical(
 
     source_path, need_cleanup_source = await _resolve_media_local_file(doc, media_job_id)
     out_ext = ".mp4" if is_video else (".jpg" if ("jpeg" in mime_type or "jpg" in mime_type) else ".png")
-    out_dir = "/tmp/media_processing"
-    os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, f"{uuid.uuid4()}_vertical{out_ext}")
+    out_path = private_scratch_path(f'_vertical{out_ext}')
     thumb_path = None
 
     try:
@@ -821,9 +819,7 @@ async def auto_compress(
 
     source_path, need_cleanup_source = await _resolve_media_local_file(doc, media_job_id)
     out_ext = ".mp4" if is_video else (".jpg" if ("jpeg" in mime_type or "jpg" in mime_type) else ".png")
-    out_dir = "/tmp/media_processing"
-    os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, f"{uuid.uuid4()}_comp{out_ext}")
+    out_path = private_scratch_path(f'_comp{out_ext}')
     thumb_path = None
 
     try:

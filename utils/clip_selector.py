@@ -5,7 +5,8 @@ import json
 import logging
 import re
 from typing import Any, Dict, List, Optional
-import xml.etree.ElementTree as ET
+from defusedxml import ElementTree as ET
+from defusedxml.common import DefusedXmlException
 import httpx
 
 from utils.free_llm_router import free_llm
@@ -23,7 +24,7 @@ def parse_youtube_timed_text(xml_text: str) -> List[Dict[str, Any]]:
         return segments
 
     try:
-        root = ET.fromstring(xml_text)
+        root = ET.fromstring(xml_text, forbid_dtd=True, forbid_entities=True, forbid_external=True)
         for elem in root.iter("text"):
             start = float(elem.attrib.get("start", 0.0))
             dur = float(elem.attrib.get("dur", 3.0))
@@ -35,6 +36,9 @@ def parse_youtube_timed_text(xml_text: str) -> List[Dict[str, Any]]:
                     "end": round(start + dur, 2),
                     "text": text,
                 })
+    except DefusedXmlException:
+        logger.warning('Rejected unsafe timed text XML')
+        return []
     except Exception as exc:
         logger.warning("Error parsing timed text XML: %s", exc)
         # Fallback to regex if XML parse fails

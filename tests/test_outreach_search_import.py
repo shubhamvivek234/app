@@ -516,6 +516,11 @@ async def test_commercial_use_limit_handling(mock_db):
 @pytest.mark.asyncio
 async def test_staged_leads_review_and_commit_flow(mock_db):
     """Scenario 9: Staged leads can be queried for review, edited, and committed to queued campaign leads."""
+    from tests.outreach_memory import Database, Collection
+    copied = Database()
+    for name, collection in vars(mock_db).items():
+        copied.collections[name] = Collection(collection.docs)
+    mock_db = copied
     job_id = "job-commit-test"
     mock_db.outreach_import_jobs.docs.append({
         "id": job_id,
@@ -528,6 +533,7 @@ async def test_staged_leads_review_and_commit_flow(mock_db):
     # Add 2 staged leads
     mock_db.outreach_leads.docs.append({
         "id": "staged-1",
+        "linkedin_url": "https://linkedin.com/in/bob",
         "workspace_id": "ws-1",
         "campaign_id": "camp-1",
         "first_name": "Bob",
@@ -538,6 +544,7 @@ async def test_staged_leads_review_and_commit_flow(mock_db):
     })
     mock_db.outreach_leads.docs.append({
         "id": "staged-2",
+        "linkedin_url": "https://linkedin.com/in/alice",
         "workspace_id": "ws-1",
         "campaign_id": "camp-1",
         "first_name": "Alice",

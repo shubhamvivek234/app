@@ -7,6 +7,7 @@ import csv
 import io
 import json
 import asyncio
+import time
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Any
@@ -14,8 +15,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from api.deps import get_current_user
 from db.mongo import get_db
+from outreach.api.dependencies import get_outreach_user, workspace_id
+from outreach.core.activity_stream import StreamAccess, activity_events, STREAM_LIFETIME_SECONDS
+from outreach.core.email_reporting import email_report
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +30,7 @@ async def get_outreach_analytics(
     campaign_id: str | None = None,
     sender_account_id: str | None = None,
     timeframe: str = Query("30d", description="'7d' | '14d' | '30d'"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
@@ -99,23 +102,9 @@ async def get_outreach_analytics(
     messages_sent = await db.outreach_tasks.count_documents(task_filter("send_message"))
     messages_replied = await db.outreach_leads.count_documents(lead_filter({"has_replied": True, "replied_at": {"$gte": period_start}}))
 
-    # Email metrics (only confirmed sends and deliveries from recorded events)
-    email_sent = await db.outreach_tasks.count_documents(task_filter("send_email"))
-    email_delivered = 0
-    deliverability_rate = None
-    if email_sent > 0:
-        bounces = 0
-        if hasattr(db, "outreach_email_inbound_events") and hasattr(db.outreach_email_inbound_events, "count_documents"):
-            bounce_filter = {**scope, "kind": "bounce", "created_at": {"$gte": period_start}}
-            if sender_account_id and sender_account_id != "all":
-                bounce_filter["sender_account_id"] = sender_account_id
-            bounce_res = db.outreach_email_inbound_events.count_documents(bounce_filter)
-            if hasattr(bounce_res, "__await__"):
-                bounces = await bounce_res
-            elif isinstance(bounce_res, (int, float)):
-                bounces = int(bounce_res)
-        email_delivered = max(0, email_sent - bounces)
-        deliverability_rate = round(email_delivered / email_sent * 100, 1)
+    # Provider acceptance, stored bounce classification and delivery are distinct.
+    email_evidence = await email_report(db, workspace=workspace_id, campaign=campaign_id,
+        sender=sender_account_id, start=period_start, as_of=now)
 
     # Engagement metrics (pre-warming visits, likes, comments)
     profile_visits = await db.outreach_tasks.count_documents(task_filter("visit_profile"))
@@ -167,6 +156,17 @@ async def get_outreach_analytics(
         }
 
     daily_chart = await asyncio.gather(*(day_summary(d) for d in range(num_days - 1, -1, -1)))
+    for day in daily_chart:
+        evidence = email_evidence['daily'].get(day['timestamp'][:10], {})
+        available = email_evidence['kpis']['evidence_status'] != 'unavailable'
+        day.update({key: evidence.get(key, 0) if available else None
+                    for key in ('email_provider_accepted', 'email_bounced')})
+        day.update({'email_delivered': None, 'email_delivery_status': 'unavailable',
+                    'email_evidence_status': email_evidence['kpis']['evidence_status'],
+                    'email_period_start_utc': email_evidence['kpis']['period_start'],
+                    'email_as_of_utc': email_evidence['kpis']['as_of'],
+                    'email_cohort_basis': email_evidence['kpis']['cohort_basis'],
+                    'email_bounce_basis': email_evidence['kpis']['bounce_basis']})
 
     return {
         "has_connected_account": has_connected_account,
@@ -188,12 +188,7 @@ async def get_outreach_analytics(
                 "profile_visits": profile_visits,
                 "post_engagements": post_engagements,
             },
-            "email": {
-                "sent": email_sent,
-                "delivered": email_delivered,
-                "deliverability_rate": deliverability_rate,
-                "denominator": email_sent,
-            },
+            "email": email_evidence['kpis'],
             "pipeline": {
                 "total_leads": total_leads,
                 "in_campaign": in_campaign,
@@ -213,7 +208,7 @@ async def export_outreach_analytics(
     campaign_id: str | None = None,
     sender_account_id: str | None = None,
     timeframe: str = Query("30d", description="'7d' | '14d' | '30d'"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
@@ -239,6 +234,15 @@ async def export_outreach_analytics(
         "messages_replied",
         "profile_visits",
         "post_engagements",
+        "email_provider_accepted",
+        "email_bounced",
+        "email_delivered",
+        "email_delivery_status",
+        "email_evidence_status",
+        "email_period_start_utc",
+        "email_as_of_utc",
+        "email_cohort_basis",
+        "email_bounce_basis",
     ])
     for day in daily_chart:
         raw_date = day.get("timestamp", day.get("date"))
@@ -251,6 +255,15 @@ async def export_outreach_analytics(
             day.get("replied", 0),
             day.get("profile_visits", 0),
             day.get("post_engagements", 0),
+            day.get("email_provider_accepted"),
+            day.get("email_bounced"),
+            day.get("email_delivered"),
+            day.get("email_delivery_status"),
+            day.get("email_evidence_status"),
+            day.get("email_period_start_utc"),
+            day.get("email_as_of_utc"),
+            day.get("email_cohort_basis"),
+            day.get("email_bounce_basis"),
         ])
 
     csv_bytes = output.getvalue().encode("utf-8")
@@ -265,62 +278,20 @@ async def export_outreach_analytics(
 
 @router.get("/live-feed")
 async def live_activity_feed(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """
-    Real-time Server-Sent Events (SSE) stream for live outreach touchpoints and activity.
-    Broadcasts completed tasks, invitations, replies, and heartbeats at $0 infra cost.
-    """
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
-
-    async def event_generator():
-        # Initial greeting event
-        init_payload = {
-            "type": "connected",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "status": "online",
-        }
-        yield f"event: connected\ndata: {json.dumps(init_payload)}\n\n"
-
-        last_check = datetime.now(timezone.utc) - timedelta(minutes=10)
-        try:
-            while True:
-                now = datetime.now(timezone.utc)
-                # Check for tasks completed since last check
-                recent_tasks = await db.outreach_tasks.find({
-                    "workspace_id": workspace_id,
-                    "status": "completed",
-                    "updated_at": {"$gt": last_check, "$lte": now},
-                }).sort("updated_at", -1).to_list(length=10)
-
-                for t in recent_tasks:
-                    payload = {
-                        "id": t.get("id"),
-                        "task_type": t.get("task_type"),
-                        "campaign_id": t.get("campaign_id"),
-                        "lead_id": t.get("lead_id"),
-                        "account_id": t.get("account_id"),
-                        "timestamp": (
-                            t["updated_at"].isoformat()
-                            if isinstance(t.get("updated_at"), datetime)
-                            else str(t.get("updated_at", now.isoformat()))
-                        ),
-                    }
-                    yield f"event: task_completed\ndata: {json.dumps(payload)}\n\n"
-
-                last_check = now
-                heartbeat = {
-                    "type": "heartbeat",
-                    "timestamp": now.isoformat(),
-                }
-                yield f"event: heartbeat\ndata: {json.dumps(heartbeat)}\n\n"
-                await asyncio.sleep(15)
-        except asyncio.CancelledError:
-            pass
+    """Completed-task observations with bounded, original-workspace access."""
+    try:
+        access = StreamAccess(current_user.get("user_id"), workspace_id(current_user),
+                              current_user.get("firebase_uid"))
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Invalid stream context") from None
+    # Start before returning the response: backpressure cannot reset the lifetime.
+    deadline = time.monotonic() + STREAM_LIFETIME_SECONDS
 
     return StreamingResponse(
-        event_generator(),
+        activity_events(db, access, deadline),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

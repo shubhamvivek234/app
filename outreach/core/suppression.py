@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, TypeVar
 
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorCollection, AsyncIOMotorCursor, AsyncIOMotorClientSession
-from pymongo.results import DeleteResult, InsertOneResult, UpdateResult
+from pymongo.results import DeleteResult, InsertOneResult, InsertManyResult, UpdateResult
 
 from pymongo.errors import DuplicateKeyError, PyMongoError
 from pymongo.read_concern import ReadConcern
@@ -93,9 +93,18 @@ class SuppressionCollection:
         self.scoped(document)
         return await self.collection.insert_one(document, **self.options(kwargs))
 
+    async def insert_many(self, documents: list[dict], **kwargs: Any) -> InsertManyResult:
+        for document in documents:
+            self.scoped(document)
+        return await self.collection.insert_many(documents, **self.options(kwargs))
+
     async def delete_one(self, query: dict, **kwargs: Any) -> DeleteResult:
         self.scoped(query)
         return await self.collection.delete_one(query, **self.options(kwargs))
+
+    async def delete_many(self, query: dict, **kwargs: Any) -> DeleteResult:
+        self.scoped(query)
+        return await self.collection.delete_many(query, **self.options(kwargs))
 
     async def replace_one(self, query: dict, document: dict, **kwargs: Any) -> UpdateResult:
         self.scoped(query)

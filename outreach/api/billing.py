@@ -9,10 +9,12 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo.errors import PyMongoError
+from outreach.core.workspace_scope import workspace_scope
 from pydantic import BaseModel, Field
 
-from api.deps import get_current_user, require_permission
 from db.mongo import get_db
+from outreach.api.dependencies import get_outreach_user, require_outreach_permission
 from outreach.core.paid_access import (
     PILOT_MAX_SENDERS, PRICE_USD_PER_SENDER_MONTH, entitlement_is_active,
 )
@@ -51,11 +53,11 @@ def calculate_price_per_seat(seats: int, interval: str = "monthly") -> float:
 
 @router.get("/plans")
 async def get_outreach_plans(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     workspace_id = _workspace_id(current_user)
-    entitlement = await db.outreach_entitlements.find_one({"workspace_id": workspace_id})
+    entitlement = await db.outreach_entitlements.find_one(workspace_scope(workspace_id))
     request = await db.outreach_access_requests.find_one({"workspace_id": workspace_id})
     public_entitlement = {
         key: entitlement.get(key) for key in (
@@ -76,10 +78,10 @@ async def get_outreach_plans(
     }
 
 
-@router.post("/request-access", dependencies=[require_permission("billing:manage")])
+@router.post("/request-access")
 async def request_pilot_access(
     req: AccessRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('billing:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     workspace_id = _workspace_id(current_user)
@@ -95,10 +97,10 @@ async def request_pilot_access(
     return {"status": "pending_quote", "message": "Request received. We will confirm country availability and cost before payment."}
 
 
-@router.post("/billing-email", dependencies=[require_permission("billing:manage")])
+@router.post("/billing-email")
 async def update_billing_email(
     req: UpdateBillingEmailRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('billing:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     email = req.billing_email.strip().lower()
@@ -112,40 +114,56 @@ async def update_billing_email(
     return {"status": "success", "billing_email": email}
 
 
-@router.post("/start-trial", dependencies=[require_permission("billing:manage")])
+@router.post("/start-trial")
 async def start_outreach_trial(
     req: StartTrialRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('billing:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     raise HTTPException(status_code=410, detail="The free trial is retired. Request managed pilot access instead.")
 
 
-@router.post("/update-seats", dependencies=[require_permission("billing:manage")])
+@router.post("/update-seats")
 async def update_seats(
     req: UpdateSeatsRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('billing:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     raise HTTPException(status_code=410, detail="Seat changes require a verified invoice and operator approval.")
 
 
-@router.post("/cancel", dependencies=[require_permission("billing:manage")])
+@router.post("/cancel")
 async def cancel_subscription(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('billing:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     workspace_id = _workspace_id(current_user)
-    entitlement = await db.outreach_entitlements.find_one({"workspace_id": workspace_id})
+    entitlement = await db.outreach_entitlements.find_one(workspace_scope(workspace_id))
     if not entitlement_is_active(entitlement):
         raise HTTPException(status_code=409, detail="No active paid outreach period to cancel")
     paid_through = entitlement["paid_through"]
     if isinstance(paid_through, str):
         paid_through = datetime.fromisoformat(paid_through.replace("Z", "+00:00"))
-    await db.outreach_entitlements.update_one(
-        {"workspace_id": workspace_id, "status": "active", "paid_through": entitlement["paid_through"]},
-        {"$set": {"cancel_at_period_end": True, "cancellation_requested_at": datetime.now(timezone.utc)}},
-    )
+    # Bind the decision to the captured invoice/term, including legacy absence.
+    fields = ('_id', 'status', 'paid_through', 'last_invoice_id', 'seats', 'payment_source', 'is_revoked')
+    basis = {field: entitlement[field] if field in entitlement else {'$exists': False} for field in fields}
+    prior = {field: entitlement[field] if field in entitlement else {'$exists': False}
+             for field in ('cancel_at_period_end', 'cancellation_requested_at')}
+    requested_at = entitlement.get('cancellation_requested_at') if entitlement.get('cancel_at_period_end') is True else None
+    try:
+        result = await db.outreach_entitlements.update_one(
+            {**workspace_scope(workspace_id), **basis, **prior},
+            {'$set': {'cancel_at_period_end': True,
+                      'cancellation_requested_at': requested_at or datetime.now(timezone.utc)}},
+        )
+        if result.matched_count != 1:
+            current = await db.outreach_entitlements.find_one(workspace_scope(workspace_id))
+            same_term = current and all((field in current) == (field in entitlement)
+                                       and current.get(field) == entitlement.get(field) for field in fields)
+            if not (same_term and entitlement_is_active(current) and current.get('cancel_at_period_end') is True):
+                raise HTTPException(status_code=409, detail='Paid outreach period changed. Reload billing before cancelling.')
+    except PyMongoError:
+        raise HTTPException(status_code=503, detail='Could not confirm cancellation. Reload billing before retrying.') from None
     return {
         "status": "cancellation_scheduled", "paid_through": paid_through.isoformat(),
         "message": "Outreach stays available until the paid period ends. The sender IP remains reserved through its already-paid provider term. Our operator must disable provider auto-renewal separately.",

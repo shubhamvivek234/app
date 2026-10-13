@@ -1,7 +1,7 @@
 """Regression checks for the outreach Leads CRM flow."""
 import os
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 from cryptography.fernet import Fernet
 
@@ -29,6 +29,7 @@ from outreach.api.leads import (
     router,
 )
 from outreach.core.lead_importer import LeadImporter, normalize_linkedin_url, extract_vanity_name
+from tests.outreach_memory import Database
 
 
 USER = {"user_id": "u1", "default_workspace_id": "ws1"}
@@ -47,14 +48,8 @@ def test_csv_handles_bom_empty_cells_and_host_variants():
 
 @pytest.mark.asyncio
 async def test_import_always_excludes_dnc_and_deduplicates_hosts():
-    db = SimpleNamespace()
-    db.outreach_leads = SimpleNamespace(
-        find=AsyncMock(return_value=[]), insert_many=AsyncMock(), count_documents=AsyncMock(return_value=0),
-    )
-    db.outreach_do_not_contact = SimpleNamespace(
-        find=AsyncMock(return_value=[{"linkedin_url": "https://www.linkedin.com/in/blocked"}]),
-    )
-    db.outreach_campaigns = SimpleNamespace(update_one=AsyncMock())
+    db = Database(outreach_campaigns=[{"id": "camp1", "workspace_id": "ws1", "status": "draft"}],
+        outreach_do_not_contact=[{"workspace_id": "ws1", "linkedin_url": "https://www.linkedin.com/in/blocked"}])
     leads = [
         {"linkedin_url": "https://linkedin.com/in/blocked"},
         {"linkedin_url": "https://linkedin.com/in/alice"},
@@ -64,28 +59,24 @@ async def test_import_always_excludes_dnc_and_deduplicates_hosts():
         leads, "camp1", "ws1", db, skip_already_contacted=False,
         skip_do_not_contact=False, campaign={"id": "camp1", "status": "draft"},
     )
+    assert len(result.pop("lead_ids")) == 1
     assert result == {"imported_count": 1, "skipped_count": 1, "duplicates_count": 1, "total_submitted": 3}
-    inserted = db.outreach_leads.insert_many.await_args.args[0]
+    inserted = db.outreach_leads.docs
     assert inserted[0]["country_code"] == ""
 
 
 @pytest.mark.asyncio
 async def test_import_skips_only_recorded_prior_outreach():
-    db = SimpleNamespace(
-        outreach_leads=SimpleNamespace(
-            find=AsyncMock(side_effect=[[], [{"linkedin_url": "https://www.linkedin.com/in/alice"}]]),
-            insert_many=AsyncMock(),
-        ),
-        outreach_do_not_contact=SimpleNamespace(find=AsyncMock(return_value=[])),
-        outreach_campaigns=SimpleNamespace(update_one=AsyncMock()),
-    )
+    db = Database(outreach_campaigns=[{"id": "camp1", "workspace_id": "ws1", "status": "draft"}],
+        outreach_leads=[{"workspace_id": "ws1", "campaign_id": "other", "linkedin_url": "https://www.linkedin.com/in/alice", "last_action_at": "recorded"}])
+    db.outreach_leads.find = Mock(wraps=db.outreach_leads.find)
     result = await LeadImporter.ingest_leads(
         [{"linkedin_url": "https://linkedin.com/in/alice"}],
         "camp1", "ws1", db, campaign={"id": "camp1", "status": "draft"},
     )
     assert result["skipped_count"] == 1
     assert result["imported_count"] == 0
-    assert db.outreach_leads.find.await_args_list[1].args[0]["last_action_at"] == {"$ne": None}
+    assert db.outreach_leads.find.call_args_list[1].args[0]["last_action_at"] == {"$ne": None}
 
 
 @pytest.mark.asyncio
@@ -311,18 +302,9 @@ async def test_preview_leads_row_level_errors_and_counts():
 
 @pytest.mark.asyncio
 async def test_http_preview_and_import_urls():
-    db = SimpleNamespace(
-        outreach_campaigns=SimpleNamespace(
-            find_one=AsyncMock(return_value={"id": "camp1", "status": "draft"}),
-            update_one=AsyncMock(),
-        ),
-        outreach_leads=SimpleNamespace(
-            find=AsyncMock(return_value=[]),
-            insert_many=AsyncMock(),
-            count_documents=AsyncMock(return_value=0),
-        ),
-        outreach_do_not_contact=SimpleNamespace(find=AsyncMock(return_value=[])),
-    )
+    db = Database(outreach_campaigns=[{"id": "camp1", "workspace_id": "ws1", "status": "draft"}],
+        workspaces=[{"workspace_id": "ws1", "owner_id": "u1"}],
+        workspace_members=[{"workspace_id": "ws1", "user_id": "u1", "role": "admin"}])
 
     app = FastAPI()
     app.include_router(router, prefix="/api/v1/outreach")
@@ -356,7 +338,7 @@ async def test_http_preview_and_import_urls():
         assert import_data["duplicates_count"] == 0
 
         # Verify inserted lead has source and source_metadata
-        inserted = db.outreach_leads.insert_many.await_args.args[0]
+        inserted = db.outreach_leads.docs
         assert inserted[0]["source"] == "pasted_urls"
         assert inserted[0]["source_metadata"]["consent_basis"] == "user_provided"
         assert inserted[0]["first_name"] == "Alex"

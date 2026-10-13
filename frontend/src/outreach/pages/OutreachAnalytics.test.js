@@ -48,7 +48,12 @@ describe('OutreachAnalytics component', () => {
       },
       email: {
         sent: 0,
-        delivered: 0,
+        provider_accepted: 0,
+        bounced: 0,
+        possible_bounced: 0,
+        delivery_unknown: 0,
+        delivered: null,
+        evidence_status: 'recorded',
         deliverability_rate: null,
         denominator: 0,
       },
@@ -90,9 +95,10 @@ describe('OutreachAnalytics component', () => {
     expect(container.textContent).toContain('3 replies (30%)');
     expect(container.textContent).toContain('10 messages recorded');
 
-    expect(container.textContent).toContain('Email Delivery');
-    expect(container.textContent).toContain('Not available');
-    expect(container.textContent).toContain('0 verified email delivery events');
+    expect(container.textContent).toContain('Email Outcomes');
+    expect(container.textContent).toContain('Delivery unavailable');
+    expect(container.textContent).toContain('Provider acceptances recorded in the selected UTC period');
+    expect(container.textContent).toContain('0 accepted emails with unknown delivery');
   });
 
   it('populates sender account filter and updates analytics query on selection', async () => {
@@ -160,5 +166,49 @@ describe('OutreachAnalytics component', () => {
     const exportCall = global.fetch.mock.calls.find(([callUrl]) => callUrl.includes('/analytics/export'));
     expect(exportCall).toBeTruthy();
     expect(exportCall[0]).toContain('timeframe=30d');
+  });
+
+  const emailCard = () => Array.from(container.querySelectorAll('span'))
+    .find((node) => node.textContent === 'Email Outcomes').parentElement.parentElement;
+
+  const installEmail = (email) => {
+    global.fetch = jest.fn((url) => Promise.resolve(ok(url.includes('/campaigns') || url.includes('/accounts')
+      ? [] : { ...mockAnalyticsData, kpis: { ...mockAnalyticsData.kpis, email } })));
+  };
+
+  it('keeps provider acceptance, reference bounces, possible bounces and unknown delivery distinct', async () => {
+    installEmail({ provider_accepted: 4, bounced: 1, possible_bounced: 1, delivery_unknown: 3,
+      delivered: 4, deliverability_rate: 100, evidence_status: 'recorded' });
+    await act(async () => root.render(<OutreachAnalytics />));
+    const card = emailCard().textContent;
+    expect(card).toContain('1 recorded reference bounces · 1 possible bounces');
+    expect(card).toContain('3 accepted emails with unknown delivery');
+    expect(card).toContain('Delivery unavailable');
+    expect(card).not.toContain('100%');
+    expect(card).not.toContain('4 delivered');
+  });
+
+  it('shows partial coverage and human or pending evidence without treating it as provider acceptance', async () => {
+    installEmail({ provider_accepted: 0, bounced: 0, possible_bounced: 0, delivery_unknown: 0,
+      human_reported: 2, pending_or_unknown_operations: 3, evidence_status: 'partial' });
+    await act(async () => root.render(<OutreachAnalytics />));
+    expect(emailCard().textContent).toContain('2 human assertions kept separate');
+    expect(emailCard().textContent).toContain('3 pending or unknown operations created in this period');
+    expect(emailCard().textContent).toContain('Known counts are not a complete history');
+  });
+
+  it('preserves unavailable counts through loading and source failure without zero placeholders', async () => {
+    let resolve;
+    global.fetch = jest.fn((url) => url.includes('/campaigns') || url.includes('/accounts')
+      ? Promise.resolve(ok([])) : new Promise((done) => { resolve = done; }));
+    await act(async () => root.render(<OutreachAnalytics />));
+    expect(emailCard().textContent).toContain('Loading…');
+    expect(emailCard().textContent).not.toContain('0 accepted');
+    await act(async () => resolve(ok({ ...mockAnalyticsData, kpis: { ...mockAnalyticsData.kpis,
+      email: { provider_accepted: null, bounced: null, possible_bounced: null,
+        delivery_unknown: null, evidence_status: 'unavailable' } } })));
+    expect(emailCard().textContent).toContain('Not available accepted emails with unknown delivery');
+    expect(emailCard().textContent).toContain('Email evidence is unavailable');
+    expect(emailCard().textContent).not.toContain('0 accepted');
   });
 });

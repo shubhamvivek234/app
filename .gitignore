@@ -88,6 +88,8 @@ celerybeat-schedule*
 
 # Build caches
 .cache/
+frontend/test-results/
+frontend/playwright-report/
 
 # Mobile development
 android-sdk/ frontend/node_modules/.cache/default-development/0.pack

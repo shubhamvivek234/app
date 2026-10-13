@@ -103,50 +103,22 @@ async def test_voyager_client_mock_methods():
 
 
 @pytest.mark.asyncio
-async def test_campaign_api_lifecycle():
-    """Verify campaign creation, lead pooling, and launch/pause states."""
-    mock_db = AsyncMock()
-    mock_db.outreach_campaigns.insert_one = AsyncMock()
-
-    user = {"user_id": "u1", "default_workspace_id": "ws1"}
-
-    # 1. Create Campaign
-    req = CreateCampaignRequest(name="Q4 SaaS Founders", sender_account_ids=["acc_1", "acc_2"])
-    camp = await create_campaign(req=req, current_user=user, db=mock_db)
-    assert camp["name"] == "Q4 SaaS Founders"
-    assert camp["status"] == "draft"
-
-    # 2. Mock Launch with 3 leads pooled across 2 senders
-    mock_db.outreach_campaigns.find_one = AsyncMock(return_value={
-        "id": camp["id"],
-        "user_id": "u1",
-        "workspace_id": "ws1",
-        "status": "draft",
-        "schedule": camp["schedule"],
-        "sender_account_ids": ["acc_1", "acc_2"],
-    })
-    senders_cursor = AsyncMock()
-    senders_cursor.to_list = AsyncMock(return_value=[
-        {"id": account_id, "workspace_id": "ws1", "status": "active", "session_cookie_enc": encrypt_secret(f"mock_{account_id}")}
-        for account_id in ("acc_1", "acc_2")
-    ])
-    mock_db.outreach_accounts.find = lambda query: senders_cursor
-    mock_db.outreach_sequences.find_one = AsyncMock(return_value=None)
-    mock_db.outreach_leads.count_documents = AsyncMock(return_value=3)
-    empty_cursor = AsyncMock()
-    empty_cursor.to_list = AsyncMock(return_value=[])
-    mock_db.outreach_engage_lists.find = lambda query: empty_cursor
-
-    # 3 unassigned leads
-    fake_leads = [{"id": "lead_1"}, {"id": "lead_2"}, {"id": "lead_3"}]
-    mock_db.outreach_leads.find.return_value.to_list = AsyncMock(return_value=fake_leads)
-    mock_db.outreach_leads.update_one = AsyncMock()
-    mock_db.outreach_campaigns.update_one = AsyncMock()
-
-    launch_res = await launch_campaign(camp["id"], current_user=user, db=mock_db)
-    assert launch_res["status"] == "launched"
-    assert launch_res["allocated_leads_count"] == 3
-
-    # 3. Pause
-    pause_res = await pause_campaign(camp["id"], current_user=user, db=mock_db)
-    assert pause_res["status"] == "paused"
+async def test_campaign_api_lifecycle(monkeypatch):
+    from tests.campaign_readiness_fixtures import admission_database
+    db = admission_database(monkeypatch, 'ws1', 'seed', 'acc_1', leads=3)
+    user = {'user_id': 'u1', 'default_workspace_id': 'ws1'}
+    camp = await create_campaign(req=CreateCampaignRequest(name='Q4 SaaS Founders', sender_account_ids=['acc_1', 'acc_2']), current_user=user, db=db)
+    assert camp['name'] == 'Q4 SaaS Founders' and camp['status'] == 'draft'
+    await db.outreach_sequences.update_one({}, {'$set': {'campaign_id': camp['id']}})
+    await db.outreach_leads.update_many({}, {'$set': {'campaign_id': camp['id']}})
+    account = await db.outreach_accounts.find_one({}); account['id'] = 'acc_2'; account['proxy']['proxy_id'] = 'asset-2'
+    await db.outreach_accounts.insert_one(account)
+    asset = await db.outreach_proxy_inventory.find_one({}); asset['_id'] = asset['proxy_id'] = 'asset-2'
+    await db.outreach_proxy_inventory.insert_one(asset)
+    await db.outreach_proxy_leases.insert_one({'_id': 'asset-2', 'workspace_id': 'ws1', 'sender_id': 'acc_2', 'provider': 'iproyal_static', 'country_code': 'US'})
+    await db.outreach_sender_slots.insert_one({'workspace_id': 'ws1', 'sender_id': 'acc_2'})
+    result = await launch_campaign(camp['id'], req=None, current_user=user, db=db)
+    assert result['status'] == 'launched' and result['allocated_leads_count'] == 3
+    leads = await db.outreach_leads.find({}).to_list(length=3)
+    assert {lead['assigned_account_id'] for lead in leads} == {'acc_1', 'acc_2'}
+    assert (await pause_campaign(camp['id'], current_user=user, db=db))['status'] == 'paused'

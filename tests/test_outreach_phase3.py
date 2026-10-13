@@ -9,6 +9,7 @@ if not os.environ.get("ENCRYPTION_KEY"):
 
 import pytest
 from unittest.mock import AsyncMock
+from tests.outreach_memory import Database
 from outreach.core.lead_importer import (
     LeadImporter,
     normalize_linkedin_url,
@@ -52,21 +53,9 @@ Invalid,Lead,None,None,http://twitter.com/notlinkedin,0,None
 @pytest.mark.asyncio
 async def test_lead_deduplication_and_ingestion():
     """Verify deduplication skips duplicates in campaign and blocks Do-Not-Contact URLs."""
-    mock_db = AsyncMock()
-
-    # Existing leads in campaign: 'https://linkedin.com/in/existing'
-    mock_db.outreach_leads.find.return_value.to_list = AsyncMock(return_value=[
-        {"linkedin_url": "https://linkedin.com/in/existing"}
-    ])
-
-    # Do-Not-Contact list: 'https://linkedin.com/in/vip-dnc'
-    mock_db.outreach_do_not_contact.find.return_value.to_list = AsyncMock(return_value=[
-        {"linkedin_url": "https://linkedin.com/in/vip-dnc"}
-    ])
-
-    mock_db.outreach_leads.insert_many = AsyncMock()
-    mock_db.outreach_campaigns.update_one = AsyncMock()
-
+    mock_db = Database(outreach_campaigns=[{"id": "camp_test", "workspace_id": "ws_test", "status": "draft"}],
+        outreach_leads=[{"workspace_id": "ws_test", "campaign_id": "camp_test", "linkedin_url": "https://linkedin.com/in/existing"}],
+        outreach_do_not_contact=[{"workspace_id": "ws_test", "linkedin_url": "https://linkedin.com/in/vip-dnc"}])
     leads_batch = [
         {"linkedin_url": "https://linkedin.com/in/new-lead-1", "first_name": "New 1"},
         {"linkedin_url": "https://linkedin.com/in/existing", "first_name": "Duplicate In Camp"},
@@ -92,13 +81,7 @@ async def test_lead_deduplication_and_ingestion():
 @pytest.mark.asyncio
 async def test_leads_api_endpoints():
     """Verify CSV import and Do-Not-Contact API endpoints."""
-    mock_db = AsyncMock()
-    mock_db.outreach_campaigns.find_one = AsyncMock(return_value={"id": "camp_123", "name": "Test"})
-    mock_db.outreach_leads.find.return_value.to_list = AsyncMock(return_value=[])
-    mock_db.outreach_do_not_contact.find.return_value.to_list = AsyncMock(return_value=[])
-    mock_db.outreach_leads.insert_many = AsyncMock()
-    mock_db.outreach_campaigns.update_one = AsyncMock()
-
+    mock_db = Database(outreach_campaigns=[{"id": "camp_123", "workspace_id": "ws1", "name": "Test", "status": "draft"}])
     user = {"user_id": "u1", "default_workspace_id": "ws1"}
 
     csv_data = "First Name,LinkedIn\nSatya,https://linkedin.com/in/satyanadella"

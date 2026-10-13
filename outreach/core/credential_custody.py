@@ -108,8 +108,8 @@ class CredentialCustody:
         finally:
             key[:] = bytes(len(key))
 
-    async def open(self, envelope: str, context: CredentialContext) -> str:
-        key = bytearray()
+    def inspect(self, envelope: str, context: CredentialContext) -> tuple:
+        """Validate bounded envelope metadata without opening a key or secret."""
         try:
             if not isinstance(envelope, str) or not envelope.startswith(PREFIX) or len(envelope) > 60000:
                 raise ValueError("Envelope format")
@@ -121,6 +121,14 @@ class CredentialCustody:
             nonce = _bytes(doc["nonce"], 12, exact=12)
             ciphertext = _bytes(doc["ciphertext"], MAX_SECRET_BYTES + 16)
             wrapped = _bytes(doc["wrapped_key"], 6144)
+            return header, nonce, ciphertext, wrapped
+        except Exception:
+            raise CustodyUnavailable("Credential metadata is unavailable") from None
+
+    async def open(self, envelope: str, context: CredentialContext) -> str:
+        key = bytearray()
+        try:
+            header, nonce, ciphertext, wrapped = self.inspect(envelope, context)
             plain = await self.provider.unwrap(wrapped, header["context"])
             if not isinstance(plain, bytes) or len(plain) != 32:
                 raise ValueError("Key response")

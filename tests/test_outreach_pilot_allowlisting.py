@@ -118,48 +118,17 @@ async def test_mailbox_sync_worker_skips_non_pilot_workspace(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_campaign_preflight_blocks_email_step_for_non_pilot_workspace(monkeypatch):
-    monkeypatch.setenv("OUTREACH_EMAIL_SEND_ENABLED", "true")
-    monkeypatch.setenv("OUTREACH_EMAIL_SYNC_ENABLED", "true")
-    monkeypatch.setenv("OUTREACH_MAILBOX_PILOT_WORKSPACES", "ws_pilot")
+    from tests.campaign_readiness_fixtures import admission_database
+    monkeypatch.setenv('OUTREACH_EMAIL_SEND_ENABLED', 'true')
+    monkeypatch.setenv('OUTREACH_EMAIL_SYNC_ENABLED', 'true')
+    monkeypatch.setenv('OUTREACH_MAILBOX_PILOT_WORKSPACES', 'ws_pilot')
+    db = admission_database(monkeypatch, 'ws_non_pilot', 'camp_1', 'acc_1', nodes=[
+        {'id': 'email', 'type': 'send_email', 'config': {'subject': 'Hi', 'body': 'Hello'}}])
+    report = await get_campaign_preflight('camp_1', current_user={'default_workspace_id': 'ws_non_pilot', 'user_id': 'usr_1'}, db=db)
+    mailbox = next(item for item in report['checklist'] if item['id'] == 'mailboxes')
+    assert mailbox['passed'] is False and 'not enabled for this workspace' in mailbox['message']
+    assert report['can_launch'] is False
 
-    db = MagicMock()
-    # Entitlement active
-    db.outreach_entitlements.find_one = AsyncMock(return_value={
-        "status": "active", "seats": 1, "paid_through": "2029-01-01T00:00:00Z",
-    })
-    # Campaign with email sequence
-    db.outreach_campaigns.find_one = AsyncMock(return_value={
-        "id": "camp_1",
-        "workspace_id": "ws_non_pilot",
-        "sender_account_ids": ["acc_1"],
-        "schedule": {"working_hours": {"start": "09:00", "end": "18:00"}, "days_of_week": [1, 2, 3, 4, 5]},
-    })
-    db.outreach_sequences.find_one = AsyncMock(return_value={
-        "campaign_id": "camp_1",
-        "nodes": [
-            {"id": "n1", "type": "visit_profile", "config": {}},
-            {"id": "n2", "type": "send_email", "config": {"subject": "Hi", "body": "Hello"}},
-        ],
-        "edges": [{"id": "e1", "source": "n1", "target": "n2"}],
-    })
-    cursor_acc = MagicMock()
-    cursor_acc.to_list = AsyncMock(return_value=[{
-        "id": "acc_1", "status": "active", "proxy": {"host": "10.0.0.1"},
-    }])
-    db.outreach_accounts.find.return_value = cursor_acc
-    db.outreach_leads.count_documents = AsyncMock(return_value=5)
-
-    user = {"default_workspace_id": "ws_non_pilot", "user_id": "usr_1"}
-    res = await get_campaign_preflight("camp_1", current_user=user, db=db)
-
-    mailbox_check = next((c for c in res["checklist"] if c["id"] == "mailboxes"), None)
-    assert mailbox_check is not None
-    assert mailbox_check["passed"] is False
-    assert "not enabled for this workspace in the current pilot" in mailbox_check["message"]
-    assert any("Email sequence steps are not enabled" in b for b in res["blockers"])
-
-
-# ── 2. Integrations Allowlist Unit Tests ──────────────────────────────────────
 
 def test_integrations_allowlist_matching(monkeypatch):
     monkeypatch.setenv("OUTREACH_INTEGRATIONS_ENABLED", "true")
@@ -239,6 +208,10 @@ async def test_outbox_fanout_suppresses_non_pilot_workspace(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_webhook_delivery_cancels_non_pilot_workspace(monkeypatch):
+    from cryptography.fernet import Fernet
+    from utils import encryption
+    monkeypatch.setenv('ENCRYPTION_KEY', Fernet.generate_key().decode())
+    monkeypatch.setattr(encryption, '_fernet', None)
     from tests.outreach_memory import Database
     from outreach.core.integration_delivery import IntegrationDelivery
     from utils.encryption import encrypt

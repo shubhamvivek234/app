@@ -639,8 +639,8 @@ async def _run_warmup_launches(db=None) -> dict:
                 }})
                 continue
             leads = await _fetch_cursor_docs(db.outreach_leads.find({
-                "campaign_id": campaign_id, "workspace_id": workspace_id,
-            }), length=10000)
+                "campaign_id": campaign_id, "workspace_id": workspace_id, "execution_state": {"$ne": "staged"},
+            }), length=10001)
             from outreach.core.sequence_versions import load_sequence
             sequence = await load_sequence(db, workspace_id, campaign_id, campaign=campaign)
             if (sorted(str(lead["id"]) for lead in leads) != campaign.get("auto_launch_lead_ids")

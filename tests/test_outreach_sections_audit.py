@@ -17,14 +17,22 @@ from outreach.api.inbox import ReplyRequest, send_thread_reply, trigger_inbox_sy
 from outreach.api.swipe import CreateSwipeItemRequest, RepurposeSwipeRequest, list_swipe_items, repurpose_swipe_item
 from outreach.engine.inbox_sync import InboxSynchronizer
 from outreach.tasks.sequence_executor import SequenceExecutor
+from tests.outreach_memory import Cursor
 
 
 USER = {"user_id": "user_a", "default_workspace_id": "workspace_a"}
 
 
+def empty_email_sources(db):
+    """Legacy count fixtures also provide actual empty read cursors."""
+    db.outreach_email_operations.find = MagicMock(side_effect=lambda *args: Cursor([]))
+    db.outreach_tasks.find = MagicMock(side_effect=lambda *args: Cursor([]))
+
+
 @pytest.mark.asyncio
 async def test_analytics_does_not_turn_manual_pipeline_stages_into_sends():
     db = MagicMock()
+    empty_email_sources(db)
     db.outreach_leads.count_documents = AsyncMock(return_value=4)
     db.outreach_tasks.count_documents = AsyncMock(return_value=0)
     db.outreach_engage_posts.count_documents = AsyncMock(return_value=0)
@@ -53,11 +61,14 @@ async def test_analytics_rejects_other_workspace_campaign():
 
 @pytest.mark.asyncio
 async def test_live_analytics_feed_is_workspace_scoped():
-    db = MagicMock()
-    cursor = MagicMock()
-    cursor.sort.return_value = cursor
-    cursor.to_list = AsyncMock(return_value=[])
-    db.outreach_tasks.find.return_value = cursor
+    from tests.test_outreach_stream_access import StreamDatabase
+    db = StreamDatabase(
+        users=[{**USER, "status": "active"}],
+        workspaces=[{"workspace_id": "workspace_a", "owner_id": "other"}],
+        workspace_members=[{"workspace_id": "workspace_a", "user_id": "user_a", "role": "viewer"}],
+        outreach_tasks=[],
+    )
+    db.outreach_tasks.find = MagicMock(wraps=db.outreach_tasks.find)
     response = await live_activity_feed(current_user=USER, db=db)
     stream = response.body_iterator
     await anext(stream)
@@ -282,6 +293,7 @@ async def test_inbox_worker_rejects_unapproved_legacy_payload(monkeypatch):
 @pytest.mark.asyncio
 async def test_analytics_sender_filtering_and_not_found():
     db = MagicMock()
+    empty_email_sources(db)
     # 404 on nonexistent sender
     db.outreach_accounts.find_one = AsyncMock(return_value=None)
     with pytest.raises(HTTPException) as exc:
@@ -317,6 +329,7 @@ async def test_analytics_sender_filtering_and_not_found():
 @pytest.mark.asyncio
 async def test_analytics_rate_denominators_and_provenance():
     db = MagicMock()
+    empty_email_sources(db)
     db.outreach_accounts.count_documents = AsyncMock(return_value=1)
     db.outreach_leads.count_documents = AsyncMock(side_effect=[
         10,  # total_leads
@@ -331,7 +344,6 @@ async def test_analytics_rate_denominators_and_provenance():
     db.outreach_tasks.count_documents = AsyncMock(side_effect=[
         10,  # requests_sent
         5,   # messages_sent
-        0,   # email_sent
         2,   # profile_visits
         1,   # post_engagements
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, # daily chart tasks
@@ -361,6 +373,7 @@ async def test_analytics_rate_denominators_and_provenance():
 @pytest.mark.asyncio
 async def test_analytics_export_csv_streaming():
     db = MagicMock()
+    empty_email_sources(db)
     db.outreach_accounts.count_documents = AsyncMock(return_value=1)
     db.outreach_leads.count_documents = AsyncMock(return_value=0)
     db.outreach_tasks.count_documents = AsyncMock(return_value=0)
@@ -382,5 +395,7 @@ async def test_analytics_export_csv_streaming():
     csv_text = content.decode("utf-8")
 
     lines = [line.strip() for line in csv_text.strip().split("\n") if line.strip()]
-    assert lines[0] == "date,requests_sent,requests_accepted,messages_sent,messages_replied,profile_visits,post_engagements"
+    assert lines[0] == ("date,requests_sent,requests_accepted,messages_sent,messages_replied,profile_visits,post_engagements,"
+        "email_provider_accepted,email_bounced,email_delivered,email_delivery_status,email_evidence_status,"
+        "email_period_start_utc,email_as_of_utc,email_cohort_basis,email_bounce_basis")
     assert len(lines) == 8  # 1 header + 7 days

@@ -59,6 +59,26 @@ def legacy_dispatch_fixtures(request, monkeypatch):
 
 
 @pytest.fixture
+def synthetic_campaign_persistence(monkeypatch):
+    """Isolate persistence only for explicitly selected in-memory route tests.
+
+    Native companions retain the real majority transaction and erasure checks.
+    Patching the consumer also makes these tests independent of import order.
+    """
+    async def apply(db, workspace_id, operation):
+        return await operation(db)
+
+    monkeypatch.setattr("outreach.core.campaign_deletion.mutate_suppression", apply)
+
+    def seed_document_ids(db):
+        for name, collection in db.collections.items():
+            for index, row in enumerate(collection.docs):
+                row.setdefault("_id", f"synthetic-{name}-{index}")
+
+    return seed_document_ids
+
+
+@pytest.fixture
 def outreach_paid_gate_stub(monkeypatch):
     # Legacy execution tests model a deployment explicitly enabled for live
     # actions; production remains disabled unless the operator opts in.

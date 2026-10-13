@@ -14,8 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from api.deps import get_current_user, require_permission
 from db.mongo import get_db
+from outreach.api.dependencies import get_outreach_user, require_outreach_permission
 from outreach.models import MessageSenderType
 from utils.free_llm_router import free_llm
 
@@ -35,8 +35,21 @@ async def _fetch_cursor_docs(cursor_or_coro: Any, length: int = 1000) -> list[di
     return []
 
 
+class ReplyContext(BaseModel):
+    account_id: str = Field(..., min_length=1, max_length=200)
+    conversation_urn: str = Field(..., min_length=1, max_length=1000)
+    thread_revision: int = Field(..., ge=0)
+
+
 class ReplyRequest(BaseModel):
     body: str = Field(..., min_length=1, max_length=8000)
+    request_id: uuid.UUID | None = None
+    context: ReplyContext | None = None
+
+
+def _reply_request_job_id(workspace_id: str, actor_id: str, request_id: uuid.UUID) -> str:
+    from outreach.core.authorization import canonical_hash
+    return 'inbox_request_' + canonical_hash([workspace_id, actor_id, str(request_id)])
 
 
 class UpdateIntentRequest(BaseModel):
@@ -55,7 +68,7 @@ async def list_inbox_threads(
     intent: str | None = Query(None, description="Filter by intent tag"),
     skip: int = 0,
     limit: int = 50,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
@@ -117,7 +130,7 @@ async def list_inbox_threads(
 @router.get("/{thread_id}")
 async def get_thread(
     thread_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
@@ -141,11 +154,11 @@ async def get_thread(
     return doc
 
 
-@router.post("/{thread_id}/reply", status_code=status.HTTP_202_ACCEPTED, dependencies=[require_permission("inbox:reply")])
+@router.post("/{thread_id}/reply", status_code=status.HTTP_202_ACCEPTED)
 async def send_thread_reply(
     thread_id: str,
     req: ReplyRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('inbox:reply'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
@@ -153,6 +166,21 @@ async def send_thread_reply(
     """
     user_id = current_user.get("user_id")
     ws_id = current_user.get("default_workspace_id") or user_id
+    job_id = _reply_request_job_id(ws_id, user_id, req.request_id) if req.request_id else f"inbox_{uuid.uuid4().hex}"
+    if req.request_id:
+        if not req.context:
+            raise HTTPException(422, 'Reply recipient context is required')
+        prior = await db.outreach_manual_actions.find_one({"_id": job_id, "workspace_id": ws_id,
+            "actor_id": user_id, "source": "inbox_reply"})
+        if prior:
+            binding = prior.get('binding', {})
+            if (prior.get('target_id') != thread_id or prior.get('account_id') != req.context.account_id
+                    or prior.get('content') != {'body': req.body.strip()}
+                    or binding.get('recipient') != req.context.conversation_urn
+                    or binding.get('context', {}).get('thread_revision') != req.context.thread_revision):
+                raise HTTPException(409, 'This reply request already belongs to different content or a different recipient')
+            # Read the original operation; never renew approval, overwrite receipts, or republish it.
+            return {"status": "queued", "job_id": job_id}
     thread = await db.outreach_inbox_threads.find_one({
         "id": thread_id,
         "workspace_id": ws_id,
@@ -188,9 +216,9 @@ async def send_thread_reply(
     from celery_workers.tasks.outreach import send_inbox_reply
     from outreach.core.manual_actions import ManualActions
     from pymongo.errors import DuplicateKeyError
-    job_id = f"inbox_{uuid.uuid4().hex}"
     try:
-        await ManualActions(db).queue(job_id, ws_id, account_id, thread_id, "inbox_reply", "reply", {"body": req.body.strip()}, user_id)
+        options = {'expected_target': req.context.model_dump()} if req.context else {}
+        await ManualActions(db).queue(job_id, ws_id, account_id, thread_id, "inbox_reply", "reply", {"body": req.body.strip()}, user_id, **options)
     except (DuplicateKeyError, ValueError) as exc:
         raise HTTPException(409, "A reply is already pending or its content needs review") from exc
     await db.outreach_inbox_jobs.insert_one({
@@ -204,10 +232,22 @@ async def send_thread_reply(
     return {"status": "queued", "job_id": job_id}
 
 
-@router.post("/{thread_id}/ai-reply", response_model=AIReplyResponse, dependencies=[require_permission("inbox:reply")])
+@router.get('/requests/{request_id}')
+async def get_reply_request(request_id: uuid.UUID,
+    current_user: dict = Depends(get_outreach_user), db: AsyncIOMotorDatabase = Depends(get_db)):
+    ws_id = current_user['default_workspace_id']
+    job_id = _reply_request_job_id(ws_id, current_user['user_id'], request_id)
+    manual = await db.outreach_manual_actions.find_one({'_id': job_id, 'workspace_id': ws_id,
+        'actor_id': current_user['user_id'], 'source': 'inbox_reply'})
+    if not manual:
+        raise HTTPException(404, 'Reply request not found; no new reply was sent')
+    return await get_inbox_job(job_id, current_user=current_user, db=db)
+
+
+@router.post("/{thread_id}/ai-reply", response_model=AIReplyResponse)
 async def generate_ai_reply_options(
     thread_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('inbox:reply'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
@@ -246,10 +286,10 @@ async def generate_ai_reply_options(
         raise HTTPException(status_code=503, detail="AI suggestions are unavailable. Please try again.") from exc
 
 
-@router.post("/sync", status_code=status.HTTP_202_ACCEPTED, dependencies=[require_permission("inbox:manage")])
+@router.post("/sync", status_code=status.HTTP_202_ACCEPTED)
 async def trigger_inbox_sync(
     account_id: str | None = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('inbox:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
@@ -295,7 +335,7 @@ async def trigger_inbox_sync(
 @router.get("/jobs/{job_id}")
 async def get_inbox_job(
     job_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     ws_id = current_user.get("default_workspace_id") or current_user.get("user_id")
@@ -309,6 +349,12 @@ async def get_inbox_job(
         manual = await db.outreach_manual_actions.find_one({"_id": job_id, "workspace_id": ws_id})
         if manual:
             job["status"] = manual["status"]
+            stage = manual.get('stages', {}).get('reply', {})
+            if (manual['status'] == 'completed' and not job.get('result')
+                    and stage.get('status') == 'provider_accepted' and stage.get('accepted_at')):
+                job['result'] = {'message': {'id': job_id, 'sender_type': 'user', 'sender_name': 'You',
+                    'body': manual['content']['body'], 'timestamp': stage['accepted_at'],
+                    'evidence_source': stage.get('provenance')}}
             if manual["status"] in {"unknown_outcome", "awaiting_approval"}:
                 job["error"] = "This reply needs review. Check the conversation before another send."
             elif manual["status"] in {"resolving", "resolved"}:
@@ -321,9 +367,9 @@ async def get_inbox_job(
     return {key: value for key, value in job.items() if key not in {"_id", "user_id"}}
 
 
-@router.post("/seed-demo", dependencies=[require_permission("inbox:manage")])
+@router.post("/seed-demo")
 async def seed_demo_threads(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('inbox:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
@@ -414,11 +460,11 @@ async def seed_demo_threads(
     return {"status": "seeded", "count": len(demo_threads)}
 
 
-@router.patch("/{thread_id}/intent", dependencies=[require_permission("inbox:manage")])
+@router.patch("/{thread_id}/intent")
 async def update_thread_intent(
     thread_id: str,
     req: UpdateIntentRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('inbox:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
@@ -475,11 +521,11 @@ class ToggleTagRequest(BaseModel):
 
 # ── Reminders Endpoints ───────────────────────────────────────────────────
 
-@router.post("/{thread_id}/reminders", dependencies=[require_permission("inbox:manage")])
+@router.post("/{thread_id}/reminders")
 async def create_thread_reminder(
     thread_id: str,
     req: CreateReminderRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('inbox:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Schedules a follow-up reminder for a conversation thread."""
@@ -522,7 +568,7 @@ async def create_thread_reminder(
 @router.get("/{thread_id}/reminders")
 async def list_thread_reminders(
     thread_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Fetches reminders for a specific thread."""
@@ -544,10 +590,10 @@ async def list_thread_reminders(
     return items
 
 
-@router.delete("/reminders/{reminder_id}", dependencies=[require_permission("inbox:manage")])
+@router.delete("/reminders/{reminder_id}")
 async def delete_thread_reminder(
     reminder_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('inbox:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Deletes or cancels a reminder."""
@@ -609,7 +655,7 @@ LEGACY_SNIPPET_REPLACEMENTS = {
 
 @router.get("/snippets/list")
 async def list_snippets(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Lists saved reply snippets. Seeds standard defaults if empty."""
@@ -650,10 +696,10 @@ async def list_snippets(
     return items
 
 
-@router.post("/snippets", dependencies=[require_permission("inbox:manage")])
+@router.post("/snippets")
 async def create_snippet(
     req: CreateSnippetRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('inbox:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Creates a new reusable saved reply snippet."""
@@ -678,10 +724,10 @@ async def create_snippet(
     return doc
 
 
-@router.delete("/snippets/{snippet_id}", dependencies=[require_permission("inbox:manage")])
+@router.delete("/snippets/{snippet_id}")
 async def delete_snippet(
     snippet_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('inbox:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Deletes a saved snippet."""
@@ -709,7 +755,7 @@ DEFAULT_TAGS = [
 
 @router.get("/tags/list")
 async def list_tags(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Lists inbox tags with colored indicators. Seeds defaults if empty."""
@@ -742,10 +788,10 @@ async def list_tags(
     return items
 
 
-@router.post("/tags", dependencies=[require_permission("inbox:manage")])
+@router.post("/tags")
 async def create_tag(
     req: CreateTagRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('inbox:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Creates a custom lead tag with color."""
@@ -772,10 +818,10 @@ async def create_tag(
     return doc
 
 
-@router.delete("/tags/{tag_id}", dependencies=[require_permission("inbox:manage")])
+@router.delete("/tags/{tag_id}")
 async def delete_tag(
     tag_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('inbox:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Deletes an inbox tag."""
@@ -799,11 +845,11 @@ async def delete_tag(
     return {"status": "deleted", "tag_id": tag_id}
 
 
-@router.patch("/{thread_id}/tags", dependencies=[require_permission("inbox:manage")])
+@router.patch("/{thread_id}/tags")
 async def toggle_thread_tag(
     thread_id: str,
     req: ToggleTagRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('inbox:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Toggles a tag on or off a thread."""

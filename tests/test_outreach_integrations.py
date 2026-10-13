@@ -14,7 +14,10 @@ from outreach.api.integrations import authenticate_api_key, create_api_key, crea
 def test_experimental_integrations_are_not_published_by_default():
     from outreach.api.router import router
 
-    paths = [route.path for route in router.routes]
+    from fastapi import FastAPI
+    app = FastAPI()
+    app.include_router(router)
+    paths = app.openapi()['paths']
     assert not any(path.startswith("/outreach/integrations") for path in paths)
     assert not any(path.startswith("/outreach/public") for path in paths)
 

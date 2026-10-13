@@ -10,8 +10,8 @@ from fastapi.responses import RedirectResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
 
-from api.deps import get_current_user, require_permission
 from db.mongo import get_db
+from outreach.api.dependencies import get_outreach_user, require_outreach_permission
 from outreach.core.mailbox_connection import (
     consume_oauth_callback, start_mailbox_connection,
     mailbox_connection_enabled, email_send_enabled, browser_binding_cookie_name,
@@ -22,10 +22,8 @@ from outreach.core.mailbox_connection import (
 router = APIRouter(prefix="/mailboxes", tags=["Outreach Email Mailboxes"])
 
 
-async def _open_mailbox_workspace(current_user: dict = Depends(get_current_user),
-                                  db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
-    from outreach.core.erasure import require_open_workspace
-    await require_open_workspace(current_user, db)
+async def _open_mailbox_workspace(current_user: dict = Depends(get_outreach_user)) -> dict:
+    """Compatibility name for canonical, open read context; OAuth is separate."""
     return current_user
 
 
@@ -80,10 +78,10 @@ async def hunter_key_status(
             "enabled": _enabled("OUTREACH_HUNTER_ENABLED")}
 
 
-@router.put("/hunter-key", dependencies=[require_permission("account:connect")])
+@router.put("/hunter-key")
 async def put_hunter_key(
     request: HunterKeyRequest,
-    current_user: dict = Depends(_open_mailbox_workspace),
+    current_user: dict = require_outreach_permission('account:connect'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     if not _enabled("OUTREACH_HUNTER_ENABLED"):
@@ -109,9 +107,9 @@ async def put_hunter_key(
     return {"configured": True, "enabled": True}
 
 
-@router.delete("/hunter-key", dependencies=[require_permission("account:connect")])
+@router.delete("/hunter-key")
 async def delete_hunter_key(
-    current_user: dict = Depends(_open_mailbox_workspace),
+    current_user: dict = require_outreach_permission('account:connect'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     from outreach.core.suppression import mutate_suppression
@@ -141,12 +139,12 @@ async def get_mailbox_connection_job(
     return result
 
 
-@router.post("/{provider}/authorize", dependencies=[require_permission("account:connect")])
+@router.post("/{provider}/authorize")
 async def authorize_mailbox(
     provider: str,
     request: AuthorizeMailboxRequest,
     response: Response,
-    current_user: dict = Depends(_open_mailbox_workspace),
+    current_user: dict = require_outreach_permission('account:connect'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     workspace_id = _workspace_id(current_user)
@@ -192,10 +190,10 @@ async def mailbox_oauth_callback(
     return redirect
 
 
-@router.delete("/{sender_account_id}", dependencies=[require_permission("account:disconnect")])
+@router.delete("/{sender_account_id}")
 async def disconnect_mailbox(
     sender_account_id: str,
-    current_user: dict = Depends(_open_mailbox_workspace),
+    current_user: dict = require_outreach_permission('account:disconnect'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     workspace_id = _workspace_id(current_user)

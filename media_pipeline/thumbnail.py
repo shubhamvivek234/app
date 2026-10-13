@@ -7,26 +7,28 @@ import asyncio
 import logging
 import os
 from pathlib import Path
+from utils.private_temp import private_scratch_path
 
 logger = logging.getLogger(__name__)
 
 THUMB_SIZE = (400, 400)
 THUMB_QUALITY = 80
-TEMP_DIR = "/tmp/thumbnails"
 PROCESS_TIMEOUT = 60
 
 
 async def generate_thumbnail(source_path: str, mime_type: str, media_id: str, user_id: str) -> str:
     """Generate a WebP thumbnail. Returns local temp path."""
-    Path(TEMP_DIR).mkdir(parents=True, exist_ok=True)
-    output_path = os.path.join(TEMP_DIR, f"{media_id}.webp")
-
-    if mime_type and mime_type.startswith("video/"):
-        await _video_thumbnail(source_path, output_path)
-    elif mime_type == "application/pdf":
-        await _pdf_thumbnail(source_path, output_path)
-    else:
-        await _image_thumbnail(source_path, output_path)
+    output_path = private_scratch_path('.webp')
+    try:
+        if mime_type and mime_type.startswith("video/"):
+            await _video_thumbnail(source_path, output_path)
+        elif mime_type == "application/pdf":
+            await _pdf_thumbnail(source_path, output_path)
+        else:
+            await _image_thumbnail(source_path, output_path)
+    except BaseException:
+        Path(output_path).unlink(missing_ok=True)
+        raise
 
     return output_path
 

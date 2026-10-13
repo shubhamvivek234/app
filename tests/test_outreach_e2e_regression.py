@@ -203,71 +203,18 @@ async def test_campaign_autodraft_and_sequence_flow():
 
 
 @pytest.mark.asyncio
-async def test_campaign_launch_and_lead_queueing():
-    """Verify launching a campaign sets status to active, DAG compiled, and leads queued."""
-    mock_db = AsyncMock()
-    camp_doc = {
-        "id": "camp_test_launch",
-        "workspace_id": "ws_launch",
-        "user_id": "u_launch",
-        "name": "Q3 Enterprise Warmup",
-        "status": "draft",
-        "sender_account_ids": ["acc_sender_1"],
-    }
-    mock_db.outreach_campaigns.find_one = AsyncMock(return_value=camp_doc)
-    mock_db.outreach_campaigns.update_one = AsyncMock()
-    sender_cursor = AsyncMock()
-    sender_cursor.to_list = AsyncMock(return_value=[{
-        "id": "acc_sender_1", "workspace_id": "ws_launch", "status": "active",
-        "session_cookie_enc": encrypt_secret("AQverified-session"),
-        "jsession_id": "ajax:123", "proxy": {"host": "198.51.100.10"},
-    }])
-    mock_db.outreach_accounts.find = lambda q: sender_cursor
-
-    # Prebuilt sequence exists
-    prebuilts = DAGCompiler.get_prebuilt_templates()
-    seq_doc = {
-        "campaign_id": "camp_test_launch",
-        "nodes": prebuilts[0]["nodes"],
-        "edges": prebuilts[0]["edges"],
-        "tree": prebuilts[0]["tree"],
-    }
-    mock_db.outreach_sequences.find_one = AsyncMock(return_value=seq_doc)
-    mock_db.outreach_sequences.update_one = AsyncMock()
-    mock_db.outreach_leads.count_documents = AsyncMock(return_value=5)
-    empty_cursor = AsyncMock()
-    empty_cursor.to_list = AsyncMock(return_value=[])
-    mock_db.outreach_engage_lists.find = lambda q: empty_cursor
-
-    # Unassigned leads to be pooled and queued
-    leads_list = [{"id": f"lead_{i}", "current_node_id": None} for i in range(5)]
-    mock_cursor = AsyncMock()
-    mock_cursor.to_list = AsyncMock(return_value=leads_list)
-    mock_db.outreach_leads.find = lambda q: mock_cursor
-
-    lead_updates = []
-    async def mock_lead_update_one(filter_q, update_q):
-        lead_updates.append((filter_q, update_q))
-        return AsyncMock()
-    mock_db.outreach_leads.update_one = mock_lead_update_one
-
-    user = {"user_id": "u_launch", "workspace_id": "ws_launch"}
-    launch_req = LaunchCampaignRequest(
-        sender_account_ids=["acc_sender_1"],
-        daily_limits={"connection_invites": 25},
-    )
-
-    result = await launch_campaign("camp_test_launch", req=launch_req, current_user=user, db=mock_db)
-    assert result["status"] in ("launched", "success")
-    assert result["campaign_id"] == "camp_test_launch"
-    assert result["allocated_leads_count"] == 5
-
-    # Verify update_one was called with root node
-    assert len(lead_updates) == 5
-    filter_q, update_q = lead_updates[0]
-    assert filter_q["id"] == "lead_0"
-    assert update_q["$set"]["current_node_id"] == "step_connect_root"
-    assert update_q["$set"]["execution_state"] == LeadExecutionState.QUEUED
+async def test_campaign_launch_and_lead_queueing(monkeypatch):
+    from tests.campaign_readiness_fixtures import admission_database
+    template = DAGCompiler.get_prebuilt_templates()[0]
+    db = admission_database(monkeypatch, 'ws_launch', 'camp_test_launch', 'acc_sender_1', leads=5, nodes=template['nodes'])
+    await db.outreach_sequences.update_one({}, {'$set': {'edges': template['edges']}})
+    request = LaunchCampaignRequest(sender_account_ids=['acc_sender_1'], daily_limits={'connection_invites': 25})
+    result = await launch_campaign('camp_test_launch', req=request, current_user={'user_id': 'u_launch', 'workspace_id': 'ws_launch'}, db=db)
+    assert result['status'] == 'launched' and result['allocated_leads_count'] == 5
+    root = DAGCompiler.validate_and_compile(template['nodes'], template['edges'])['root_node_ids'][0]
+    leads = await db.outreach_leads.find({}).to_list(length=5)
+    assert all(lead['current_node_id'] == root and lead['execution_state'] == LeadExecutionState.QUEUED for lead in leads)
+    assert all(lead['assigned_account_id'] == 'acc_sender_1' for lead in leads)
 
 
 @pytest.mark.asyncio

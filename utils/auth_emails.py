@@ -59,7 +59,8 @@ def resolve_auth_email_logo_url(raw_logo: str | None = None, *, frontend_url: st
         return cleaned
 
     base = (frontend_url or resolve_frontend_base_url(_clean_env("FRONTEND_URL", DEFAULT_FRONTEND_URL))).rstrip("/")
-    if not base or any(local in base.lower() for local in ("localhost", "127.0.0.1", "0.0.0.0")):
+    # Local URL detection; this code does not bind a socket.
+    if not base or any(local in base.lower() for local in ("localhost", "127.0.0.1", "0.0.0.0")):  # nosec B104
         return DEFAULT_LOGO_URL
 
     return f"{base}/unravler-logo-dark.png"

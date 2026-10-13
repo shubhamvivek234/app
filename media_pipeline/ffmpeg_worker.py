@@ -11,6 +11,7 @@ import os
 import struct
 import uuid
 from pathlib import Path
+from utils.private_temp import private_scratch_path
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +31,6 @@ def _ffmpeg_timeout_for_file(file_path: str) -> int:
     extra = int((size_gb - 0.5) * _FFMPEG_SECS_PER_GB)
     return min(_FFMPEG_BASE_TIMEOUT + extra, 7200)  # cap at 2 hours
 
-TEMP_DIR = "/tmp/media_processing"
-
 
 def _build_transcode_scale_filter(width: int | None, height: int | None) -> str:
     width = int(width or 0)
@@ -43,23 +42,22 @@ def _build_transcode_scale_filter(width: int | None, height: int | None) -> str:
 
 async def process_video(input_path: str, metadata: dict) -> str:
     """Process a video. Returns path to processed output."""
-    Path(TEMP_DIR).mkdir(parents=True, exist_ok=True)
-    output_path = os.path.join(TEMP_DIR, f"{uuid.uuid4()}.mp4")
-
-    if metadata.get("needs_hdr_conversion"):
-        return await _convert_hdr_to_sdr(input_path, output_path)
-
-    if metadata.get("is_animated_gif"):
-        return await _convert_gif_to_mp4(input_path, output_path)
-
     needs_transcode = (
         metadata.get("codec") not in ("h264", "avc1") or
         max(int(metadata.get("width") or 0), int(metadata.get("height") or 0)) > 1920
     )
-    if needs_transcode:
+    if not (metadata.get('needs_hdr_conversion') or metadata.get('is_animated_gif') or needs_transcode):
+        return input_path
+    output_path = private_scratch_path('.mp4')
+    try:
+        if metadata.get("needs_hdr_conversion"):
+            return await _convert_hdr_to_sdr(input_path, output_path)
+        if metadata.get("is_animated_gif"):
+            return await _convert_gif_to_mp4(input_path, output_path)
         return await _transcode_h264(input_path, output_path, metadata)
-
-    return input_path
+    except BaseException:
+        Path(output_path).unlink(missing_ok=True)
+        raise
 
 
 async def _transcode_h264(input_path: str, output_path: str, metadata: dict) -> str:

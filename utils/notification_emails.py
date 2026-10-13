@@ -35,7 +35,8 @@ def get_notification_email_config() -> dict[str, Any]:
     raw_logo = _clean_env("AUTH_EMAIL_LOGO_URL")
     if raw_logo:
         logo_url = raw_logo
-    elif not frontend_url or any(local in frontend_url.lower() for local in ("localhost", "127.0.0.1", "0.0.0.0")):
+    # Local URL detection; this code does not bind a socket.
+    elif not frontend_url or any(local in frontend_url.lower() for local in ("localhost", "127.0.0.1", "0.0.0.0")):  # nosec B104
         logo_url = DEFAULT_LOGO_URL
     else:
         logo_url = f"{frontend_url.rstrip('/')}/unravler-logo-dark.png"
@@ -43,7 +44,8 @@ def get_notification_email_config() -> dict[str, Any]:
     raw_white_logo = _clean_env("AUTH_EMAIL_WHITE_LOGO_URL")
     if raw_white_logo:
         white_logo_url = raw_white_logo
-    elif not frontend_url or any(local in frontend_url.lower() for local in ("localhost", "127.0.0.1", "0.0.0.0")):
+    # Local URL detection; this code does not bind a socket.
+    elif not frontend_url or any(local in frontend_url.lower() for local in ("localhost", "127.0.0.1", "0.0.0.0")):  # nosec B104
         white_logo_url = DEFAULT_WHITE_LOGO_URL
     else:
         white_logo_url = f"{frontend_url.rstrip('/')}/unravler-logo-white.png"

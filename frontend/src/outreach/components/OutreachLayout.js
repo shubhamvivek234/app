@@ -15,35 +15,42 @@ import {
 import UnravlerLogo from '@/components/UnravlerLogo';
 
 export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hideTopHeader = false, isFullBleed = false, children }) {
-  const [workspaceName, setWorkspaceName] = useState('My First Workspace');
-  const [accountsCount, setAccountsCount] = useState(0);
-  const [trialDays, setTrialDays] = useState(4);
+  const [workspaceName, setWorkspaceName] = useState('Workspace');
+  const [actorInitials, setActorInitials] = useState('?');
+  const [accountsCount, setAccountsCount] = useState(null);
+  const [billing, setBilling] = useState(null);
+  const [billingUnavailable, setBillingUnavailable] = useState(false);
 
   useEffect(() => {
+    let current = true;
     const fetchOverview = async () => {
-      try {
-        const token = localStorage.getItem('token');
-        const [accRes, billRes] = await Promise.all([
-          fetch('/api/v1/outreach/accounts', {
-            headers: { Authorization: token ? `Bearer ${token}` : '' },
-          }),
-          fetch('/api/v1/outreach/billing/plans', {
-            headers: { Authorization: token ? `Bearer ${token}` : '' },
-          }),
-        ]);
-
-        if (accRes.ok) {
-          const accs = await accRes.json();
-          setAccountsCount(accs.length || 0);
-        }
-        if (billRes.ok) {
-          const bill = await billRes.json();
-          if (bill.trial_days_remaining) setTrialDays(bill.trial_days_remaining);
-        }
-      } catch (_) {}
+      const token = localStorage.getItem('token');
+      const results = await Promise.allSettled([
+        '/api/v1/outreach/accounts', '/api/v1/outreach/billing/plans',
+        '/api/v1/workspace/members', '/api/v1/auth/me',
+      ].map(async (url) => {
+        const response = await fetch(url, { credentials: 'include', headers: { Authorization: token ? `Bearer ${token}` : '' } });
+        if (!response.ok) throw new Error('Overview unavailable');
+        return response.json();
+      }));
+      if (!current) return;
+      const [accounts, plan, workspace, actor] = results;
+      setAccountsCount(accounts.status === 'fulfilled' && Array.isArray(accounts.value) ? accounts.value.length : null);
+      if (plan.status === 'fulfilled' && typeof plan.value?.access_active === 'boolean') {
+        setBilling(plan.value); setBillingUnavailable(false);
+      } else setBillingUnavailable(true);
+      setWorkspaceName(workspace.status === 'fulfilled' && workspace.value?.workspace_name?.trim() || 'Workspace');
+      const name = actor.status === 'fulfilled' && actor.value?.display_name?.trim();
+      setActorInitials(name ? name.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase() : '?');
     };
     fetchOverview();
+    return () => { current = false; };
   }, [activeTab]);
+  const trialDays = billing?.trial_available === true && Number.isInteger(billing.trial_days_remaining)
+    && billing.trial_days_remaining >= 0 ? billing.trial_days_remaining : null;
+  const billingLabel = billingUnavailable ? 'Billing unavailable' : !billing ? 'Checking access…'
+    : trialDays !== null ? `Trial ends in ${trialDays} days` : billing.access_active ? 'Paid access active'
+      : billing.access_request ? 'Access request pending' : 'Paid pilot';
 
   const navItems = [
     { id: 'home', label: 'Home', icon: LayoutGrid },
@@ -118,7 +125,7 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hi
             onClick={() => onNavigate('settings')}
             className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-bold cursor-pointer hover:ring-2 hover:ring-indigo-300 transition-all"
           >
-            SS
+            {actorInitials}
           </div>
         </div>
       </aside>
@@ -135,7 +142,7 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hi
                 className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 cursor-pointer transition-colors shadow-2xs"
               >
                 <div className="w-6 h-6 rounded-lg bg-indigo-600 text-white flex items-center justify-center text-xs font-bold">
-                  M
+                  {workspaceName[0]?.toUpperCase() || '?'}
                 </div>
                 <div className="text-left">
                   <p className="text-xs font-bold text-gray-900 leading-tight flex items-center gap-1">
@@ -143,14 +150,14 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hi
                     <ChevronDown className="w-3 h-3 text-gray-400" />
                   </p>
                   <p className="text-[10px] text-gray-400 leading-none">
-                    {accountsCount} {accountsCount === 1 ? 'account' : 'accounts'}
+                    {accountsCount === null ? 'Accounts unavailable' : `${accountsCount} ${accountsCount === 1 ? 'account' : 'accounts'}`}
                   </p>
                 </div>
               </div>
 
               {/* Trial Status Pill */}
               <div className="hidden sm:flex items-center px-2.5 py-1 rounded-full border border-indigo-100 bg-indigo-50/60 text-indigo-700 text-[11px] font-medium">
-                Trial ends in {trialDays} days
+                {billingLabel}
               </div>
             </div>
 

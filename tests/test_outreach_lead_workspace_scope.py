@@ -243,7 +243,16 @@ async def test_activity_never_opens_foreign_sender_or_campaign_references():
     assert response.json()["lead"]["assigned_sender_name"] is None
 
 
-async def test_cancel_and_staged_commit_do_not_write_id_collisions_in_another_workspace():
+@pytest.fixture
+def synthetic_admission(monkeypatch):
+    """Isolate persistence here; the native companion verifies real transactions."""
+    from outreach.core import suppression
+    async def apply(db, workspace_id, operation):
+        return await operation(db)
+    monkeypatch.setattr(suppression, 'mutate_suppression', apply)
+
+
+async def test_cancel_and_staged_commit_do_not_write_id_collisions_in_another_workspace(synthetic_admission):
     db = tenant_db()
     await db.outreach_import_jobs.insert_one({
         "id": "job", "workspace_id": FOREIGN, "campaign_id": "campaign", "status": "queued",
@@ -257,6 +266,7 @@ async def test_cancel_and_staged_commit_do_not_write_id_collisions_in_another_wo
     for scope in (FOREIGN, WORKSPACE):
         await db.outreach_leads.insert_one({
             "id": "staged", "workspace_id": scope, "import_job_id": "job",
+            "campaign_id": "campaign", "linkedin_url": "https://linkedin.com/in/staged",
             "execution_state": "staged", "first_name": "Original",
         })
     async with client_for(db) as client:
@@ -293,7 +303,7 @@ async def test_staged_commit_requires_current_workspace_campaign_before_any_writ
     ("/leads/import-urls", {"urls_text": "https://linkedin.com/in/alice, Alice"}),
     ("/leads/import-csv", {"csv_text": "LinkedIn URL,First Name\nhttps://linkedin.com/in/alice,Alice"}),
 ])
-async def test_common_importer_updates_only_the_authorized_campaign_count(path, payload):
+async def test_common_importer_updates_only_the_authorized_campaign_count(path, payload, synthetic_admission):
     db = tenant_db()
     db.outreach_campaigns.docs.insert(0, {"id": "campaign", "workspace_id": FOREIGN, "leads_count": 10})
     async with client_for(db) as client:

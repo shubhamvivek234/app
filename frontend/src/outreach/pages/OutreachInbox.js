@@ -2,6 +2,25 @@ import React, { useState, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 
 const THREAD_PAGE_SIZE = 50;
+const REPLY_HOLDS_KEY = 'unravler.inbox.reply-holds.v1';
+const readReplyHolds = () => {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(REPLY_HOLDS_KEY) || '{}');
+    return Object.fromEntries(Object.entries(saved).filter(([key, value]) => key.length < 4000
+      && value && typeof value.requestId === 'string' && /^[a-f0-9-]{36}$/i.test(value.requestId))
+      .map(([key, value]) => [key, { requestId: value.requestId, jobId: value.jobId || null, phase: 'review' }]));
+  } catch { return {}; }
+};
+const persistReplyHolds = (holds) => {
+  // Persist references only; conversation text and credentials stay out of browser storage.
+  sessionStorage.setItem(REPLY_HOLDS_KEY, JSON.stringify(Object.fromEntries(
+    Object.entries(holds).filter(([, value]) => value).map(([key, value]) => [key,
+      { requestId: value.requestId, jobId: value.jobId || null }]))));
+};
+const threadKey = (thread) => thread && [thread.workspace_id, thread.account_id, thread.id]
+  .every((value) => typeof value === 'string' && value.trim())
+  ? JSON.stringify([thread.workspace_id, thread.account_id, thread.channel || 'linkedin', thread.id,
+    thread.lead_urn || '', thread.conversation_urn || '']) : null;
 
 const inboxFetch = (url, options = {}) => {
   const token = localStorage.getItem('token');
@@ -12,9 +31,10 @@ const inboxFetch = (url, options = {}) => {
   });
 };
 
-async function waitForInboxJob(jobId) {
+async function waitForInboxJob(jobId, canContinue = () => true) {
   for (let attempt = 0; attempt < 45; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
+    if (!canContinue()) throw new Error('Reply continues in the background.');
     const response = await inboxFetch(`/api/v1/outreach/inbox/jobs/${jobId}`);
     if (!response.ok) throw new Error('Could not check inbox job status');
     const job = await response.json();
@@ -53,7 +73,31 @@ export default function OutreachInbox() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isAccountDropdownOpen, setIsAccountDropdownOpen] = useState(true); // Open by default matching media_1790103710555.png
   const [selectedThread, setSelectedThread] = useState(null);
-  const [replyText, setReplyText] = useState('');
+  const [drafts, setDrafts] = useState({});
+  const draftsRef = useRef({});
+  const [replySubmissions, setReplySubmissions] = useState(readReplyHolds);
+  const submissionsRef = useRef(replySubmissions);
+  const selectedThreadKey = useRef(null);
+  const mounted = useRef(true);
+  const refreshThreads = useRef(null);
+  const activeKey = threadKey(selectedThread);
+  const replyText = drafts[activeKey]?.text || '';
+  const replySubmission = replySubmissions[activeKey];
+  const setReplyText = (value) => {
+    const key = selectedThreadKey.current;
+    if (!key) return;
+    const prior = draftsRef.current[key] || { text: '', revision: 0 };
+    const next = { text: typeof value === 'function' ? value(prior.text) : value, revision: prior.revision + 1 };
+    draftsRef.current = { ...draftsRef.current, [key]: next };
+    setDrafts(draftsRef.current);
+  };
+  const saveSubmission = (key, submission) => {
+    if (!mounted.current) return;
+    const next = { ...submissionsRef.current, [key]: submission };
+    persistReplyHolds(next);
+    submissionsRef.current = next;
+    if (mounted.current) setReplySubmissions(submissionsRef.current);
+  };
   const [isSending, setIsSending] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -132,12 +176,13 @@ export default function OutreachInbox() {
       setThreads((previous) => offset ? [...previous, ...data] : data);
       setHasMoreThreads(data.length === THREAD_PAGE_SIZE);
       if (offset) return;
-      const updated = data.find((t) => t.id === selectedThreadId.current);
+      const updated = data.find((t) => threadKey(t) === selectedThreadKey.current);
       if (updated) setSelectedThread(updated);
       else if (data.length) {
         handleSelectThread(data[0]);
       } else {
         selectedThreadId.current = null;
+        selectedThreadKey.current = null;
         setSelectedThread(null);
         setRemindersList([]);
       }
@@ -148,6 +193,7 @@ export default function OutreachInbox() {
           setThreads([]);
           setSelectedThread(null);
           selectedThreadId.current = null;
+          selectedThreadKey.current = null;
           setHasMoreThreads(false);
           setLoadError(err.message || 'Could not load conversations');
         }
@@ -160,6 +206,12 @@ export default function OutreachInbox() {
       }
     }
   };
+  refreshThreads.current = fetchThreads;
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   useEffect(() => {
     fetchAccounts();
@@ -444,6 +496,8 @@ export default function OutreachInbox() {
   }, [selectedThread?.messages]);
 
   const handleSelectThread = async (thread) => {
+    const key = threadKey(thread);
+    selectedThreadKey.current = key;
     selectedThreadId.current = thread.id;
     setSelectedThread(thread);
     setAiSuggestions([]);
@@ -456,7 +510,8 @@ export default function OutreachInbox() {
       });
       if (res.ok) {
         const full = await res.json();
-        if (selectedThreadId.current !== thread.id) return;
+        if (selectedThreadKey.current !== key || full.id !== thread.id) return;
+        selectedThreadKey.current = threadKey(full);
         setSelectedThread(full);
         setThreads((prev) =>
           prev.map((t) => (t.id === thread.id ? { ...t, unread_count: 0 } : t))
@@ -468,51 +523,99 @@ export default function OutreachInbox() {
     }
   };
 
+  const finishReply = async (key, submission, job) => {
+    if (!job.result?.message) throw new Error('Could not confirm the reply result. Check Action Review.');
+    if (!mounted.current) return;
+    const current = draftsRef.current[key];
+    if (submission.text !== undefined && current?.revision === submission.revision && current.text === submission.text) {
+      draftsRef.current = { ...draftsRef.current, [key]: { text: '', revision: current.revision + 1 } };
+      setDrafts(draftsRef.current);
+    }
+    if (selectedThreadKey.current === key) {
+      setSelectedThread((prev) => threadKey(prev) === key ? ({
+        ...prev, last_message_snippet: job.result.message.body,
+        messages: (prev.messages || []).some((message) => message.id === job.result.message.id)
+          ? prev.messages : [...(prev.messages || []), job.result.message],
+      }) : prev);
+    }
+    saveSubmission(key, null);
+    await refreshThreads.current();
+    toast.success('Reply dispatched');
+  };
+
   const handleSendReply = async () => {
-    if (!replyText.trim() || !selectedThread || isSending) return;
+    const key = threadKey(selectedThread);
+    const draft = draftsRef.current[key];
+    if (!key || key !== selectedThreadKey.current || !draft?.text.trim() || isSending || submissionsRef.current[key]) return;
     const thread = selectedThread;
-    const body = replyText.trim();
+    const body = draft.text.trim();
+    if (!thread.conversation_urn || !window.crypto?.randomUUID) {
+      toast.error('Refresh this conversation before sending.'); return;
+    }
+    let submission = { ...draft, body, requestId: window.crypto.randomUUID(), phase: 'confirming', jobId: null };
+    try { saveSubmission(key, submission); }
+    catch { toast.error('Reply safety storage is unavailable. Enable session storage before sending.'); return; }
     setIsSending(true);
     try {
       const token = localStorage.getItem('token');
-      const res = await inboxFetch(`/api/v1/outreach/inbox/${selectedThread.id}/reply`, {
+      const res = await inboxFetch(`/api/v1/outreach/inbox/${thread.id}/reply`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
         },
-        body: JSON.stringify({ body }),
+        body: JSON.stringify({ body, request_id: submission.requestId, context: {
+          account_id: thread.account_id, conversation_urn: thread.conversation_urn,
+          thread_revision: thread.thread_revision || 0,
+        } }),
       });
 
       if (res.ok) {
         const data = await res.json();
         if (data.status !== 'queued' || !data.job_id) throw new Error('Reply was not queued');
-        const job = await waitForInboxJob(data.job_id);
-        if (selectedThreadId.current === thread.id) {
-          setSelectedThread((prev) => prev && ({
-            ...prev,
-            last_message_snippet: body,
-            messages: [...(prev.messages || []), job.result.message],
-          }));
-          setReplyText('');
-        }
-        await fetchThreads();
-        toast.success('Reply dispatched');
+        submission = { ...submission, jobId: data.job_id, phase: 'pending' };
+        saveSubmission(key, submission);
+        const job = await waitForInboxJob(data.job_id, () => mounted.current);
+        await finishReply(key, submission, job);
       } else {
         const errData = await res.json().catch(() => ({}));
+        // Definitive request rejection permits correction. Server errors may hide acceptance.
+        if (res.status >= 400 && res.status < 500 && res.status !== 408) saveSubmission(key, null);
+        else saveSubmission(key, { ...submission, phase: 'review' });
         toast.error(errData.detail || 'Failed to dispatch reply');
       }
     } catch (err) {
       console.error('Reply failed:', err);
-      toast.error(err.message || 'Failed to dispatch reply');
+      saveSubmission(key, { ...submission, phase: 'review' });
+      if (mounted.current) toast.error(err.message || 'Could not confirm reply status. Check Action Review.');
     } finally {
-      setIsSending(false);
+      if (mounted.current) setIsSending(false);
+    }
+  };
+
+  const handleCheckReply = async () => {
+    const key = selectedThreadKey.current;
+    const submission = submissionsRef.current[key];
+    if (!submission || isSending) return;
+    setIsSending(true);
+    try {
+      const path = submission.jobId ? `jobs/${submission.jobId}` : `requests/${submission.requestId}`;
+      const res = await inboxFetch(`/api/v1/outreach/inbox/${path}`);
+      if (!res.ok) throw new Error('Could not check reply status. Check Action Review.');
+      const job = await res.json();
+      if (job.status === 'completed') await finishReply(key, submission, job);
+      else toast.error('Reply is still pending or needs review. No new reply was sent.');
+    } catch (err) {
+      toast.error(err.message || 'Could not check reply status.');
+    } finally {
+      if (mounted.current) setIsSending(false);
     }
   };
 
   const handleLoadAiReplies = async () => {
     if (!selectedThread) return;
     const threadId = selectedThread.id;
+    const key = selectedThreadKey.current;
     setLoadingAi(true);
     try {
       const token = localStorage.getItem('token');
@@ -522,7 +625,7 @@ export default function OutreachInbox() {
       });
       if (res.ok) {
         const data = await res.json();
-        if (selectedThreadId.current === threadId) setAiSuggestions(data.suggestions || []);
+        if (selectedThreadKey.current === key) setAiSuggestions(data.suggestions || []);
       } else {
         toast.error('Failed to load AI suggestions');
       }
@@ -1069,13 +1172,20 @@ export default function OutreachInbox() {
                 />
                 <button
                   onClick={handleSendReply}
-                  disabled={isSending || !replyText.trim()}
+                  disabled={isSending || !activeKey || !!replySubmission || !replyText.trim()}
                   className="p-2.5 bg-[#5145cd] hover:bg-[#4338ca] text-white rounded-xl disabled:opacity-40 transition-colors shrink-0 shadow-2xs"
                   title="Send message"
                 >
                   <Send className="w-3.5 h-3.5" />
                 </button>
               </div>
+              {!activeKey && <p className="text-xs text-amber-700">Conversation details are unavailable. Refresh before replying.</p>}
+              {replySubmission && (
+                <div className="text-xs text-amber-700" role="status">
+                  The original reply request is retained. Check its status before another send.
+                  <button type="button" disabled={isSending} onClick={handleCheckReply} className="ml-2 underline">Check reply status</button>
+                </div>
+              )}
             </div>
           </>
         ) : (

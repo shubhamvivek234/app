@@ -11,8 +11,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from api.deps import get_current_user, require_permission
 from db.mongo import get_db
+from outreach.api.dependencies import get_outreach_user, require_outreach_permission
 from outreach.models import SwipeFileItem
 from utils.free_llm_router import free_llm
 
@@ -52,10 +52,10 @@ class RepurposeSwipeRequest(BaseModel):
     writing_style_id: Optional[str] = None
 
 
-@router.post("", status_code=status.HTTP_201_CREATED, dependencies=[require_permission("content:manage")])
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def create_swipe_item(
     req: CreateSwipeItemRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('content:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Save an inspiring LinkedIn post into the swipe file."""
@@ -83,7 +83,7 @@ async def list_swipe_items(
     search: Optional[str] = None,
     skip: int = 0,
     limit: int = 30,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """List all saved swipe file cards with tag and keyword filtering."""
@@ -108,10 +108,10 @@ async def list_swipe_items(
     return await cursor.to_list(limit)
 
 
-@router.delete("/{item_id}", dependencies=[require_permission("content:manage")])
+@router.delete("/{item_id}")
 async def delete_swipe_item(
     item_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('content:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
@@ -121,11 +121,11 @@ async def delete_swipe_item(
     return {"status": "deleted", "item_id": item_id}
 
 
-@router.post("/{item_id}/repurpose", dependencies=[require_permission("content:manage")])
+@router.post("/{item_id}/repurpose")
 async def repurpose_swipe_item(
     item_id: str,
     req: RepurposeSwipeRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('content:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """

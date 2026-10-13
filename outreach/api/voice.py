@@ -3,8 +3,8 @@ import base64
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Request
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
-from api.deps import get_current_user, require_permission
 from db.mongo import get_db
+from outreach.api.dependencies import get_outreach_user, require_outreach_permission
 from outreach.core import suppression
 from outreach.core.erasure import require_open_workspace
 from outreach.core.voice_studio import VoiceStudio, public_job, require_profile, consent_current, now, enabled
@@ -82,7 +82,7 @@ async def queued(db, ws, actor, op, request, **kwargs):
 
 
 @router.get('')
-async def list_voices(current_user: dict = Depends(get_current_user), db=Depends(get_db)):
+async def list_voices(current_user: dict = Depends(get_outreach_user), db=Depends(get_db)):
     await available(current_user, db)
     ws = workspace(current_user)
     voices = await db.outreach_voices.find({'workspace_id': ws}).limit(5).to_list(length=5)
@@ -93,17 +93,17 @@ async def list_voices(current_user: dict = Depends(get_current_user), db=Depends
         'jobs': [public_job(j) for j in jobs], 'studio_enabled': enabled(), 'used_count': len(voices), 'max_voices': 5}
 
 
-@router.post('/clone', status_code=202, dependencies=[require_permission('voice:manage')])
+@router.post('/clone', status_code=202)
 async def clone_voice(file: UploadFile = File(...), name: str = Form(...), consent: bool = Form(False),
-                      request_id: str = Form(...), current_user: dict = Depends(get_current_user), db=Depends(get_db)):
+                      request_id: str = Form(...), current_user: dict = require_outreach_permission('voice:manage'), db=Depends(get_db)):
     await available(current_user, db)
     audio = await file.read(MAX_PCM_BYTES + 45)
     return await queued(db, workspace(current_user), current_user.get('user_id'), 'clone', request_id,
         name=name, audio=audio, consent=consent)
 
 
-@router.post('/preview', status_code=202, dependencies=[require_permission('voice:manage')])
-async def preview_voice_note(req: VoicePreviewRequest, current_user: dict = Depends(get_current_user), db=Depends(get_db)):
+@router.post('/preview', status_code=202)
+async def preview_voice_note(req: VoicePreviewRequest, current_user: dict = require_outreach_permission('voice:manage'), db=Depends(get_db)):
     await available(current_user, db)
     if any(key not in {'first_name', 'last_name', 'company_name', 'job_title'} or len(value) > 200
            for key, value in req.lead_sample.items()):
@@ -113,8 +113,8 @@ async def preview_voice_note(req: VoicePreviewRequest, current_user: dict = Depe
         voice_id=req.voice_id, script=script)
 
 
-@router.get('/jobs/{job_id}', dependencies=[require_permission('voice:manage')])
-async def job_status(job_id: str, current_user: dict = Depends(get_current_user), db=Depends(get_db)):
+@router.get('/jobs/{job_id}')
+async def job_status(job_id: str, current_user: dict = require_outreach_permission('voice:manage'), db=Depends(get_db)):
     await available(current_user, db)
     job = await db.outreach_voice_studio_jobs.find_one({'workspace_id': workspace(current_user), '_id': job_id})
     if not job:
@@ -122,8 +122,8 @@ async def job_status(job_id: str, current_user: dict = Depends(get_current_user)
     return public_job(job)
 
 
-@router.post('/jobs/{job_id}/cancel', dependencies=[require_permission('voice:manage')])
-async def cancel_job(job_id: str, current_user: dict = Depends(get_current_user), db=Depends(get_db)):
+@router.post('/jobs/{job_id}/cancel')
+async def cancel_job(job_id: str, current_user: dict = require_outreach_permission('voice:manage'), db=Depends(get_db)):
     await available(current_user, db)
     try:
         return public_job(await VoiceStudio(db).cancel(workspace(current_user), job_id, current_user.get('user_id')))
@@ -131,8 +131,8 @@ async def cancel_job(job_id: str, current_user: dict = Depends(get_current_user)
         raise HTTPException(409, str(exc)) from None
 
 
-@router.get('/jobs/{job_id}/audio', dependencies=[require_permission('voice:manage')])
-async def saved_audio(job_id: str, current_user: dict = Depends(get_current_user), db=Depends(get_db)):
+@router.get('/jobs/{job_id}/audio')
+async def saved_audio(job_id: str, current_user: dict = require_outreach_permission('voice:manage'), db=Depends(get_db)):
     await available(current_user, db)
     try:
         audio = await VoiceStudio(db).preview(workspace(current_user), job_id, current_user.get('user_id'))
@@ -141,8 +141,8 @@ async def saved_audio(job_id: str, current_user: dict = Depends(get_current_user
     return {'media_type': 'audio/wav', 'audio_base64': base64.b64encode(audio).decode()}
 
 
-@router.post('/{voice_id}/assign', dependencies=[require_permission('voice:manage')])
-async def assign_voice(voice_id: str, req: AssignVoiceRequest, current_user: dict = Depends(get_current_user), db=Depends(get_db)):
+@router.post('/{voice_id}/assign')
+async def assign_voice(voice_id: str, req: AssignVoiceRequest, current_user: dict = require_outreach_permission('voice:manage'), db=Depends(get_db)):
     await available(current_user, db)
     ws = workspace(current_user)
     async def apply(current):
@@ -162,8 +162,8 @@ async def assign_voice(voice_id: str, req: AssignVoiceRequest, current_user: dic
     return {'status': 'success', 'voice_id': voice_id, 'assigned_account_ids': req.account_ids}
 
 
-@router.post('/{voice_id}/consent', dependencies=[require_permission('voice:manage')])
-async def update_consent(voice_id: str, req: ConsentRequest, current_user: dict = Depends(get_current_user), db=Depends(get_db)):
+@router.post('/{voice_id}/consent')
+async def update_consent(voice_id: str, req: ConsentRequest, current_user: dict = require_outreach_permission('voice:manage'), db=Depends(get_db)):
     await available(current_user, db)
     ws, actor = workspace(current_user), current_user.get('user_id')
     async def apply(current):
@@ -188,7 +188,7 @@ async def update_consent(voice_id: str, req: ConsentRequest, current_user: dict 
     return {'status': 'consent_recorded' if req.consent else 'consent_revoked'}
 
 
-@router.delete('/{voice_id}', status_code=202, dependencies=[require_permission('voice:manage')])
-async def delete_voice(voice_id: str, request_id: str, current_user: dict = Depends(get_current_user), db=Depends(get_db)):
+@router.delete('/{voice_id}', status_code=202)
+async def delete_voice(voice_id: str, request_id: str, current_user: dict = require_outreach_permission('voice:manage'), db=Depends(get_db)):
     await available(current_user, db)
     return await queued(db, workspace(current_user), current_user.get('user_id'), 'delete', request_id, voice_id=voice_id)

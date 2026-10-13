@@ -44,21 +44,22 @@ async def test_review_draft_http_flow_returns_created_draft_without_linkedin_wri
     assert response.status_code == 201
     assert response.json()["contact_id"] == "contact_1"
     assert listing.status_code == 200
-    db.outreach_engage_posts.update_one.assert_not_awaited()
+    assert db.outreach_engage_posts.update_one.await_args.args[1] == {"$inc": {"projection_revision": 1}}
 
 
 def make_db():
     db = SimpleNamespace()
     db.outreach_campaigns = SimpleNamespace(find_one=AsyncMock(return_value=None))
     db.outreach_engage_lists = SimpleNamespace(find_one=AsyncMock(return_value={
-        "id": "list_1", "workspace_id": "workspace_1",
-    }))
+        "_id": "list-source", "id": "list_1", "workspace_id": "workspace_1",
+    }), update_one=AsyncMock(return_value=SimpleNamespace(matched_count=1)))
+    db.outreach_engage_contacts = SimpleNamespace(find_one=AsyncMock(return_value={"_id": "contact-source", "id": "contact_1", "workspace_id": "workspace_1"}), update_one=AsyncMock(return_value=SimpleNamespace(matched_count=1)))
     db.outreach_engage_posts = SimpleNamespace(find_one=AsyncMock(return_value={
-        "id": "post_1", "list_id": "list_1", "workspace_id": "workspace_1",
+        "_id": "post-source", "id": "post_1", "list_id": "list_1", "workspace_id": "workspace_1",
         "contact_id": "contact_1",
         "post_url": "https://www.linkedin.com/feed/update/urn:li:activity:1/",
         "author_name": "Alex", "content_text": "A thoughtful post",
-    }), update_one=AsyncMock())
+    }), update_one=AsyncMock(return_value=SimpleNamespace(matched_count=1)))
     db.outreach_engage_drafts = SimpleNamespace(
         insert_one=AsyncMock(), find_one=AsyncMock(), update_one=AsyncMock(),
         find=lambda *args, **kwargs: SimpleNamespace(
@@ -81,7 +82,7 @@ async def test_create_draft_saves_review_text_without_publishing():
     assert result["source"] == "manual_review"
     assert result["contact_id"] == "contact_1"
     db.outreach_engage_drafts.insert_one.assert_awaited_once()
-    db.outreach_engage_posts.update_one.assert_not_awaited()
+    assert db.outreach_engage_posts.update_one.await_args.args[1] == {"$inc": {"projection_revision": 1}}
 
 
 @pytest.mark.asyncio
@@ -111,7 +112,7 @@ async def test_update_draft_edit_and_self_report_do_not_change_confirmed_post():
     )
     assert result["status"] == "completed"
     assert result["completion_source"] == "self_reported"
-    db.outreach_engage_posts.update_one.assert_not_awaited()
+    assert db.outreach_engage_posts.update_one.await_args.args[1] == {"$inc": {"projection_revision": 1}}
 
 
 @pytest.mark.asyncio
@@ -157,7 +158,7 @@ async def test_deleting_list_cascades_to_review_drafts():
     db.outreach_engage_drafts.delete_many = AsyncMock()
     await delete_engage_list("list_1", current_user=USER, db=db)
     db.outreach_engage_drafts.delete_many.assert_awaited_once_with({
-        "list_id": "list_1", "workspace_id": "workspace_1",
+        "list_id": "list_1", "workspace_id": "workspace_1", "workspace_id.0": {"$exists": False},
     })
 
 
@@ -174,7 +175,7 @@ async def test_deleting_contact_cascades_to_its_review_drafts():
     db.outreach_engage_lists.update_one = AsyncMock()
     await delete_engage_contact("list_1", "contact_1", current_user=USER, db=db)
     db.outreach_engage_drafts.delete_many.assert_awaited_once_with({
-        "contact_id": "contact_1", "list_id": "list_1", "workspace_id": "workspace_1",
+        "contact_id": "contact_1", "list_id": "list_1", "workspace_id": "workspace_1", "workspace_id.0": {"$exists": False},
     })
 
 

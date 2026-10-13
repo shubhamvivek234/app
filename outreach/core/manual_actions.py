@@ -37,7 +37,8 @@ class ManualActions:
         return make_binding(workspace_id=job["workspace_id"], account=account, source=job["source"],
             recipient=recipient, action="inbox_reply" if job["action"] == "reply" else job["action"], content=job["content"], context=context)
 
-    async def queue(self, job_id: str, workspace_id: str, account_id: str, target_id: str, source: str, action: str, content: dict, actor: str) -> dict:
+    async def queue(self, job_id: str, workspace_id: str, account_id: str, target_id: str, source: str, action: str, content: dict, actor: str,
+                    *, expected_target: dict | None = None) -> dict:
         if source not in {"engage", "inbox_reply"} or action not in ACCEPTED or not actor:
             raise ValueError("An identified user and supported action are required")
         if (source == "engage") != (action in {"like", "comment"}):
@@ -46,6 +47,10 @@ class ManualActions:
         target = await self.target(workspace_id, target_id, source)
         if not account or not target or (source == "inbox_reply" and target.get("account_id") != account_id):
             raise ValueError("The selected sender or target is unavailable")
+        if expected_target is not None and (source != 'inbox_reply' or any(
+                target.get(key, 0 if key == 'thread_revision' else None) != expected_target.get(key)
+                for key in ('account_id', 'conversation_urn', 'thread_revision'))):
+            raise ValueError('The reply recipient or conversation changed')
         now = datetime.now(timezone.utc)
         stages = {name: {"status": "pending"} for name in (["like", "comment"] if action == "comment" and content.get("auto_like") else [action])}
         job = {"_id": job_id, "workspace_id": workspace_id, "account_id": account_id, "target_id": target_id,
@@ -60,6 +65,7 @@ class ManualActions:
         if source == "inbox_reply":
             claimed = await self.db.outreach_inbox_threads.update_one({"id": target_id, "workspace_id": workspace_id,
                 "account_id": account_id, "manual_action_id": {"$exists": False},
+                "conversation_urn": target.get('conversation_urn'),
                 "thread_revision": target["thread_revision"] if "thread_revision" in target else {"$exists": False}}, {
                 "$set": {"manual_action_id": job_id}})
             if not claimed.matched_count:

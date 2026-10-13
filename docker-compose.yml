@@ -179,8 +179,10 @@ services:
     image: alpine:3.20
     command: >
       sh -c "mkdir -p /quarantine &&
+             chmod 700 /quarantine &&
              chown -R 1001:1001 /quarantine &&
-             chmod -R 775 /quarantine"
+             find /quarantine -type d -exec chmod 700 {} + &&
+             find /quarantine -type f -exec chmod 600 {} +"
     volumes:
       - quarantine_data:/quarantine
     restart: "no"

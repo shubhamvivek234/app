@@ -4,11 +4,12 @@ import os
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr
 
-from api.deps import CurrentUser, DB, VerifiedUser, require_permission
+from api.deps import CurrentUser, DB, require_permission, require_verified_email
 from utils.frontend_urls import build_frontend_url, resolve_frontend_base_url
 from utils.roles import has_permission
 
@@ -104,8 +105,8 @@ async def _serialize_invite(db: DB, invite: dict, workspace_name: str | None = N
     }
 
 
-@router.get("/workspace/members", dependencies=[require_permission("workspace:read")])
-async def list_members(current_user: CurrentUser, db: DB):
+@router.get("/workspace/members")
+async def list_members(current_user: Annotated[dict, require_permission('workspace:read')], db: DB):
     workspace_id = _workspace_id_for(current_user)
     workspace = await db.workspaces.find_one(
         {"workspace_id": workspace_id},
@@ -161,9 +162,9 @@ async def list_members(current_user: CurrentUser, db: DB):
 @router.post(
     "/workspace/members/invite",
     status_code=status.HTTP_201_CREATED,
-    dependencies=[require_permission("workspace:invite")],
+    dependencies=[Depends(require_verified_email)],
 )
-async def invite_member(body: InviteRequest, current_user: VerifiedUser, db: DB):
+async def invite_member(body: InviteRequest, current_user: Annotated[dict, require_permission('workspace:invite')], db: DB):
     if body.role not in VALID_ROLES or body.role == "owner":
         raise HTTPException(status_code=422, detail=f"Invalid role. Must be one of {sorted(VALID_ROLES - {'owner'})}")
 
@@ -222,9 +223,8 @@ async def invite_member(body: InviteRequest, current_user: VerifiedUser, db: DB)
 @router.delete(
     "/workspace/invites/{invite_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[require_permission("workspace:invite")],
 )
-async def revoke_invite(invite_id: str, current_user: CurrentUser, db: DB):
+async def revoke_invite(invite_id: str, current_user: Annotated[dict, require_permission('workspace:invite')], db: DB):
     workspace_id = _workspace_id_for(current_user)
     result = await db.workspace_invites.update_one(
         {"workspace_id": workspace_id, "invite_id": invite_id, "status": "pending"},
@@ -237,9 +237,8 @@ async def revoke_invite(invite_id: str, current_user: CurrentUser, db: DB):
 @router.delete(
     "/workspace/members/{member_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[require_permission("workspace:remove_member")],
 )
-async def remove_member(member_id: str, current_user: CurrentUser, db: DB):
+async def remove_member(member_id: str, current_user: Annotated[dict, require_permission('workspace:remove_member')], db: DB):
     workspace_id = _workspace_id_for(current_user)
     if member_id == current_user["user_id"]:
         raise HTTPException(status_code=400, detail="Cannot remove yourself from the workspace")
@@ -258,11 +257,8 @@ async def remove_member(member_id: str, current_user: CurrentUser, db: DB):
         raise HTTPException(status_code=404, detail="Member not found")
 
 
-@router.patch(
-    "/workspace/members/{member_id}/role",
-    dependencies=[require_permission("workspace:update")],
-)
-async def update_member_role(member_id: str, body: RoleUpdate, current_user: CurrentUser, db: DB):
+@router.patch("/workspace/members/{member_id}/role")
+async def update_member_role(member_id: str, body: RoleUpdate, current_user: Annotated[dict, require_permission('workspace:update')], db: DB):
     if body.role not in VALID_ROLES or body.role == "owner":
         raise HTTPException(status_code=422, detail="Invalid role")
 
@@ -408,9 +404,9 @@ async def get_workspace_approval_policy(current_user: CurrentUser, db: DB):
     return policy
 
 
-@router.put("/workspace/approval-policy", dependencies=[require_permission("team:manage")])
-async def update_workspace_approval_policy(body: ApprovalPolicyUpdate, current_user: CurrentUser, db: DB):
-    """Update workspace publishing approval policy (requires team:manage permission)."""
+@router.put("/workspace/approval-policy")
+async def update_workspace_approval_policy(body: ApprovalPolicyUpdate, current_user: Annotated[dict, require_permission('workspace:update')], db: DB):
+    """Update workspace publishing approval policy (requires workspace:update permission)."""
     workspace_id = _workspace_id_for(current_user)
     now = datetime.now(timezone.utc)
     policy_data = body.model_dump()

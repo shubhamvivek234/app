@@ -233,12 +233,14 @@ async def test_get_campaign_detail_with_metrics_and_senders():
 
 
 @pytest.mark.asyncio
-async def test_soft_delete_and_restore_campaign():
+async def test_soft_delete_and_restore_campaign(synthetic_campaign_persistence):
     """Verify delete_campaign soft-deletes and restore_campaign brings it back."""
-    db = MockDB()
+    from tests.outreach_memory import Database as MemoryDatabase
+    db = MemoryDatabase()
+    db.outreach_leads.aggregate = lambda pipeline: MockCursor([])
     user = {"user_id": "usr_test_3", "default_workspace_id": "ws_3"}
 
-    camp_doc = {
+    camp_doc = {"_id": "parent",
         "id": "camp_del_1",
         "user_id": "usr_test_3",
         "workspace_id": "ws_3",
@@ -248,7 +250,7 @@ async def test_soft_delete_and_restore_campaign():
     }
     await db.outreach_campaigns.insert_one(camp_doc)
 
-    task_doc = {
+    task_doc = {"_id": "task",
         "id": "task_1",
         "workspace_id": "ws_3",
         "campaign_id": "camp_del_1",
@@ -256,7 +258,7 @@ async def test_soft_delete_and_restore_campaign():
     }
     await db.outreach_tasks.insert_one(task_doc)
 
-    lead_doc = {
+    lead_doc = {"_id": "lead",
         "id": "lead_1",
         "workspace_id": "ws_3",
         "campaign_id": "camp_del_1",
@@ -295,9 +297,9 @@ async def test_soft_delete_and_restore_campaign():
     assert len(restored_list) == 1
     assert restored_list[0]["name"] == "Profile warm-up"
 
-    # Task should be restored to queued
+    # Task stays cancelled until explicit fresh launch/review
     t_restored = await db.outreach_tasks.find_one({"id": "task_1"})
-    assert t_restored["status"] == "queued"
+    assert t_restored["status"] == "cancelled"
 
     # Lead should be re-enrolled
     ld_restored = await db.outreach_leads.find_one({"id": "lead_1"})
@@ -306,11 +308,12 @@ async def test_soft_delete_and_restore_campaign():
 
 
 @pytest.mark.asyncio
-async def test_restoring_deleted_warmup_never_reauthorizes_auto_launch():
-    db = MockDB()
+async def test_restoring_deleted_warmup_never_reauthorizes_auto_launch(synthetic_campaign_persistence):
+    from tests.outreach_memory import Database as MemoryDatabase
+    db = MemoryDatabase()
     user = {"user_id": "owner", "default_workspace_id": "workspace_1"}
     await db.outreach_campaigns.insert_one({
-        "id": "armed_1", "user_id": "owner", "workspace_id": "workspace_1",
+        "_id": "parent", "id": "armed_1", "user_id": "owner", "workspace_id": "workspace_1",
         "name": "Armed campaign", "status": "warming_up", "auto_launch_enabled": True,
         "is_deleted": False,
     })
@@ -372,22 +375,21 @@ async def test_duplicate_campaign():
 
 
 @pytest.mark.asyncio
-async def test_campaign_cascades_are_workspace_scoped():
-    from unittest.mock import MagicMock
-
-    db = MagicMock()
-    db.outreach_campaigns.find_one = AsyncMock(return_value={
-        "id": "camp_a", "name": "Campaign A", "workspace_id": "ws_a", "status": "draft",
-    })
-    db.outreach_campaigns.update_one = AsyncMock()
-    db.outreach_tasks.update_many = AsyncMock()
-    db.outreach_leads.update_many = AsyncMock()
-    db.outreach_sequences.update_one = AsyncMock()
+async def test_campaign_cascades_are_workspace_scoped(synthetic_campaign_persistence):
+    from tests.outreach_memory import Database as MemoryDatabase
+    db = MemoryDatabase()
+    await db.outreach_campaigns.insert_one({"_id": "parent", "id": "camp_a", "workspace_id": "ws_a", "name": "Campaign", "status": "draft"})
+    for name in ("outreach_tasks", "outreach_leads", "outreach_sequences"):
+        collection = getattr(db, name)
+        await collection.insert_one({"_id": name, "id": name, "workspace_id": "ws_a", "campaign_id": "camp_a", "status": "queued"})
+        await collection.insert_one({"_id": name + "-foreign", "workspace_id": "ws_b", "campaign_id": "camp_a", "status": "queued"})
+        collection.update_one = AsyncMock(wraps=collection.update_one)
     user = {"user_id": "user_a", "default_workspace_id": "ws_a"}
     await delete_campaign("camp_a", current_user=user, db=db)
-    assert db.outreach_tasks.update_many.call_args.args[0]["workspace_id"] == "ws_a"
-    assert db.outreach_leads.update_many.call_args.args[0]["workspace_id"] == "ws_a"
-    assert db.outreach_sequences.update_one.call_args.args[0]["workspace_id"] == "ws_a"
+    for name in ("outreach_tasks", "outreach_leads", "outreach_sequences"):
+        collection = getattr(db, name)
+        assert collection.update_one.call_args.args[0]["workspace_id"] == "ws_a"
+        assert (await collection.find_one({"workspace_id": "ws_b"}))["campaign_id"] == "camp_a"
 
 
 @pytest.mark.asyncio
@@ -409,7 +411,8 @@ async def test_auto_draft_rejects_unknown_custom_id():
 @pytest.mark.asyncio
 async def test_campaign_preflight_checklist_and_blockers():
     user = {"user_id": "usr_test", "default_workspace_id": "ws_1"}
-    db = MockDB()
+    from tests.outreach_memory import Database
+    db = Database()
 
     # 1. New draft campaign with no leads, no senders, no sequence
     camp = OutreachCampaign(

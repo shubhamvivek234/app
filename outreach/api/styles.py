@@ -7,12 +7,13 @@ import re
 from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from api.deps import get_current_user, require_permission
 from db.mongo import get_db
+from outreach.api.dependencies import get_outreach_user, require_outreach_permission
 from outreach.models import WritingStyle
+from outreach.core.suppression import mutate_suppression, SuppressionUnavailable
 from utils.free_llm_router import free_llm
 
 logger = logging.getLogger(__name__)
@@ -21,9 +22,21 @@ router = APIRouter(prefix="/styles", tags=["LinkedIn Writing Styles"])
 
 
 class CreateWritingStyleRequest(BaseModel):
-    name: str
-    sample_posts: List[str] = Field(..., min_length=1, description="List of 3 to 10 sample posts")
+    name: str = Field(..., min_length=1, max_length=200)
+    sample_posts: List[str] = Field(..., min_length=1, max_length=10, description="List of 1 to 10 sample posts")
     is_default: bool = False
+
+    @field_validator('name')
+    @classmethod
+    def nonblank_name(cls, value: str) -> str:
+        if not value.strip(): raise ValueError('A style name is required')
+        return value.strip()
+
+    @field_validator('sample_posts')
+    @classmethod
+    def nonblank_samples(cls, values: list[str]) -> list[str]:
+        if any(not value.strip() for value in values): raise ValueError('Sample posts cannot be blank')
+        return [value.strip() for value in values]
 
 
 class UpdateWritingStyleRequest(BaseModel):
@@ -32,10 +45,10 @@ class UpdateWritingStyleRequest(BaseModel):
     is_default: Optional[bool] = None
 
 
-@router.post("", status_code=status.HTTP_201_CREATED, dependencies=[require_permission("content:manage")])
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def create_writing_style(
     req: CreateWritingStyleRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('content:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Analyze sample posts and extract a persistent writing style persona."""
@@ -56,22 +69,15 @@ async def create_writing_style(
         "Write a concise 3-4 sentence system instruction that another AI can use to reproduce this exact voice."
     )
 
-    style_prompt = "Write in a direct, punchy, conversational LinkedIn style with short 1-2 sentence paragraphs and clear hooks."
-    keywords = ["authentic", "concise", "conversational", "impactful"]
-
     try:
         analysis, _, _ = await free_llm.generate_text(system_prompt, combined_samples[:4000])
-        if analysis:
-            style_prompt = analysis.strip()
-            # Extract keywords if possible
-            k_match = re.findall(r"\b([A-Za-z]{4,12})\b", analysis)
-            if k_match:
-                keywords = list(set([k.lower() for k in k_match[:6]]))
+        if not isinstance(analysis, str) or not analysis.strip():
+            raise ValueError('Empty style analysis')
+        style_prompt = analysis.strip()
+        keywords = list(dict.fromkeys(k.lower() for k in re.findall(r"\b([A-Za-z]{4,12})\b", style_prompt)[:6]))
     except Exception as exc:
-        logger.warning("Style extraction LLM failed, using default: %s", exc)
-
-    if req.is_default:
-        await db.outreach_writing_styles.update_many({"workspace_id": workspace_id}, {"$set": {"is_default": False}})
+        logger.warning("Style extraction unavailable (%s)", type(exc).__name__)
+        raise HTTPException(503, 'Writing style analysis is unavailable. No style was saved; please try again.') from exc
 
     doc = WritingStyle(
         workspace_id=workspace_id,
@@ -82,15 +88,24 @@ async def create_writing_style(
         tone_keywords=keywords,
         is_default=req.is_default,
     ).model_dump()
+    doc['analysis_source'] = 'sample_analysis'
 
-    await db.outreach_writing_styles.insert_one(doc)
+    async def save(current):
+        if req.is_default:
+            await current.outreach_writing_styles.update_many({'workspace_id': workspace_id}, {'$set': {'is_default': False}})
+        await current.outreach_writing_styles.insert_one(dict(doc))
+
+    try:
+        await mutate_suppression(db, workspace_id, save)
+    except SuppressionUnavailable as exc:
+        raise HTTPException(503, 'Could not confirm the writing style save. Reload your styles before trying again.') from exc
     doc.pop("_id", None)
     return doc
 
 
 @router.get("")
 async def list_writing_styles(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Retrieve all writing styles for the workspace."""
@@ -102,7 +117,7 @@ async def list_writing_styles(
 @router.get("/{style_id}")
 async def get_writing_style(
     style_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
@@ -112,10 +127,10 @@ async def get_writing_style(
     return style
 
 
-@router.delete("/{style_id}", dependencies=[require_permission("content:manage")])
+@router.delete("/{style_id}")
 async def delete_writing_style(
     style_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('content:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")

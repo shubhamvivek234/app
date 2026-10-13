@@ -1,5 +1,6 @@
 """Reusable prompt guidance library and illustrative sequence preview."""
 import uuid
+from copy import deepcopy
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -7,8 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from api.deps import get_current_user, require_permission
+from outreach.core.workspace_scope import workspace_scope
 from db.mongo import get_db
+from outreach.api.dependencies import get_outreach_user, require_outreach_permission, workspace_id
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +32,8 @@ class PromptPreviewRequest(BaseModel):
     custom_lead_data: dict[str, Any] | None = None
 
 
-# ── Default System Prompts (Prosp AI Winning Templates) ────────────────────
+# Server-owned guidance: database rows cannot declare themselves global.
+# Stable reserved IDs let clients identify curated templates without seeding.
 
 DEFAULT_PROMPTS = [
     {
@@ -38,7 +41,8 @@ DEFAULT_PROMPTS = [
         "prompt_text": "Analyze the lead's current role, company tagline, or recent LinkedIn post. Extract a concise phrase (3-5 words) describing what they are actively scaling or building. Do not include punctuation. Example: 'scaling high-volume outbound pipelines'",
         "description": "Short 3-5 word activity snippet extracted from headline or post.",
         "author_name": "Unravler Curated",
-        "runs_count": 4820,
+        "id": "curated_activity-snippet",
+        "runs_count": 0,
         "is_system": True,
     },
     {
@@ -46,7 +50,8 @@ DEFAULT_PROMPTS = [
         "prompt_text": "Write a 1-sentence genuine compliment about their company's UI aesthetic, brand clarity, or modern design velocity.",
         "description": "High-converting opening line focused on product design & branding.",
         "author_name": "Unravler Curated",
-        "runs_count": 3190,
+        "id": "curated_design-first-line",
+        "runs_count": 0,
         "is_system": True,
     },
     {
@@ -54,7 +59,8 @@ DEFAULT_PROMPTS = [
         "prompt_text": "Synthesize their most recent post into a thoughtful one-sentence insight showing you actually read and digested their thesis.",
         "description": "Engaging hook referencing their latest LinkedIn post topic.",
         "author_name": "Unravler Curated",
-        "runs_count": 2740,
+        "id": "curated_recent-post",
+        "runs_count": 0,
         "is_system": True,
     },
     {
@@ -62,7 +68,8 @@ DEFAULT_PROMPTS = [
         "prompt_text": "Acknowledge recent growth, hiring surge, or product launch at their company with zero flattery and direct tone.",
         "description": "Professional acknowledgment of company traction.",
         "author_name": "Unravler Curated",
-        "runs_count": 1920,
+        "id": "curated_company-milestone",
+        "runs_count": 0,
         "is_system": True,
     },
     {
@@ -70,7 +77,8 @@ DEFAULT_PROMPTS = [
         "prompt_text": "Highlight shared focus in their specific niche and why their approach to outbound/automation stood out.",
         "description": "Niche peer-to-peer connection icebreaker.",
         "author_name": "Unravler Curated",
-        "runs_count": 1540,
+        "id": "curated_niche-connection",
+        "runs_count": 0,
         "is_system": True,
     },
 ]
@@ -87,55 +95,31 @@ async def _fetch_cursor_docs(cursor, length: int = 100) -> list[dict]:
 
 @router.get("")
 async def list_prompts(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """
-    Lists available AI prompts for token injection.
-    Seeds default high-converting Prosp templates if empty.
-    """
-    user_id = current_user.get("user_id")
-    ws_id = current_user.get("default_workspace_id") or "default_ws"
-
+    """Return curated guidance and current-workspace custom prompts; never seed."""
     cursor = db.outreach_ai_prompts.find({
-        "$or": [
-            {"user_id": user_id},
-            {"workspace_id": user_id},
-            {"workspace_id": ws_id},
-            {"is_system": True},
-        ]
-    }).sort("runs_count", -1)
-
+        **workspace_scope(workspace_id(current_user)),
+        "is_system": {"$ne": True},
+        "id": {"$nin": [item["id"] for item in DEFAULT_PROMPTS]},
+    }, {"_id": 0}).sort("runs_count", -1)
     items = await _fetch_cursor_docs(cursor, length=100)
-    if not items:
-        seeded = []
-        for def_p in DEFAULT_PROMPTS:
-            doc = {
-                "id": f"prm_{uuid.uuid4().hex[:12]}",
-                "user_id": user_id,
-                "workspace_id": ws_id,
-                **def_p,
-                "created_at": datetime.now(timezone.utc),
-            }
-            await db.outreach_ai_prompts.insert_one(doc)
-            doc.pop("_id", None)
-            seeded.append(doc)
-        return seeded
-
-    for it in items:
-        it.pop("_id", None)
-    return items
+    for item in items:
+        item.pop("_id", None)
+        item["is_system"] = False
+    return deepcopy(DEFAULT_PROMPTS) + items
 
 
-@router.post("", dependencies=[require_permission("content:manage")])
+@router.post("")
 async def create_prompt(
     req: CreateAIPromptRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('content:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Creates a custom reusable AI prompt."""
     user_id = current_user.get("user_id")
-    ws_id = current_user.get("default_workspace_id") or "default_ws"
+    ws_id = workspace_id(current_user)
 
     doc = {
         "id": f"prm_{uuid.uuid4().hex[:12]}",
@@ -155,20 +139,19 @@ async def create_prompt(
     return doc
 
 
-@router.delete("/{prompt_id}", dependencies=[require_permission("content:manage")])
+@router.delete("/{prompt_id}")
 async def delete_prompt(
     prompt_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('content:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Deletes a custom AI prompt (system prompts protected)."""
-    user_id = current_user.get("user_id")
-    ws_id = current_user.get("default_workspace_id") or "default_ws"
-
+    if prompt_id in {item["id"] for item in DEFAULT_PROMPTS}:
+        raise HTTPException(status_code=404, detail="Cannot delete built-in system prompt")
     res = await db.outreach_ai_prompts.delete_one({
         "id": prompt_id,
-        "is_system": False,
-        "$or": [{"user_id": user_id}, {"workspace_id": user_id}, {"workspace_id": ws_id}],
+        **workspace_scope(workspace_id(current_user)),
+        "is_system": {"$ne": True},
     })
     if res.deleted_count == 0:
         raise HTTPException(
@@ -178,10 +161,10 @@ async def delete_prompt(
     return {"status": "deleted", "prompt_id": prompt_id}
 
 
-@router.post("/preview", dependencies=[require_permission("sequence:read")])
+@router.post("/preview")
 async def preview_evaluated_message(
     req: PromptPreviewRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('sequence:read'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
@@ -200,15 +183,9 @@ async def preview_evaluated_message(
     }
 
     if req.lead_id:
-        user_id = str(current_user.get("user_id") or current_user.get("id") or current_user.get("_id") or "")
-        workspace_id = str(current_user.get("default_workspace_id") or current_user.get("current_workspace_id") or current_user.get("workspace_id") or user_id)
         lead_doc = await db.outreach_leads.find_one({
             "id": req.lead_id,
-            "$or": [
-                {"user_id": user_id},
-                {"workspace_id": workspace_id},
-                {"workspace_id": user_id},
-            ],
+            **workspace_scope(workspace_id(current_user)),
         })
         if not lead_doc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")

@@ -152,6 +152,8 @@ class MockDatabase:
         self.outreach_inbox_tags = MockCollection()
         self.outreach_ai_prompts = MockCollection()
         self.outreach_tasks = MockCollection()
+        self.outreach_email_operations = MockCollection()
+        self.outreach_email_inbound_events = MockCollection()
         self.outreach_do_not_contact = MockCollection()
 
 
@@ -329,7 +331,7 @@ async def test_inbox_tags():
 async def test_prompts_library_and_preview():
     db = MockDatabase()
 
-    # 1. Listing seeds default high-converting Prosp prompts
+    # 1. Listing includes server-owned curated guidance without database seeding
     prompts = await list_prompts(current_user=USER, db=db)
     assert len(prompts) >= 5
     prompt_names = [p["name"] for p in prompts]

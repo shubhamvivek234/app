@@ -91,7 +91,8 @@ def test_parse_stop_reasons():
 
 @pytest.mark.asyncio
 async def test_trip_circuit_breaker_on_429():
-    db = MockDB()
+    from tests.outreach_memory import Database
+    db = Database()
     sender_id = "sender-429"
     workspace_id = "ws-test"
 
@@ -141,7 +142,8 @@ async def test_trip_circuit_breaker_on_429():
 
 @pytest.mark.asyncio
 async def test_resume_sender_cooldown_enforcement():
-    db = MockDB()
+    from tests.outreach_memory import Database
+    db = Database()
     sender_id = "sender-cooldown"
     workspace_id = "ws-test"
 
@@ -165,12 +167,11 @@ async def test_resume_sender_cooldown_enforcement():
     with pytest.raises(ValueError, match="mandatory platform cooldown"):
         await CircuitBreaker.resume_sender(sender_id=sender_id, workspace_id=workspace_id, db=db, force=False)
 
-    # Resume with force=True: succeeds!
-    res = await CircuitBreaker.resume_sender(sender_id=sender_id, workspace_id=workspace_id, db=db, force=True)
-    assert res["status"] == "active"
-    assert res["tasks_resumed"] == 1
-
+    # Customer/operator overrides cannot bypass the mandatory platform cooldown.
+    with pytest.raises(ValueError, match="overrides are unavailable"):
+        await CircuitBreaker.resume_sender(sender_id=sender_id, workspace_id=workspace_id, db=db, force=True)
     sender = await db.outreach_accounts.find_one({"id": sender_id})
-    assert sender["status"] == "active"
-    assert sender["stop_reason"] is None
-    assert sender["cooldown_until"] is None
+    assert sender["status"] == "checkpoint_detected"
+    assert sender["stop_reason"] == StopReason.RATE_LIMITED_429.value
+    assert sender["cooldown_until"] == cooldown
+    assert db.outreach_tasks.docs[0]["status"] == "paused"

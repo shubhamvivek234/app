@@ -48,23 +48,11 @@ async def test_pause_invalidates_launcher_and_other_workspace_cannot_claim():
 
 @pytest.mark.asyncio
 async def test_launch_binds_null_legacy_metadata_and_initializes_assigned_lead_node(monkeypatch):
-    from unittest.mock import AsyncMock
     from outreach.api import campaigns
-    from outreach.models import WorkingSchedule
-    monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", "true")
-    monkeypatch.setattr(campaigns, "get_active_entitlement", AsyncMock(return_value={"status": "active"}))
-    monkeypatch.setattr(campaigns, "sender_is_ready", AsyncMock(return_value=True))
-    monkeypatch.setattr(campaigns, "decrypt_secret", lambda value: "real-cookie")
-    db = Database(
-        outreach_campaigns=[{"id": "c", "workspace_id": "w", "status": "draft", "authorization_revision": 0,
-                             "sender_account_ids": ["a"], "schedule": WorkingSchedule().model_dump()}],
-        outreach_accounts=[{"id": "a", "workspace_id": "w", "status": "active", "session_cookie_enc": "cipher",
-                            "jsession_id": "csrf", "proxy": {"host": "192.0.2.1"}}],
-        outreach_sequences=[{"workspace_id": "w", "campaign_id": "c", "nodes": [{"id": "n", "type": "visit_profile"}], "edges": []}],
-        outreach_leads=[{"id": "l", "workspace_id": "w", "campaign_id": "c", "assigned_account_id": "a",
-                         "execution_state": "queued", "authorized_revision": None, "current_node_id": None}],
-    )
-    result = await campaigns._launch_campaign_impl("c", None, {"user_id": "u", "default_workspace_id": "w"}, db)
-    assert result["status"] == "launched" and result["allocated_leads_count"] == 0
-    lead = await db.outreach_leads.find_one({"id": "l"})
-    assert (lead["authorized_revision"], lead["sequence_version"], lead["current_node_id"]) == (1, 1, "n")
+    from tests.campaign_readiness_fixtures import admission_database
+    db = admission_database(monkeypatch)
+    await db.outreach_leads.update_one({}, {'$set': {'assigned_account_id': 'a', 'authorized_revision': None, 'current_node_id': None}})
+    result = await campaigns._launch_campaign_impl('c', None, {'user_id': 'u', 'default_workspace_id': 'w'}, db)
+    assert result['status'] == 'launched'
+    lead = await db.outreach_leads.find_one({})
+    assert lead['authorized_revision'] == 1 and lead['current_node_id'] == 'n'

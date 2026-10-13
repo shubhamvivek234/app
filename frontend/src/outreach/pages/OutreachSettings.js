@@ -46,6 +46,9 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
   const [newBillingEmail, setNewBillingEmail] = useState('');
   const [savingBillingEmail, setSavingBillingEmail] = useState(false);
   const [cancelingSubscription, setCancelingSubscription] = useState(false);
+  const [billingLoading, setBillingLoading] = useState(true);
+  const [billingLoaded, setBillingLoaded] = useState(false);
+  const [billingError, setBillingError] = useState('');
 
   // ── Members State ──────────────────────────────────────────────────────────
   const [members, setMembers] = useState([]);
@@ -63,17 +66,21 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
 
   // ── Fetch Billing Data ─────────────────────────────────────────────────────
   const fetchBilling = useCallback(async () => {
+    setBillingLoading(true); setBillingError('');
     try {
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/billing/plans', {
         credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
+      if (!res.ok) throw new Error('Billing status is unavailable. Try again.');
       if (res.ok) {
         const data = await res.json();
+        if (typeof data.access_active !== 'boolean') throw new Error('Billing status is unavailable. Try again.');
         setEntitlement(data.subscription || null);
         setAccessActive(Boolean(data.access_active));
         setAccessRequest(data.access_request || null);
+        setBillingLoaded(true);
         if (data.subscription?.seats) setSeats(data.subscription.seats);
         if (data.access_request?.country_code) setSenderCountry(data.access_request.country_code);
         if (data.billing_email) {
@@ -82,7 +89,9 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
         }
       }
     } catch (err) {
-      console.error('Failed to load billing plans:', err);
+      setBillingError('Billing status is unavailable. Your access has not been changed.');
+    } finally {
+      setBillingLoading(false);
     }
   }, []);
 
@@ -501,8 +510,14 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
                   </p>
                   <div className="mt-5 border-t border-indigo-400/40 pt-4 text-xs">
                     <p className="font-semibold">
-                      {accessActive ? 'Paid access active' : accessRequest ? 'Access request pending review' : 'No paid sender access yet'}
+                      {billingLoading ? 'Checking billing status…' : billingError ? 'Billing status unavailable'
+                        : accessActive ? 'Paid access active' : accessRequest ? 'Access request pending review' : 'No paid sender access yet'}
                     </p>
+                    {billingError && <div role="alert" className="mt-2">
+                      <p>{billingError}</p>
+                      {billingLoaded && <p>Last confirmed: {accessActive ? 'paid access active' : accessRequest ? 'request pending review' : 'no active paid access'}.</p>}
+                      <button type="button" onClick={fetchBilling} disabled={billingLoading} className="mt-2 underline">Retry billing</button>
+                    </div>}
                     {entitlement?.paid_through && <p className="mt-1 text-indigo-100">Paid through {new Date(entitlement.paid_through).toLocaleDateString()} · {entitlement.seats} {entitlement.seats === 1 ? 'sender seat' : 'sender seats'}</p>}
                     {entitlement?.cancel_at_period_end && <p className="mt-1 text-amber-100">Cancellation scheduled for the paid-period end.</p>}
                   </div>
@@ -526,7 +541,7 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
                       <label htmlFor="pilot-country" className="mb-1 block text-xs font-semibold text-gray-700">Sender proxy country</label>
                       <input id="pilot-country" value={senderCountry} onChange={(event) => setSenderCountry(event.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2))} maxLength={2} placeholder="e.g. IN" className="w-28 rounded-lg border border-gray-200 px-3 py-2 text-sm uppercase" />
                     </div>
-                    <button type="button" onClick={handleRequestAccess} disabled={requestingAccess} className="rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50">
+                    <button type="button" onClick={handleRequestAccess} disabled={requestingAccess || billingLoading || Boolean(billingError)} className="rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50">
                       {requestingAccess ? 'Sending request…' : accessActive ? 'Request a seat change' : 'Request managed access'}
                     </button>
                   </div>
@@ -538,7 +553,7 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
                   <div className="flex items-center justify-between rounded-2xl border border-gray-200 bg-white p-6 shadow-xs">
                     <div>
                       <h3 className="text-sm font-bold text-gray-900">Billing email</h3>
-                      <p className="mt-1 max-w-xs truncate text-xs text-gray-500">{billingEmail || 'No billing email configured'}</p>
+                      <p className="mt-1 max-w-xs truncate text-xs text-gray-500">{billingEmail || (billingLoaded ? 'No billing email configured' : 'Billing email unavailable')}</p>
                     </div>
                     <button onClick={() => setBillingModalOpen(true)} className="rounded-lg border border-gray-200 px-4 py-2 text-xs font-medium">Update</button>
                   </div>
@@ -547,7 +562,7 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
                       <h3 className="text-sm font-bold text-gray-900">Cancel at period end</h3>
                       <p className="mt-1 max-w-xs text-xs text-gray-500">Service continues until paid-through. Your IP is not reassigned to another customer during its provider term.</p>
                     </div>
-                    <button onClick={handleCancelSubscription} disabled={!accessActive || entitlement?.cancel_at_period_end || cancelingSubscription} className="rounded-lg border border-red-200 px-4 py-2 text-xs font-medium text-red-600 disabled:opacity-40">
+                    <button onClick={handleCancelSubscription} disabled={billingLoading || Boolean(billingError) || !accessActive || entitlement?.cancel_at_period_end || cancelingSubscription} className="rounded-lg border border-red-200 px-4 py-2 text-xs font-medium text-red-600 disabled:opacity-40">
                       {cancelingSubscription ? 'Scheduling…' : 'Cancel'}
                     </button>
                   </div>

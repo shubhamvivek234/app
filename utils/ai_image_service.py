@@ -14,7 +14,7 @@ def generate_banner_image(title: str, summary: str = "", style: str = "editorial
     clean_title = (title or "Latest News and Updates").strip()[:100]
     
     # Deterministic seed based on title to keep image consistent across retries
-    seed = int(hashlib.md5(clean_title.encode()).hexdigest()[:8], 16) % 100000
+    seed = int(hashlib.md5(clean_title.encode(), usedforsecurity=False).hexdigest()[:8], 16) % 100000
 
     # Build prompt
     prompt = f"Minimalist professional {style} digital art banner representing: {clean_title}. Clean vector aesthetics, high dynamic range, soft gradient lighting, modern tech editorial style, 4k"

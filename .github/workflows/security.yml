@@ -6,6 +6,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   secret-scan:
     name: TruffleHog Secret Scan
@@ -60,14 +63,15 @@ jobs:
       - name: Install Bandit
         run: pip install bandit
       - name: Run Bandit
-        run: bandit -r api/ celery_workers/ platform_adapters/ utils/ media_pipeline/ db/ -ll -ii --exclude ./tests
+        run: bandit -r api/ celery_workers/ platform_adapters/ utils/ media_pipeline/ db/ outreach/ -ll -ii --exclude ./tests
       - name: Run Semgrep
+        if: ${{ !cancelled() }}
         uses: returntocorp/semgrep-action@v1
         with:
           config: >-
             p/python
             p/fastapi
-            p/mongodb
+            p/security-audit
             p/secrets
             p/owasp-top-ten
 

@@ -14,6 +14,8 @@ jest.mock('../components/sequence/SequenceCanvas', () => {
 });
 jest.mock('../components/ImportLeadsModal', () => () => null);
 jest.mock('../components/ConnectLinkedInModal', () => () => null);
+const ready = { campaign_id: 'campaign-saved', can_launch: true, blockers: [], checklist: [{ id: 'proxies', name: 'Sender Resource Assignment', passed: true, message: 'Stored leases match' }], summary: { branch_paths: ['a → b (next)'], variables_detected: ['first_name'] }, execution_checks: [{ id: 'permission', message: 'Fresh execution permission is checked by workers' }] };
+
 jest.mock('sonner', () => ({ toast: { success: jest.fn(), error: jest.fn() } }));
 
 describe('First campaign wizard', () => {
@@ -124,7 +126,7 @@ describe('First campaign wizard', () => {
           ? [{ id: 'sender-a', status: 'active', account_name: 'Sam Sender' }]
           : url.includes('/leads')
             ? { leads: [{ id: 'lead-1', first_name: 'Alex' }], total: 1 }
-            : { status: 'launched' },
+            : url.endsWith('/preflight') ? ready : { status: 'launched' },
     }));
     await act(async () => root.render(<OutreachCampaignWizard campaignId="new" initialStep={1} />));
     const clickButton = async (label) => {
@@ -190,7 +192,7 @@ describe('First campaign wizard', () => {
           ? [{ id: 'sender-a', status: 'active', account_name: 'Sam Sender' }]
           : url.includes('/leads')
             ? { leads: [{ id: 'lead-1' }], total: 1 }
-            : url.endsWith('/launch')
+            : url.endsWith('/preflight') ? ready : url.endsWith('/launch')
               ? { detail: 'Send email requires a connected mailbox.' }
               : {},
     }));
@@ -200,4 +202,54 @@ describe('First campaign wizard', () => {
     expect(container.textContent).toContain('Send email requires a connected mailbox.');
     expect(container.textContent).toContain('Review campaign launch');
   });
+  const installReviewResponses = (preflight) => {
+    global.fetch = jest.fn((url, options = {}) => {
+      if (url.endsWith('/preflight')) return preflight(url, options);
+      return Promise.resolve({ ok: true, json: async () => url.includes('/auto-draft')
+        ? { id: 'campaign-saved', name: 'First campaign' }
+        : url.endsWith('/accounts') ? [{ id: 'sender-a', status: 'active', account_name: 'Sender' }]
+        : url.includes('/leads') ? { leads: [{ id: 'lead' }], total: 1 } : {} });
+    });
+  };
+  const clickReview = async () => act(async () => [...container.querySelectorAll('button')].find((b) => b.textContent.includes('Review and launch')).click());
+  const confirm = () => [...container.querySelectorAll('button')].find((b) => b.textContent.includes('Confirm and Launch'));
+
+  it('renders the server checklist names, reasons and summary alongside daily limit labels', async () => {
+    installReviewResponses(async () => ({ ok: true, json: async () => ready }));
+    await act(async () => root.render(<OutreachCampaignWizard campaignId="new" initialStep={3} />));
+    expect(container.textContent).toContain('Sender Resource Assignment');
+    expect(container.textContent).toContain('Stored leases match');
+    expect(container.textContent).toContain('{{first_name}}');
+    expect(container.textContent).toContain('a → b (next)');
+    expect(container.textContent).toContain('Connection invites');
+    expect(container.textContent).toContain('Email sends');
+    expect(container.textContent).toContain('Fresh execution permission is checked by workers');
+    expect(container.textContent).toContain('Launch prerequisites met');
+    expect(container.textContent).not.toContain('Ready to Launch');
+  });
+
+  it('disables normal launch while review refresh is pending or failed', async () => {
+    let pending; let fail = false;
+    installReviewResponses(() => fail ? new Promise((resolve) => { pending = resolve; }) : Promise.resolve({ ok: true, json: async () => ready }));
+    await act(async () => root.render(<OutreachCampaignWizard campaignId="new" initialStep={3} />));
+    fail = true; await clickReview();
+    expect(confirm().disabled).toBe(true);
+    expect(container.textContent).not.toContain('Launch prerequisites met');
+    await act(async () => pending({ ok: false, json: async () => ({ detail: 'Readiness unavailable' }) }));
+    expect(confirm().disabled).toBe(true); expect(container.textContent).toContain('Readiness unavailable');
+    expect(global.fetch.mock.calls.some(([url]) => url.endsWith('/launch'))).toBe(false);
+  });
+
+  it('checks the saved prospective inputs again and blocks launch if prerequisites changed', async () => {
+    let block = false;
+    installReviewResponses(async () => ({ ok: true, json: async () => block ? { ...ready, can_launch: false, blockers: ['Paid term expired'] } : ready }));
+    await act(async () => root.render(<OutreachCampaignWizard campaignId="new" initialStep={3} />));
+    await clickReview(); expect(confirm().disabled).toBe(false); block = true;
+    await act(async () => confirm().click());
+    expect(container.textContent).toContain('Paid term expired');
+    expect(global.fetch.mock.calls.some(([url]) => url.endsWith('/launch'))).toBe(false);
+    const previews = global.fetch.mock.calls.filter(([url]) => url.endsWith('/preflight'));
+    expect(JSON.parse(previews.at(-1)[1].body).sender_account_ids).toEqual(['sender-a']);
+  });
+
 });

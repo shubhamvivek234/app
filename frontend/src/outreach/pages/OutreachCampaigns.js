@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Plus,
   Search,
@@ -18,6 +18,18 @@ import {
 import { toast } from 'sonner';
 import OutreachCampaignWizard from './OutreachCampaignWizard';
 import OutreachCampaignDetail from './OutreachCampaignDetail';
+
+const DELETION_REFERENCES_KEY = 'unravler.campaign-deletions.v1';
+const readDeletionReferences = () => {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(DELETION_REFERENCES_KEY) || '{}');
+    return Object.fromEntries(Object.entries(saved).filter(([, op]) => op
+      && typeof op.id === 'string' && typeof op.workspaceId === 'string'
+      && typeof op.requestId === 'string' && /^[a-f0-9-]{36}$/i.test(op.requestId)
+      && ['deletion_pending', 'deleted', 'restore_pending'].includes(op.phase)));
+  } catch { return {}; }
+};
+const deletionKey = (op) => JSON.stringify([op.workspaceId, op.id]);
 
 export const PREBUILT_TEMPLATES = [
   {
@@ -419,7 +431,18 @@ export default function OutreachCampaigns({
   const [isTemplatesOpen, setIsTemplatesOpen] = useState(false);
   const [templatesList, setTemplatesList] = useState([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
-  const [undoAlert, setUndoAlert] = useState(null); // { id, name }
+  const [deletionOperations, setDeletionOperations] = useState(readDeletionReferences);
+  const deletionOperationsRef = useRef(deletionOperations);
+  const [deletionBusy, setDeletionBusy] = useState({});
+  const saveDeletionReference = (op, remove = false) => {
+    const next = { ...deletionOperationsRef.current };
+    if (remove) delete next[deletionKey(op)];
+    else next[deletionKey(op)] = op;
+    // Save the request identity before transport. Only operation references are retained.
+    sessionStorage.setItem(DELETION_REFERENCES_KEY, JSON.stringify(next));
+    deletionOperationsRef.current = next;
+    setDeletionOperations(next);
+  };
   const [menuOpenId, setMenuOpenId] = useState(null);
   const [newCampaignModalOpen, setNewCampaignModalOpen] = useState(false);
   const [scratchCampaignName, setScratchCampaignName] = useState('');
@@ -708,47 +731,55 @@ export default function OutreachCampaigns({
     }
   };
 
-  const handleSoftDelete = async (campaignId, campaignName) => {
-    setMenuOpenId(null);
+  const runCampaignDeletion = async (op, restore = false) => {
+    const key = deletionKey(op);
+    if (deletionBusy[key]) return;
+    const pending = { ...op, phase: restore ? 'restore_pending' : 'deletion_pending' };
+    try {
+      saveDeletionReference(pending);
+    } catch {
+      toast.error('Could not save the operation reference. Enable tab storage before continuing.');
+      return;
+    }
+    setDeletionBusy((prev) => ({ ...prev, [key]: true }));
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`/api/v1/outreach/campaigns/${campaignId}`, {
-        method: 'DELETE',
-        credentials: 'include',
+      const query = new URLSearchParams({ request_id: op.requestId, expected_workspace_id: op.workspaceId });
+      const res = await fetch(`/api/v1/outreach/campaigns/${encodeURIComponent(op.id)}${restore ? '/restore' : ''}?${query}`, {
+        method: restore ? 'POST' : 'DELETE', credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
-      if (res.ok) {
-        setUndoAlert({ id: campaignId, name: campaignName });
-        toast.success(`Deleted “${campaignName}”`);
-        fetchCampaigns();
-      } else {
-        toast.error('Failed to delete campaign');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Could not confirm the change. Retry this operation.');
+      if (data.id !== op.id || data.request_id !== op.requestId
+        || !['deleted', 'restored', 'deletion_pending', 'restore_pending'].includes(data.status)) {
+        throw new Error('The operation could not be confirmed. Check its status before continuing.');
       }
+      if (data.status === 'restored') {
+        saveDeletionReference(op, true);
+        toast.success('Campaign restored and paused. Review it before launching.');
+      } else {
+        saveDeletionReference({ ...op, phase: data.status });
+        if (data.status === 'deleted') toast.success('Campaign deleted');
+      }
+      fetchCampaigns();
     } catch (err) {
-      console.error('Failed to delete campaign:', err);
-      toast.error('Error deleting campaign');
+      toast.error(err.message || 'Could not confirm the change. Retry this operation.');
+    } finally {
+      setDeletionBusy((prev) => ({ ...prev, [key]: false }));
     }
   };
 
-  const handleRestore = async (campaignId) => {
-    try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`/api/v1/outreach/campaigns/${campaignId}/restore`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { Authorization: token ? `Bearer ${token}` : '' },
-      });
-      if (res.ok) {
-        setUndoAlert(null);
-        toast.success('Campaign restored');
-        fetchCampaigns();
-      } else {
-        toast.error('Failed to restore campaign');
-      }
-    } catch (err) {
-      console.error('Failed to restore campaign:', err);
-      toast.error('Error restoring campaign');
+  const handleSoftDelete = (campaignId) => {
+    setMenuOpenId(null);
+    const campaign = campaigns.find((item) => item.id === campaignId);
+    if (!campaign || typeof campaign.workspace_id !== 'string' || !globalThis.crypto?.randomUUID) {
+      toast.error('Reload the campaign in a secure browser before deleting it.');
+      return;
     }
+    const identity = { id: campaignId, workspaceId: campaign.workspace_id };
+    const existing = deletionOperationsRef.current[deletionKey(identity)];
+    runCampaignDeletion(existing || { ...identity, requestId: globalThis.crypto.randomUUID(), phase: 'deletion_pending' });
   };
 
   // If a campaign is selected, render Campaign Details (media_1790104472298.png)
@@ -1006,28 +1037,23 @@ export default function OutreachCampaigns({
         </div>
       </div>
 
-      {/* Reversible Undo Alert Banner matching media_1790104399010.png */}
-      {undoAlert && (
-        <div className="rounded-xl border border-gray-200 bg-gray-50/90 p-3.5 flex items-center justify-between text-xs transition-all shadow-2xs">
+      {Object.values(deletionOperations).map((op) => (
+        <div key={deletionKey(op)} className="rounded-xl border border-gray-200 bg-gray-50/90 p-3.5 flex items-center justify-between text-xs transition-all shadow-2xs">
           <span className="text-gray-700">
-            “{undoAlert.name}” deleted. The row survives, so this is reversible.
+            {op.phase === 'deleted' ? 'Campaign deleted. Undo restores it paused.'
+              : op.phase === 'restore_pending' ? 'Campaign restoration needs confirmation. It stays stopped until complete.'
+                : 'Campaign deletion needs confirmation. Finish cleanup using the same request.'}
           </span>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => handleRestore(undoAlert.id)}
-              className="rounded-lg bg-[#5145cd] hover:bg-[#4338ca] text-white px-3 py-1 font-semibold text-xs transition-colors"
-            >
-              Undo
-            </button>
-            <button
-              onClick={() => setUndoAlert(null)}
-              className="text-gray-500 hover:text-gray-800 text-xs px-2 py-1 font-medium transition-colors"
-            >
-              Dismiss
-            </button>
-          </div>
+          <button
+            disabled={deletionBusy[deletionKey(op)]}
+            onClick={() => runCampaignDeletion(op, op.phase !== 'deletion_pending')}
+            className="rounded-lg bg-[#5145cd] hover:bg-[#4338ca] text-white px-3 py-1 font-semibold text-xs transition-colors disabled:opacity-50"
+          >
+            {deletionBusy[deletionKey(op)] ? 'Checking…' : op.phase === 'deleted' ? 'Undo'
+              : op.phase === 'restore_pending' ? 'Finish restoration' : 'Finish deletion'}
+          </button>
         </div>
-      )}
+      ))}
 
       {/* Campaigns Table matching media_1790104399010.png */}
       <div className="rounded-2xl border border-gray-200 bg-white shadow-2xs overflow-hidden">

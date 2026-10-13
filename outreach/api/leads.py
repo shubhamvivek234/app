@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 import uuid
-from api.deps import require_permission
+from outreach.api.dependencies import require_outreach_permission as _lead_permission, workspace_id as _workspace_id
 from db.mongo import get_db
 from outreach.core.sequence_versions import load_sequence
 from outreach.core.workspace_scope import workspace_scope
@@ -38,32 +38,6 @@ router = APIRouter(prefix="/leads", tags=["LinkedIn Outreach Leads CRM"])
 
 def _user_id(current_user: dict) -> str:
     return str(current_user.get("user_id") or current_user.get("id") or current_user.get("_id") or "")
-
-
-def _workspace_id(current_user: dict) -> str:
-    workspace_id = (
-        current_user.get("default_workspace_id")
-        or current_user.get("current_workspace_id")
-        or current_user.get("workspace_id")
-    )
-    if not isinstance(workspace_id, str) or not workspace_id.strip():
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No workspace context")
-    return workspace_id
-
-
-def _lead_permission(permission: str) -> Any:
-    """Use one resolved tenant for role, deletion and resource admission."""
-    async def authorized(
-        current_user: dict = require_permission(permission),
-        db: AsyncIOMotorDatabase = Depends(get_db),
-    ) -> dict:
-        from outreach.core.erasure import require_open_workspace
-
-        current_user = {**current_user, "default_workspace_id": _workspace_id(current_user)}
-        await require_open_workspace(current_user, db)
-        return current_user
-
-    return Depends(authorized)
 
 
 def _lead_filter(lead_id: str, current_user: dict) -> dict[str, Any]:
@@ -557,8 +531,9 @@ async def cancel_import_job(
     if job.get("status") in (SearchImportJobStatus.COMPLETED.value, SearchImportJobStatus.STOPPED.value, SearchImportJobStatus.FAILED.value):
         return {"status": job.get("status"), "message": "Job is already completed or stopped."}
 
-    await db.outreach_import_jobs.update_one(
-        {"id": job_id, **workspace_scope(workspace_id)},
+    result = await db.outreach_import_jobs.update_one(
+        {"id": job_id, **workspace_scope(workspace_id), 'status': job.get('status'),
+         'lease_token': job['lease_token'] if 'lease_token' in job else {'$exists': False}},
         {
             "$set": {
                 "status": SearchImportJobStatus.STOPPED.value,
@@ -569,6 +544,11 @@ async def cancel_import_job(
             }
         },
     )
+    if result.matched_count != 1:
+        current = await db.outreach_import_jobs.find_one({'id': job_id, **workspace_scope(workspace_id)})
+        if current and current.get('status') in {'stopped', 'completed', 'failed'}:
+            return {'status': current['status'], 'message': 'Search job is already terminal.'}
+        raise HTTPException(409, 'Search job changed. Reload its status before requesting cancellation again.')
     return {"status": "stopped", "message": "Search import cancelled."}
 
 
@@ -604,53 +584,39 @@ async def commit_staged_leads(
     Clears staged_at to avoid 30-day TTL expiration.
     """
     workspace_id = _workspace_id(current_user)
-    job = await db.outreach_import_jobs.find_one({"id": job_id, **workspace_scope(workspace_id)})
-    if not job:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import job not found")
+    from outreach.core.suppression import mutate_suppression, SuppressionUnavailable
+    from outreach.core.lead_importer import MAX_ADMISSION_ROWS
+    initial_job = await db.outreach_import_jobs.find_one({"id": job_id, **workspace_scope(workspace_id)})
+    if not initial_job:
+        raise HTTPException(404, "Import job not found")
+    await _require_campaign(initial_job["campaign_id"], current_user, db)
 
-    await _require_campaign(job["campaign_id"], current_user, db)
-    query = {
-        "import_job_id": job_id,
-        **workspace_scope(workspace_id),
-        "execution_state": LeadExecutionState.STAGED.value,
-    }
-    if req and req.selected_lead_ids:
-        query["id"] = {"$in": req.selected_lead_ids}
-
-    # Apply name overrides if user edited names during review
-    if req and req.name_overrides:
-        for lead_id, new_name in req.name_overrides.items():
-            await db.outreach_leads.update_one(
-                {"$and": [query, {"id": lead_id}]},
-                {"$set": {"first_name": new_name.strip()}},
-            )
-
-    # Promote to queued
-    res = await db.outreach_leads.update_many(
-        query,
-        {
-            "$set": {
-                "execution_state": LeadExecutionState.QUEUED.value,
-                "staged_at": None,
-                "updated_at": datetime.now(timezone.utc),
-            }
-        },
-    )
-
-    # Increment campaign lead count
-    await db.outreach_campaigns.update_one(
-        _campaign_filter(job["campaign_id"], current_user),
-        {
-            "$inc": {"leads_count": res.modified_count},
-            "$set": {"updated_at": datetime.now(timezone.utc)},
-        },
-    )
-
-    return {
-        "status": "committed",
-        "enrolled_count": res.modified_count,
-        "campaign_id": job["campaign_id"],
-    }
+    async def promote(current):
+        job = await current.outreach_import_jobs.find_one({"id": job_id, **workspace_scope(workspace_id)})
+        if not job:
+            raise HTTPException(404, "Import job not found")
+        query = {"import_job_id": job_id, "campaign_id": job["campaign_id"],
+                 **workspace_scope(workspace_id), "execution_state": LeadExecutionState.STAGED.value}
+        if req and req.selected_lead_ids:
+            query["id"] = {"$in": req.selected_lead_ids}
+        rows = await current.outreach_leads.find(query).sort("id", 1).to_list(length=MAX_ADMISSION_ROWS + 1)
+        if len(rows) > MAX_ADMISSION_ROWS:
+            raise HTTPException(422, f"Select at most {MAX_ADMISSION_ROWS} staged contacts at a time.")
+        candidates = []
+        for row in rows:
+            candidate = dict(row)
+            if req and row["id"] in (req.name_overrides or {}):
+                name = req.name_overrides[row["id"]].strip()
+                candidate.update(first_name=name, raw_first_name=name, cleaned_first_name=name)
+            candidates.append(candidate)
+        result = await LeadImporter.ingest_leads(candidates, job["campaign_id"], workspace_id, current,
+            source="linkedin_search", include_rejections=True, _ordered=True, _staged_rows=rows)
+        return {"status": "committed", "enrolled_count": result["imported_count"],
+                "campaign_id": job["campaign_id"], "rejections": result.get("rejections", [])}
+    try:
+        return await mutate_suppression(db, workspace_id, promote)
+    except SuppressionUnavailable:
+        raise HTTPException(503, "Could not confirm enrollment. Reload campaign contacts before retrying.") from None
 
 
 async def _lead_query(
@@ -950,7 +916,8 @@ async def update_lead_stage(
 
     result = await db.outreach_leads.update_one(
         lead_filter,
-        {"$set": {"pipeline_stage": req.pipeline_stage, "updated_at": datetime.now(timezone.utc)}},
+        {"$set": {"pipeline_stage": req.pipeline_stage, "updated_at": datetime.now(timezone.utc)},
+         "$unset": {"campaign_delete_operation": "", "deleted_pipeline_stage": "", "previous_campaign_id": ""}},
     )
 
     if not result.matched_count:

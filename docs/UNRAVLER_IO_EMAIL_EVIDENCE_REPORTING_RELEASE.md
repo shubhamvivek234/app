@@ -1,0 +1,58 @@
+# Unravler.io v2.61 — truthful recorded email outcomes
+
+Date: 13 October 2026 (IST). Local `main`/HEAD remains `3fc64f70cea68dbaf19aefaf349020d5c9c789a3`, following the [v2.60 readiness repair](/Users/shubham/Documents/Workspace/SocialEntangler/app/docs/UNRAVLER_IO_CAMPAIGN_READINESS_RELEASE.md). These changes are uncommitted and undeployed. The last recorded deployed application remains `b85b2df`; production was not reverified.
+
+**A13 has a bounded local repair.** Email reporting no longer turns the absence of a bounce into delivery or loses current sends because their task projection says `accepted` rather than `completed`. A14 LinkedIn acceptance/reply cohort rates, A15 P2 feed delivery and A18 explicit voice selection remain open. Separate security, old-data, authenticated recovery/activation and operational release gates remain open.
+
+## Evidence contract
+
+The read-only [email evaluator](/Users/shubham/Documents/Workspace/SocialEntangler/app/outreach/core/email_reporting.py) supplies the email part of [Analytics and CSV export](/Users/shubham/Documents/Workspace/SocialEntangler/app/outreach/api/analytics.py). It reads selected current stored operations, inbound events and task projections. It never repairs a record, opens credentials, calls a provider, probes health, issues permission or resumes work. There are no new collections, indexes, migrations or configuration defaults.
+
+| Field | Meaning |
+|---|---|
+| `provider_accepted` / compatible `sent` alias | Known original provider-acceptance operations in the selected UTC acceptance cohort. This is neither delivery nor a count of every possible submission. |
+| `bounced` | Distinct accepted operations with a saved `message_reference` bounce classification and exact original operation/workspace/sender/time binding. These are recorded reference bounces, not authenticated or independently reconstructed references. |
+| `possible_bounced` | Distinct other correlated bounce reports, including provider-thread and address/time matches, excluding operations already in the reference bucket. |
+| `delivery_unknown` | Accepted operations without a recorded reference bounce. No positive delivery is inferred. |
+| `submitted`, `delivered`, `deliverability_rate` | Always null with explicit unavailable status. The present integrations do not supply complete submission reporting or positive delivery-receipt coverage for this report. |
+| `human_reported` | Human acceptance assertions with a usable recorded date in the period; never provider acceptance. The existing recorded date does not establish the actual remote send or assertion time. |
+| `pending_or_unknown_operations` | Dispatching/uncertain operations created in the period. Creation or dispatching state does not prove a physical submission. |
+| `unverified_operations` | Selected historical/current rows with unusable operation identity, provenance, state or dates; not allocated to an invented event date. |
+| `unverified_task_records` | Completed/accepted task projections updated in the period without a matching usable provider-accepted original operation. Projection time is not a send time. |
+| `unverified_bounce_events` | Selected same-operation/sender events with unusable category or original dates. |
+
+Provider acceptance requires the stable `email:{workspace}:{logical_operation_id}` identity, scalar selected workspace/campaign/sender, supported source/provider and credential-generation metadata, native original dates and accepted state. Gmail's current response contract requires a nonblank accepted message ID; Graph's documented 202 path remains compatible without an ID. This validates a stored record's supported shape and provenance, not provider authentication or an outside-backup source.
+
+Both `acceptance_source=human_assertion` and nested human-resolution provenance are excluded independently. Unknown provenance, invalid/future/precreation acceptance dates and unproven states remain unverified. A valid older acceptance can explain its newly repaired task projection without becoming a new acceptance in the current period. Failed, uncertain, not-submitted or stopped operations cannot explain a completed projection as provider acceptance.
+
+## Original time and attribution
+
+The acceptance cohort starts at UTC midnight for the selected 7/14/30-day period and ends at one captured `as_of`. Native BSON naive timestamps are normalized as UTC. Original `accepted_at` selects and dates acceptance; mutable `updated_at`/repair completion cannot move an old send into this cohort.
+
+Bounce events join the original accepted operation, its exact scalar sender and workspace; the operation supplies campaign attribution. An unrelated campaign/sender/workspace event never subtracts delivery from the selection. The original native `received_at` must be at or after acceptance and at or before `as_of`. Projection creation time never substitutes for missing/malformed/future/preacceptance evidence. Duplicate and out-of-order reports count each operation once, using the earliest valid reference-bounce observation for daily counts. Reference and possible buckets do not double-count an operation.
+
+A provider conversation can contain multiple follow-ups, so a stored `provider_thread` classification is only possible correlation. The old inbound writer does not retain raw message references in this collection. Analytics therefore cannot independently reconstruct a saved `message_reference` classification, authenticate it or establish complete external evidence; it preserves that limitation explicitly. It neither fabricates references nor changes the mailbox parser or suppression decisions.
+
+These are selected, sequential observations. Fixed `as_of` is a timestamp cutoff, not a MongoDB snapshot, external-source authentication, completeness assertion or an ordering fence against concurrent raw/backdated writes. Deleted/erased/missing operations, older unsupported writers and external events not collected by the app remain outside the known counts. The historical `unverified_operations` counter is selected-history uncertainty, not a newly dated period event.
+
+## Bounds and customer behavior
+
+Reads use metadata-only projections, with no message body, subject, recipient address or credential material in the response. Caps are 10,000 selected operations across their retained history, 20,000 matching bounce events and 10,000 selected period task projections. Each read detects overflow. A ten-second caller deadline, source failure or exceeded capacity makes all email evidence counts unavailable/null rather than returning truncated success or zero. This caller deadline does not bound all database-server work or prove remote cancellation. Long histories may require narrower campaign/sender filters or a later pagination/aggregation change.
+
+Known counts with unusable records are explicitly partial. [Analytics](/Users/shubham/Documents/Workspace/SocialEntangler/app/frontend/src/outreach/pages/OutreachAnalytics.js) now shows Email Outcomes: recorded provider acceptances, reference/possible bounces, unknown delivery and separate human/pending evidence. Loading and unavailable reads are visible; null does not become a false zero. No accepted-minus-bounces delivery percentage is rendered.
+
+CSV retains its first seven existing LinkedIn activity columns and appends email acceptance/bounce observations, blank unavailable delivery, evidence/delivery status, UTC cohort start/as-of and provenance-basis columns. Daily acceptances use original acceptance time; reference-bounce observations use original received time within the selected acceptance cohort. They are not daily conversion percentages. Partial/unavailable status travels with every daily row; summary human/pending/unverified counters remain summary data rather than being assigned invented daily timestamps. API consumers must handle `delivered=null` and the compatible `sent` alias's explicit provider-acceptance meaning. A14's existing LinkedIn rates are unchanged and remain pending.
+
+## Verified scope
+
+**3,704 distinct backend checks pass:** 3,357 combined non-sandbox checks plus 347 separately enabled native checks. The combined run has 1,139 opt-in/historical skips, six sandbox deselections and 15 warnings. The native run has zero skips and two dependency warnings. XML comparison confirms all native cases were skipped in the combined run and are counted once. The local CI minimum is 347 across twelve native modules; remote enforcement is unverified.
+
+There are 63 new owned native MongoDB cases covering acceptance without delivery, legacy tasks, campaign/sender/workspace/array isolation, duplicates, original/repaired dates, human provenance, Gmail versus Graph, uncertain/non-call states, same-conversation follow-ups, malformed category/time, contradictory projections, complete-read failure/overflow/deadline, default naive-UTC codec, inclusive fixed boundaries, read-only snapshots and CSV nulls. Synthetic stored facts and owned databases are used; there is no authenticated provider, actual physical submission or live mailbox claim. Module statement coverage is 97% (106/109) over the focused 63-case run.
+
+All 177 frontend tests across 34 suites pass, including three new email outcome cases. Five compiled-component Chromium checks pass, including one new email evidence/unavailable-read contract. APIs/authentication are synthetic and unexpected non-loopback browser requests are blocked. The production build passes with existing dependency/source-map/Tailwind warnings. Python compilation, whitespace checks, scoped medium/high Bandit and Semgrep (222 rules on three changed application files) pass with zero findings. Optional ruff/mypy/pylint/black were unavailable. These scoped scans do not close the earlier whole-application npm/Semgrep/container backlog.
+
+Independent review approves the bounded source and native contracts. It separately passed nine overlapping offline analytics checks, six Analytics component checks, four synthetic core probes and scoped Bandit; it did not rerun native services. Review found and corrected array-valued bounce categories and completed projections masked by nonaccepted operations. The initial seven-test red run included six missing/incorrect evidence-contract cases plus one CSV harness error; that harness error was corrected before the first seven-case green run. A nonexistent browser script was replaced with the existing installed runner. Legacy count-only fixtures now supply actual empty read cursors; no evaluator bypass was added.
+
+Evidence: `/tmp/unravler-email-reporting-20261013/`, including XML, logs, scoped scans, coverage and final verification. Eight pre-edit repo/Desktop architecture/audit copies are protected in `docs-before-v2-61/`. Three specifications, audit and this report are synchronized to Desktop; prior reports and unrelated local files remain preserved. Owned native/browser services and storage are absent after checks; the user's Mongo process and root coverage are preserved. Session memory is updated last after final document review and preservation checks.
+
+Local only: no commit, push, deployment, production reverify, runtime flag/provider configuration change, actual AWS/provider calls, grants, purchases or live actions. Next application work is A14 cohort conversion rates, A15 P2 ordered/resumable feed and A18 explicit voice selection. Authenticated outside-backup facts/completeness/reply recovery, actual transactional restore activation, remaining credential/legacy migration, health/IAM/kernel-egress/pilot and combined release gates remain separate unfinished work.

@@ -9,8 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from api.deps import get_current_user, require_permission
 from db.mongo import get_db
+from outreach.api.dependencies import get_outreach_user, require_outreach_permission
 from outreach.core.dag_compiler import DAGCompiler, DAGValidationError
 from outreach.core.sequence_versions import load_sequence, publish_sequence
 from outreach.models import OutreachSequence, SequenceNode, SequenceEdge
@@ -112,7 +112,7 @@ def _same_execution_graph(visible: dict[str, Any], saved: dict[str, Any]) -> boo
 
 @router.get("/templates")
 async def get_sequence_templates(
-    current_user: dict | None = Depends(get_current_user),
+    current_user: dict | None = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase | None = Depends(get_db),
 ):
     """Returns library of pre-built, high-converting sequence templates + user-saved templates."""
@@ -133,10 +133,10 @@ async def get_sequence_templates(
     return templates
 
 
-@router.post("/templates", dependencies=[require_permission("sequence:create")])
+@router.post("/templates")
 async def save_custom_template(
     req: SaveTemplateRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('sequence:create'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Saves an outreach sequence graph as a reusable custom template."""
@@ -173,10 +173,10 @@ async def save_custom_template(
     return {"status": "success", "template": doc}
 
 
-@router.delete("/templates/{template_id}", dependencies=[require_permission("sequence:delete")])
+@router.delete("/templates/{template_id}")
 async def delete_custom_template(
     template_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('sequence:delete'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Deletes a user-saved custom template."""
@@ -190,7 +190,7 @@ async def delete_custom_template(
     return {"status": "success", "message": "Template deleted"}
 
 
-@router.post("/validate", dependencies=[require_permission("sequence:update")])
+@router.post("/validate", dependencies=[require_outreach_permission("sequence:update")])
 async def validate_sequence(req: ValidateSequenceRequest):
     """
     Validates a sequence topology before launching.
@@ -206,7 +206,7 @@ async def validate_sequence(req: ValidateSequenceRequest):
 @router.get("/{campaign_id}")
 async def get_campaign_sequence(
     campaign_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Retrieves the sequence graph for a specific campaign."""
@@ -230,10 +230,10 @@ async def get_campaign_sequence(
     return seq_doc
 
 
-@router.post("", dependencies=[require_permission("sequence:update")])
+@router.post("")
 async def save_campaign_sequence(
     req: SaveSequenceRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('sequence:update'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """

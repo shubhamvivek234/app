@@ -56,3 +56,68 @@ describe('Outreach first-run home', () => {
     expect(onOpenWizard).toHaveBeenCalledWith('new', 1);
   });
 });
+
+describe('Activity stream access lifetime', () => {
+  let container;
+  let root;
+  let source;
+  let handlers;
+
+  beforeEach(() => {
+    global.IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    handlers = {};
+    source = { close: jest.fn(), addEventListener: jest.fn((kind, callback) => { handlers[kind] = callback; }) };
+    global.EventSource = jest.fn(() => source);
+    global.fetch = jest.fn(() => Promise.resolve(ok([])));
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    container.remove();
+    delete global.fetch;
+    delete global.EventSource;
+  });
+
+  const emitTask = (id) => handlers.task_completed({ data: JSON.stringify({
+    id, task_type: id, timestamp: '2026-10-12T00:00:00Z',
+  }) });
+
+  it('clears activity and closes after explicit access termination, ignoring queued events', async () => {
+    await act(async () => root.render(<OutreachHome />));
+    await act(async () => { handlers.connected(); emitTask('private-before-stop'); });
+    expect(container.textContent).toContain('private-before-stop');
+    await act(async () => handlers.stream_closed({ data: '{"reason":"access_changed"}' }));
+    expect(source.close).toHaveBeenCalledTimes(1);
+    expect(container.textContent).not.toContain('private-before-stop');
+    expect(container.textContent).toContain('Activity unavailable');
+    await act(async () => { handlers.connected(); handlers.heartbeat(); emitTask('late-private'); source.onerror(); });
+    expect(container.textContent).not.toContain('late-private');
+    expect(container.textContent).not.toContain('Live Feed');
+    expect(container.textContent).toContain('Activity unavailable');
+  });
+
+  it('clears cached activity on transport error and accepts activity only after a new greeting', async () => {
+    await act(async () => root.render(<OutreachHome />));
+    await act(async () => { handlers.connected(); emitTask('old-private'); });
+    await act(async () => source.onerror());
+    expect(container.textContent).not.toContain('old-private');
+    await act(async () => { handlers.heartbeat(); emitTask('late-private'); });
+    expect(container.textContent).not.toContain('late-private');
+    expect(container.textContent).not.toContain('Live Feed');
+    await act(async () => { handlers.connected(); emitTask('fresh-task'); });
+    expect(container.textContent).toContain('fresh-task');
+    expect(container.textContent).toContain('Live Feed');
+  });
+
+  it('closes when access checks are unavailable, without displaying server details', async () => {
+    await act(async () => root.render(<OutreachHome />));
+    await act(async () => handlers.stream_closed({ data: '{"reason":"unavailable"}' }));
+    expect(source.close).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain('Activity unavailable');
+    expect(container.textContent).toContain('Refresh to check access again');
+    expect(container.textContent).not.toContain('Listening to live outreach pipeline');
+  });
+});

@@ -16,6 +16,7 @@ async def claim_activation(db: AsyncIOMotorDatabase, campaign: dict, *, sequence
         {"id": campaign["id"], "workspace_id": campaign["workspace_id"], "status": campaign["status"],
          "is_deleted": {"$ne": True},
          "authorization_revision": revision if "authorization_revision" in campaign else {"$exists": False},
+         "lead_admission_revision": campaign.get("lead_admission_revision") if "lead_admission_revision" in campaign else {"$exists": False},
          "$or": [{"launch_claim_expires_at": None}, {"launch_claim_expires_at": {"$lte": now}}]},
         {"$set": updates,
          "$inc": {"authorization_revision": 1}},
@@ -27,6 +28,7 @@ async def claim_activation(db: AsyncIOMotorDatabase, campaign: dict, *, sequence
 
 def activation_lead_filter(workspace_id: str, campaign_id: str, revision: int) -> dict:
     return {"workspace_id": workspace_id, "campaign_id": campaign_id,
+            "execution_state": {"$ne": "staged"},
             "$or": [{"authorized_revision": None}, {"authorized_revision": {"$lte": revision}}]}
 
 

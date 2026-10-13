@@ -10,8 +10,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from api.deps import get_current_user, require_permission
 from db.mongo import get_db
+from outreach.api.dependencies import get_outreach_user, require_outreach_permission
+from outreach.core.suppression import SuppressionUnavailable
 from outreach.models import (
     AccountStatus,
 )
@@ -75,7 +76,7 @@ def _sanitize_account(acc: dict[str, Any]) -> dict[str, Any]:
 
 @router.get("")
 async def list_outreach_accounts(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Lists all connected LinkedIn sender accounts for the active user."""
@@ -89,7 +90,7 @@ async def list_outreach_accounts(
 @router.get("/connection-jobs/{job_id}")
 async def get_connection_job(
     job_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
@@ -108,17 +109,16 @@ async def get_connection_job(
     return result
 
 
-@router.post("/connect-cookie", status_code=status.HTTP_202_ACCEPTED,
-             dependencies=[require_permission("account:connect")])
+@router.post("/connect-cookie", status_code=status.HTTP_202_ACCEPTED)
 async def connect_via_cookie(
     req: ConnectCookieRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('account:connect'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     return await queue_connection(req, current_user, db)
 @router.post("/login-start")
 async def login_start(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
 ):
     """Reject stale clients without accepting a password DTO or allocating a proxy."""
     raise HTTPException(status_code=410, detail="Password connection has been retired. Sign in on LinkedIn, then use verified session connection.")
@@ -126,17 +126,17 @@ async def login_start(
 
 @router.post("/login-verify-2fa")
 async def login_verify_2fa(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
 ):
     """Reject stale 2FA clients; users complete challenges on LinkedIn itself."""
     raise HTTPException(status_code=410, detail="Password connection has been retired. Complete sign-in on LinkedIn.")
 
 
-@router.patch("/{account_id}/limits", dependencies=[require_permission("account:connect")])
+@router.patch("/{account_id}/limits")
 async def update_account_limits(
     account_id: str,
     req: UpdateLimitsRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('account:connect'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Updates daily safety caps for a specific connected account."""
@@ -163,10 +163,10 @@ async def update_account_limits(
     return _sanitize_account(updated_account)
 
 
-@router.delete("/{account_id}", dependencies=[require_permission("account:disconnect")])
+@router.delete("/{account_id}")
 async def disconnect_account(
     account_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('account:disconnect'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Disconnect session; retain the sender's paid-term IP for same-sender reuse."""
@@ -210,19 +210,18 @@ async def disconnect_account(
 
 
 class ResumeSenderRequest(BaseModel):
-    force: bool = Field(default=False, description="Override mandatory platform cooldown")
+    force: bool = Field(default=False, description="Deprecated; cooldown overrides are rejected")
 
 
-@router.post("/{account_id}/resume", dependencies=[require_permission("account:connect")])
+@router.post("/{account_id}/resume")
 async def resume_sender_account(
     account_id: str,
     req: ResumeSenderRequest = ResumeSenderRequest(),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('account:connect'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
-    Manually resumes a sender whose circuit breaker was tripped.
-    Requires cooldown window to have elapsed unless force=True is provided.
+    Recover an eligible cooled-down connection without resuming work or granting execution.
     """
     from outreach.core.circuit_breaker import CircuitBreaker
     ws_id = current_user.get("default_workspace_id") or current_user.get("user_id")
@@ -236,3 +235,5 @@ async def resume_sender_account(
         return {"status": "success", "result": result}
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except SuppressionUnavailable:
+        raise HTTPException(status_code=503, detail="Sender recovery is unavailable; reload its current state") from None

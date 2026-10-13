@@ -376,6 +376,11 @@ async def test_reimport_suppression_blocks_withdrawn_leads():
         "vanity_name": "alex-cooldown",
     }
 
+    from tests.outreach_memory import Database, Collection
+    current = Database(outreach_campaigns=[{"id": campaign_id, "workspace_id": workspace_id, "status": "draft"}])
+    for collection in ("outreach_leads", "outreach_do_not_contact", "outreach_withdrawn_invites"):
+        current.collections[collection] = Collection(getattr(db, collection).docs)
+    db = current
     ingest_res = await importer.ingest_leads(
         workspace_id=workspace_id,
         campaign_id=campaign_id,

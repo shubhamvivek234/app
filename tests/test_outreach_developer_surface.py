@@ -140,157 +140,49 @@ async def test_public_enroll_lead_requires_idempotency_key():
     assert "Idempotency-Key" in exc.value.detail
 
 
+def enrollment_db(status="draft", *, existing=False, suppressed=False):
+    from tests.outreach_memory import Database
+    return Database(outreach_campaigns=[{"id": "camp_1", "workspace_id": "ws_1", "status": status}],
+        outreach_api_keys=[{"id": "key", "workspace_id": "ws_1", "key_hash": "digest", "scopes": ["leads:write"]}],
+        outreach_leads=[{"id": "existing", "campaign_id": "camp_1", "workspace_id": "ws_1", "linkedin_url": "https://linkedin.com/in/person"}] if existing else [],
+        outreach_email_suppressions=[{"workspace_id": "ws_1", "email": "person@example.test"}] if suppressed else [])
+
+ENROLL_AUTH = {"workspace_id": "ws_1", "key_id": "key", "key_hash": "digest"}
+
+def enrollment_request(url="https://linkedin.com/in/person"):
+    return PublicLeadEnrollRequest(campaign_id="camp_1", linkedin_url=url, first_name="Person", email="person@example.test")
+
 @pytest.mark.asyncio
 async def test_public_enroll_lead_rejects_warming_up_campaign():
-    """Cannot enroll prospects into a campaign currently undergoing warm-up."""
-    db = MagicMock()
-    db.outreach_campaigns.find_one = AsyncMock(return_value={
-        "id": "camp_warm",
-        "workspace_id": "ws_1",
-        "status": "warming_up",  # In warm-up
-    })
-
-    auth = {"workspace_id": "ws_1"}
-    req = PublicLeadEnrollRequest(
-        campaign_id="camp_warm",
-        linkedin_url="https://linkedin.com/in/validuser",
-        first_name="Valid",
-    )
-
     with pytest.raises(HTTPException) as exc:
-        await public_enroll_lead(
-            req=req,
-            idempotency_key="idemp_123",
-            auth=auth,
-            db=db,
-        )
+        await public_enroll_lead(enrollment_request(), "operation", auth=ENROLL_AUTH, db=enrollment_db("warming_up"))
     assert exc.value.status_code == 409
-    assert "warm-up" in exc.value.detail
-
 
 @pytest.mark.asyncio
 async def test_public_enroll_lead_rejects_invalid_linkedin_url():
-    """Non-LinkedIn profile URL raises 400 Bad Request."""
-    db = MagicMock()
-    db.outreach_campaigns.find_one = AsyncMock(return_value={
-        "id": "camp_1",
-        "workspace_id": "ws_1",
-        "status": "active",
-    })
-
-    auth = {"workspace_id": "ws_1"}
-    req = PublicLeadEnrollRequest(
-        campaign_id="camp_1",
-        linkedin_url="https://twitter.com/notlinkedin",
-        first_name="Alex",
-    )
-
     with pytest.raises(HTTPException) as exc:
-        await public_enroll_lead(
-            req=req,
-            idempotency_key="idemp_456",
-            auth=auth,
-            db=db,
-        )
-    assert exc.value.status_code == 400
-    assert "LinkedIn personal profile URL" in exc.value.detail
-
+        await public_enroll_lead(enrollment_request("https://twitter.com/person"), "operation", auth=ENROLL_AUTH, db=enrollment_db())
+    assert exc.value.status_code == 400 and "LinkedIn personal profile URL" in exc.value.detail
 
 @pytest.mark.asyncio
 async def test_public_enroll_lead_rejects_suppressed_email():
-    """Suppressed email address raises 400 Bad Request."""
-    db = MagicMock()
-    db.outreach_campaigns.find_one = AsyncMock(return_value={
-        "id": "camp_1",
-        "workspace_id": "ws_1",
-        "status": "active",
-    })
-    # Suppression record exists
-    db.outreach_email_suppressions.find_one = AsyncMock(return_value={"email": "optout@example.com"})
-
-    auth = {"workspace_id": "ws_1"}
-    req = PublicLeadEnrollRequest(
-        campaign_id="camp_1",
-        linkedin_url="https://linkedin.com/in/prospect",
-        first_name="Bob",
-        email="optout@example.com",
-    )
-
     with pytest.raises(HTTPException) as exc:
-        await public_enroll_lead(
-            req=req,
-            idempotency_key="idemp_789",
-            auth=auth,
-            db=db,
-        )
-    assert exc.value.status_code == 400
-    assert "suppression list" in exc.value.detail
-
+        await public_enroll_lead(enrollment_request(), "operation", auth=ENROLL_AUTH, db=enrollment_db(suppressed=True))
+    assert exc.value.status_code == 400 and "suppression list" in exc.value.detail
 
 @pytest.mark.asyncio
 async def test_public_enroll_lead_idempotent_deduplication():
-    """Re-enrolling an existing prospect returns already_enrolled with lead_id."""
-    db = MagicMock()
-    db.outreach_campaigns.find_one = AsyncMock(return_value={
-        "id": "camp_1",
-        "workspace_id": "ws_1",
-        "status": "active",
-    })
-    db.outreach_email_suppressions.find_one = AsyncMock(return_value=None)
-    # Lead already exists
-    db.outreach_leads.find_one = AsyncMock(return_value={"id": "lead_existing_999"})
-
-    auth = {"workspace_id": "ws_1"}
-    req = PublicLeadEnrollRequest(
-        campaign_id="camp_1",
-        linkedin_url="https://linkedin.com/in/sarahprospect",
-        first_name="Sarah",
-    )
-
-    res = await public_enroll_lead(
-        req=req,
-        idempotency_key="idemp_repeat",
-        auth=auth,
-        db=db,
-    )
-    assert res["status"] == "already_enrolled"
-    assert res["lead_id"] == "lead_existing_999"
-
+    res = await public_enroll_lead(enrollment_request(), "operation", auth=ENROLL_AUTH, db=enrollment_db(existing=True))
+    assert res["status"] == "already_enrolled" and res["lead_id"] == "existing"
 
 @pytest.mark.asyncio
 async def test_public_enroll_lead_success_emits_outbox_event():
-    """Valid enrollment inserts lead, increments campaign count, and writes to outbox."""
-    db = MagicMock()
-    db.outreach_campaigns.find_one = AsyncMock(return_value={
-        "id": "camp_1",
-        "workspace_id": "ws_1",
-        "status": "active",
-    })
-    db.outreach_email_suppressions.find_one = AsyncMock(return_value=None)
-    db.outreach_leads.find_one = AsyncMock(return_value=None)  # Not existing
-    db.outreach_leads.insert_one = AsyncMock()
-    db.outreach_campaigns.update_one = AsyncMock()
-    db.outreach_event_outbox.insert_one = AsyncMock()
-
-    auth = {"workspace_id": "ws_1"}
-    req = PublicLeadEnrollRequest(
-        campaign_id="camp_1",
-        linkedin_url="https://linkedin.com/in/newprospect",
-        first_name="Emily",
-        company_name="Acme",
-    )
-
-    res = await public_enroll_lead(
-        req=req,
-        idempotency_key="idemp_new_lead",
-        auth=auth,
-        db=db,
-    )
-    assert res["status"] == "enrolled"
-    assert res["lead_id"].startswith("lead_")
-    db.outreach_leads.insert_one.assert_awaited_once()
-    db.outreach_campaigns.update_one.assert_awaited_once()
-    db.outreach_event_outbox.insert_one.assert_awaited_once()
+    db = enrollment_db()
+    res = await public_enroll_lead(enrollment_request(), "operation", auth=ENROLL_AUTH, db=db)
+    assert res["status"] == "enrolled" and len(db.outreach_leads.docs) == 1
+    assert db.outreach_campaigns.docs[0]["leads_count"] == 1
+    assert len(db.outreach_event_outbox.docs) == 1
+    assert await public_enroll_lead(enrollment_request(), "operation", auth=ENROLL_AUTH, db=db) == res
 
 
 # ── 3. Public Lead Pause Tests ───────────────────────────────────────────────

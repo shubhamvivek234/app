@@ -113,6 +113,8 @@ class MockCollection:
 
     async def insert_one(self, doc):
         d = dict(doc)
+        from bson import ObjectId
+        d.setdefault("_id", ObjectId())
         if "id" not in d:
             d["id"] = "doc_" + str(len(self.items))
         self.items.append(d)
@@ -125,8 +127,10 @@ class MockCollection:
                 if item.get("id") == target.get("id"):
                     if "$set" in update:
                         item.update(update["$set"])
-                    return type("UpdateResult", (), {"modified_count": 1})()
-        return type("UpdateResult", (), {"modified_count": 0})()
+                    for key, delta in update.get("$inc", {}).items():
+                        item[key] = item.get(key, 0) + delta
+                    return type("UpdateResult", (), {"matched_count": 1, "modified_count": 1})()
+        return type("UpdateResult", (), {"matched_count": 0, "modified_count": 0})()
 
     async def update_many(self, query, update):
         count = 0
@@ -245,7 +249,7 @@ async def test_add_contacts_and_fetch_posts(db, mock_user):
     with patch("celery_workers.celery_app.celery_app.send_task") as send_task, \
          patch("outreach.core.manual_actions.ManualActions.queue", new_callable=AsyncMock), \
          patch.object(db.outreach_engage_lists, "update_one", new_callable=AsyncMock) as update_one:
-        update_one.return_value = SimpleNamespace(modified_count=1)
+        update_one.return_value = SimpleNamespace(modified_count=1, matched_count=1)
         fetch_res = await fetch_latest_posts_for_list(list_id, current_user=mock_user, db=db)
         assert fetch_res["status"] == "queued"
         send_task.assert_called_once()
@@ -266,7 +270,7 @@ async def test_add_contacts_and_fetch_posts(db, mock_user):
     # 5. 1-Click Like
     with patch.object(db.outreach_engage_posts, "update_one", new_callable=AsyncMock) as update_one, \
          patch("outreach.api.engage.OutboundRateLimiter.check_and_increment_daily_limit", new_callable=AsyncMock) as limit:
-        update_one.return_value = SimpleNamespace(modified_count=1)
+        update_one.return_value = SimpleNamespace(modified_count=1, matched_count=1)
         limit.return_value = True
         like_res = await like_engage_post(first_post["id"], LikePostRequest(), current_user=mock_user, db=db)
     assert like_res["status"] == "liked"
@@ -276,7 +280,7 @@ async def test_add_contacts_and_fetch_posts(db, mock_user):
     comment_req = CommentPostRequest(comment_text="Incredible point on follow-up speed. Totally agreed!", auto_like=True)
     with patch.object(db.outreach_engage_posts, "update_one", new_callable=AsyncMock) as update_one, \
          patch("outreach.api.engage.OutboundRateLimiter.check_and_increment_daily_limit", new_callable=AsyncMock) as limit:
-        update_one.return_value = SimpleNamespace(modified_count=1)
+        update_one.return_value = SimpleNamespace(modified_count=1, matched_count=1)
         limit.return_value = True
         com_res = await comment_engage_post(first_post["id"], comment_req, current_user=mock_user, db=db)
     assert com_res["status"] == "commented"
@@ -332,7 +336,7 @@ async def test_failed_like_is_not_recorded_as_success(db, mock_user):
     with patch.object(db.outreach_engage_posts, "update_one", new_callable=AsyncMock) as update_one, \
          patch("outreach.api.engage.OutboundRateLimiter.check_and_increment_daily_limit", new_callable=AsyncMock) as limit, \
          patch("outreach.engine.voyager_client.VoyagerClient.like_update", new_callable=AsyncMock) as voyager_like:
-        update_one.return_value = SimpleNamespace(modified_count=1)
+        update_one.return_value = SimpleNamespace(modified_count=1, matched_count=1)
         limit.return_value = True
         voyager_like.return_value = {"status": "failed", "status_code": 500}
         with pytest.raises(HTTPException) as exc:
@@ -355,7 +359,7 @@ async def test_like_endpoint_only_queues_worker_action(db, mock_user):
          patch("celery_workers.celery_app.celery_app.send_task") as send_task, \
          patch("outreach.core.manual_actions.ManualActions.queue", new_callable=AsyncMock), \
          patch("outreach.engine.voyager_client.VoyagerClient.like_update", new_callable=AsyncMock) as voyager_like:
-        update_one.return_value = SimpleNamespace(modified_count=1)
+        update_one.return_value = SimpleNamespace(modified_count=1, matched_count=1)
         result = await queue_like_engage_post(post_id, LikePostRequest(sender_account_id="acc_1"),
                                               current_user=mock_user, db=db)
         assert result["status"] == "queued"
@@ -380,7 +384,12 @@ async def test_ai_comment_generator(db, mock_user):
 
 
 @pytest.mark.asyncio
-async def test_writing_styles_crud(db, mock_user):
+async def test_writing_styles_crud(db, mock_user, monkeypatch):
+    monkeypatch.setattr("outreach.api.styles.free_llm.generate_text",
+        AsyncMock(return_value=("Use short sentences and concrete observations.", None, None)))
+    async def isolated_save(database, workspace_id, operation):
+        return await operation(database)
+    monkeypatch.setattr("outreach.api.styles.mutate_suppression", isolated_save)
     req = CreateWritingStyleRequest(
         name="Punchy Founder",
         sample_posts=[

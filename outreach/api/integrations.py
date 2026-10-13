@@ -16,15 +16,16 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, Field
 import httpx
 
-from api.deps import get_current_user, require_permission
 from db.mongo import get_db
+from outreach.api.dependencies import get_outreach_user, require_outreach_permission
+from outreach.core.workspace_scope import workspace_scope
 from outreach.core import integration_custody
 from outreach.core.credential_custody import CustodyUnavailable
 from outreach.core.integration_delivery import IntegrationDelivery
 from outreach.core.suppression import SuppressionUnavailable
 from outreach.core.event_definitions import WebhookEvent
 from outreach.core.event_outbox import record_outbox_event
-from outreach.core.lead_importer import normalize_linkedin_url
+from outreach.core.lead_importer import normalize_linkedin_url, _host_variants
 from outreach.core.paid_access import get_active_entitlement
 from outreach.core.safe_transport import SSRFSecurityError, validate_webhook_url
 from outreach.core.slack_notifier import validate_slack_webhook_url
@@ -145,7 +146,7 @@ class SheetsPreviewRequest(BaseModel):
 
 class SheetsImportRequest(BaseModel):
     campaign_id: str
-    rows: list[dict[str, Any]]
+    rows: list[dict[str, Any]] = Field(max_length=1000)
     column_mapping: dict[str, str] = Field(default_factory=dict)
 
 
@@ -153,19 +154,21 @@ class SheetsImportRequest(BaseModel):
 
 @router.get("/webhooks")
 async def list_webhooks(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     ws_id = _workspace_id(current_user)
-    cursor = db.outreach_webhooks.find({"workspace_id": ws_id}, {"secret_enc": 0})
-    return await cursor.to_list(length=100)
+    public_fields = ('id', 'workspace_id', 'target_url', 'events', 'status', 'consecutive_failures',
+                     'last_delivery_at', 'created_at', 'updated_at')
+    cursor = db.outreach_webhooks.find(workspace_scope(ws_id), {"secret_enc": 0, "_id": 0})
+    return [{key: row[key] for key in public_fields if key in row}
+            for row in await cursor.to_list(length=100)]
 
 
-@router.post("/webhooks", status_code=status.HTTP_201_CREATED,
-             dependencies=[require_permission("webhook:manage")])
+@router.post("/webhooks", status_code=status.HTTP_201_CREATED)
 async def create_webhook(
     req: CreateWebhookRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('webhook:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     ws_id = _workspace_id(current_user)
@@ -218,11 +221,10 @@ async def create_webhook(
     }
 
 
-@router.post("/webhooks/{webhook_id}/rotate-secret",
-             dependencies=[require_permission("webhook:manage")])
+@router.post("/webhooks/{webhook_id}/rotate-secret")
 async def rotate_webhook_secret(
     webhook_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('webhook:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     ws_id = _workspace_id(current_user)
@@ -237,10 +239,10 @@ async def rotate_webhook_secret(
     return {"status": "rotated", "webhook_id": webhook_id, "new_secret": raw_secret}
 
 
-@router.delete("/webhooks/{webhook_id}", dependencies=[require_permission("webhook:manage")])
+@router.delete("/webhooks/{webhook_id}")
 async def delete_webhook(
     webhook_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('webhook:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     ws_id = _workspace_id(current_user)
@@ -255,7 +257,7 @@ async def list_webhook_deliveries(
     webhook_id: str,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     ws_id = _workspace_id(current_user)
@@ -272,11 +274,10 @@ async def list_webhook_deliveries(
     return {"deliveries": deliveries, "total": total, "skip": skip, "limit": limit}
 
 
-@router.post("/deliveries/{delivery_id}/replay",
-             dependencies=[require_permission("webhook:manage")])
+@router.post("/deliveries/{delivery_id}/replay")
 async def replay_failed_delivery(
     delivery_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('webhook:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     ws_id = _workspace_id(current_user)
@@ -287,10 +288,10 @@ async def replay_failed_delivery(
         raise HTTPException(status_code=409, detail=str(exc))
 
 
-@router.post("/webhooks/{webhook_id}/test", status_code=202, dependencies=[require_permission("webhook:manage")])
+@router.post("/webhooks/{webhook_id}/test", status_code=202)
 async def test_webhook_ping(
     webhook_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('webhook:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
     request_id: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ):
@@ -305,7 +306,7 @@ async def test_webhook_ping(
 @router.get("/deliveries/{delivery_id}/status")
 async def get_integration_delivery_status(
     delivery_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     ws_id = _workspace_id(current_user)
@@ -316,22 +317,23 @@ async def get_integration_delivery_status(
 
 @router.get("/api-keys")
 async def list_api_keys(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     ws_id = _workspace_id(current_user)
     cursor = db.outreach_api_keys.find(
-        {"workspace_id": ws_id, "revoked_at": None},
-        {"key_hash": 0},
+        {**workspace_scope(ws_id), "revoked_at": None},
+        {"key_hash": 0, "_id": 0},
     ).sort("created_at", -1)
-    return await cursor.to_list(length=50)
+    public_fields = ('id', 'workspace_id', 'name', 'key_prefix', 'scopes', 'last_used_at', 'created_at')
+    return [{key: row[key] for key in public_fields if key in row}
+            for row in await cursor.to_list(length=50)]
 
 
-@router.post("/api-keys", status_code=status.HTTP_201_CREATED,
-             dependencies=[require_permission("api_key:manage")])
+@router.post("/api-keys", status_code=status.HTTP_201_CREATED)
 async def create_api_key(
     req: CreateApiKeyRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('api_key:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     ws_id = _workspace_id(current_user)
@@ -387,10 +389,10 @@ async def create_api_key(
     }
 
 
-@router.delete("/api-keys/{key_id}", dependencies=[require_permission("api_key:manage")])
+@router.delete("/api-keys/{key_id}")
 async def revoke_api_key(
     key_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('api_key:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     ws_id = _workspace_id(current_user)
@@ -407,7 +409,7 @@ async def revoke_api_key(
 
 @router.get("/slack")
 async def get_slack_config(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     ws_id = _workspace_id(current_user)
@@ -424,10 +426,10 @@ async def get_slack_config(
     }
 
 
-@router.post("/slack", dependencies=[require_permission("outreach:manage")])
+@router.post("/slack")
 async def update_slack_config(
     req: SlackConfigRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('outreach:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     ws_id = _workspace_id(current_user)
@@ -452,9 +454,9 @@ async def update_slack_config(
     return {"status": "saved", "connected": req.enabled}
 
 
-@router.post("/slack/test", status_code=202, dependencies=[require_permission("outreach:manage")])
+@router.post("/slack/test", status_code=202)
 async def test_slack_notification(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('outreach:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
     request_id: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ):
@@ -466,9 +468,9 @@ async def test_slack_notification(
     return await _queue_integration(db, ws_id, "slack", "slack", current_user.get("user_id"), request_id=request_id)
 
 
-@router.delete("/slack", dependencies=[require_permission("outreach:manage")])
+@router.delete("/slack")
 async def delete_slack_config(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('outreach:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     ws_id = _workspace_id(current_user)
@@ -480,7 +482,7 @@ async def delete_slack_config(
 
 @router.get("/hubspot")
 async def get_hubspot_config(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     ws_id = _workspace_id(current_user)
@@ -497,10 +499,10 @@ async def get_hubspot_config(
     }
 
 
-@router.post("/hubspot", dependencies=[require_permission("outreach:manage")])
+@router.post("/hubspot")
 async def update_hubspot_config(
     req: HubSpotConfigRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('outreach:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     ws_id = _workspace_id(current_user)
@@ -525,9 +527,9 @@ async def update_hubspot_config(
     return {"status": "saved", "connected": True, "portal_id": clean_portal}
 
 
-@router.delete("/hubspot", dependencies=[require_permission("outreach:manage")])
+@router.delete("/hubspot")
 async def delete_hubspot_config(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('outreach:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     ws_id = _workspace_id(current_user)
@@ -535,10 +537,10 @@ async def delete_hubspot_config(
     return {"status": "disconnected"}
 
 
-@router.post("/hubspot/sync-lead/{lead_id}", status_code=202, dependencies=[require_permission("lead:update")])
+@router.post("/hubspot/sync-lead/{lead_id}", status_code=202)
 async def manual_sync_lead_hubspot(
     lead_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('lead:update'),
     db: AsyncIOMotorDatabase = Depends(get_db),
     request_id: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ):
@@ -552,10 +554,10 @@ async def manual_sync_lead_hubspot(
 
 # ── Google Sheets / CSV Import Endpoints ───────────────────────────────────
 
-@router.post("/sheets/preview", dependencies=[require_permission("lead:create")])
+@router.post("/sheets/preview")
 async def preview_sheets_import(
     req: SheetsPreviewRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('lead:create'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
@@ -610,11 +612,10 @@ async def preview_sheets_import(
     }
 
 
-@router.post("/sheets/import", status_code=status.HTTP_201_CREATED,
-             dependencies=[require_permission("lead:create")])
+@router.post("/sheets/import", status_code=status.HTTP_201_CREATED)
 async def import_sheets_leads(
     req: SheetsImportRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = require_outreach_permission('lead:create'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
@@ -622,108 +623,19 @@ async def import_sheets_leads(
     suppression list enforcement, warm-up lock checks, and outbox emission.
     """
     ws_id = _workspace_id(current_user)
-    campaign = await db.outreach_campaigns.find_one({
-        "id": req.campaign_id,
-        "workspace_id": ws_id,
-        "is_deleted": {"$ne": True},
-    })
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-
-    if campaign.get("status") == "warming_up":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Campaign is armed in warm-up state; lead import is locked.",
-        )
-
-    # Fetch suppressions
-    suppressions = await db.outreach_email_suppressions.find({"workspace_id": ws_id}).to_list(length=5000)
-    suppressed_emails = {s.get("email", "").lower() for s in suppressions if s.get("email")}
-
-    mapping = req.column_mapping
-    url_key = mapping.get("linkedin_url", "linkedin_url")
-    fn_key = mapping.get("first_name", "first_name")
-    ln_key = mapping.get("last_name", "last_name")
-    comp_key = mapping.get("company_name", "company_name")
-    title_key = mapping.get("job_title", "job_title")
-    email_key = mapping.get("email", "email")
-
-    enrolled = 0
-    skipped_duplicate = 0
-    skipped_suppressed = 0
-    now = datetime.now(timezone.utc)
-
-    for raw_row in req.rows:
-        row = sanitize_row_data(raw_row)
-        raw_url = str(row.get(url_key, ""))
-        clean_url = normalize_linkedin_url(raw_url)
-        if not clean_url:
-            continue
-
-        raw_email = str(row.get(email_key, "")).strip().lower()
-        if raw_email and raw_email in suppressed_emails:
-            skipped_suppressed += 1
-            continue
-
-        # Check existing lead in campaign
-        existing = await db.outreach_leads.find_one({
-            "campaign_id": req.campaign_id,
-            "workspace_id": ws_id,
-            "linkedin_url": clean_url,
-        })
-        if existing:
-            skipped_duplicate += 1
-            continue
-
-        lead_id = f"lead_{uuid.uuid4().hex[:12]}"
-        lead_doc = {
-            "id": lead_id,
-            "workspace_id": ws_id,
-            "campaign_id": req.campaign_id,
-            "linkedin_url": clean_url,
-            "first_name": str(row.get(fn_key, "")).strip() or "Contact",
-            "last_name": str(row.get(ln_key, "")).strip(),
-            "company_name": str(row.get(comp_key, "")).strip(),
-            "job_title": str(row.get(title_key, "")).strip(),
-            "email": raw_email or None,
-            "pipeline_stage": "new",
-            "execution_state": LeadExecutionState.PENDING.value,
-            "source": "google_sheets",
-            "created_at": now,
-            "updated_at": now,
-        }
-        await db.outreach_leads.insert_one(lead_doc)
-        enrolled += 1
-
-        # Emit outbox event
-        await record_outbox_event(
-            db=db,
-            workspace_id=ws_id,
-            event_type=WebhookEvent.LEAD_CREATED,
-            aggregate_id=lead_id,
-            dedupe_key=f"lead.created:{lead_id}",
-            data={
-                "lead_id": lead_id,
-                "campaign_id": req.campaign_id,
-                "linkedin_url": clean_url,
-                "channel": "linkedin",
-                "source_status": "confirmed",
-            },
-        )
-
-    # Update campaign leads count
-    if enrolled > 0:
-        await db.outreach_campaigns.update_one(
-            {"id": req.campaign_id, "workspace_id": ws_id},
-            {"$inc": {"leads_count": enrolled}},
-        )
-
-    return {
-        "status": "imported",
-        "enrolled_count": enrolled,
-        "skipped_duplicate": skipped_duplicate,
-        "skipped_suppressed": skipped_suppressed,
-    }
+    from outreach.core.lead_importer import LeadImporter
+    fields = ("linkedin_url", "first_name", "last_name", "company_name", "job_title", "email")
+    rows = []
+    for raw in req.rows:
+        row = sanitize_row_data(raw)
+        rows.append({field: str(row.get(req.column_mapping.get(field, field), "") or "").strip() for field in fields})
+    result = await LeadImporter.ingest_leads(rows, req.campaign_id, ws_id, db,
+        source="google_sheets", include_rejections=True)
+    return {"status": "imported", "enrolled_count": result["imported_count"],
+            "skipped_duplicate": result["duplicates_count"],
+            "skipped_suppressed": sum(row["rejection_code"] in {"email_suppressed", "do_not_contact", "withdrawn_cooldown"}
+                                      for row in result["rejections"]),
+            "skipped_count": result["skipped_count"], "rejections": result["rejections"]}
 
 
 # ── Public REST API Authentication & Rate Limiting ─────────────────────────
@@ -891,104 +803,72 @@ async def public_enroll_lead(
     workspace_id = auth["workspace_id"]
     clean_idempotency = idempotency_key.strip()
     if not clean_idempotency or len(clean_idempotency) > 128:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Valid Idempotency-Key header is required (1-128 chars)",
-        )
-
-    # Validate campaign exists and is not deleted
-    campaign = await db.outreach_campaigns.find_one({
-        "id": req.campaign_id,
-        "workspace_id": workspace_id,
-        "is_deleted": {"$ne": True},
-    })
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found in this workspace")
-
-    # Guard: warm-up campaigns cannot receive direct external lead imports
-    if campaign.get("status") == "warming_up":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Cannot enroll leads into a campaign currently undergoing warm-up",
-        )
-
-    # Validate and normalize LinkedIn profile URL
+        raise HTTPException(400, "Valid Idempotency-Key header is required (1-128 chars)")
     clean_url = normalize_linkedin_url(req.linkedin_url)
     if not clean_url:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="A valid LinkedIn personal profile URL is required (e.g. https://linkedin.com/in/username)",
-        )
+        raise HTTPException(400, "A valid LinkedIn personal profile URL is required")
+    from outreach.core.authorization import canonical_hash
+    from outreach.core.lead_importer import LeadImporter
+    from outreach.core.suppression import mutate_suppression
+    request_id = canonical_hash(["lead_admission", workspace_id, auth.get("key_id"), auth.get("key_hash"), clean_idempotency])
+    digest = canonical_hash(req.model_dump())
 
-    # Check suppression list if email provided
-    if req.email:
-        clean_email = req.email.strip().lower()
-        is_suppressed = await db.outreach_email_suppressions.find_one({
-            "workspace_id": workspace_id, "email": clean_email,
-        })
-        if is_suppressed:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Email address '{clean_email}' is on the workspace suppression list",
-            )
+    def check_deadline(key):
+        expires = key.get("expires_at")
+        if expires is not None:
+            if not isinstance(expires, datetime):
+                raise HTTPException(401, "Invalid API key expiry")
+            deadline = expires.astimezone(timezone.utc) if expires.tzinfo else expires.replace(tzinfo=timezone.utc)
+            if deadline <= datetime.now(timezone.utc):
+                raise HTTPException(401, "API key has expired")
+        if not is_integrations_pilot_allowed(workspace_id):
+            raise HTTPException(503, "Integrations are not enabled for this workspace in the current pilot")
 
-    # Idempotent deduplication check: return existing if already enrolled
-    existing = await db.outreach_leads.find_one({
-        "workspace_id": workspace_id,
-        "campaign_id": req.campaign_id,
-        "linkedin_url": clean_url,
-    })
-    if existing:
-        return {
-            "status": "already_enrolled",
-            "lead_id": existing["id"],
-            "campaign_id": req.campaign_id,
-        }
-
-    now = datetime.now(timezone.utc)
-    from uuid import uuid4
-    lead_id = f"lead_{uuid4().hex[:12]}"
-
-    lead_doc = {
-        "id": lead_id,
-        "workspace_id": workspace_id,
-        "campaign_id": req.campaign_id,
-        "linkedin_url": clean_url,
-        "first_name": req.first_name.strip(),
-        "last_name": req.last_name.strip(),
-        "company_name": req.company_name.strip(),
-        "job_title": req.job_title.strip(),
-        "email": req.email.strip() if req.email else None,
-        "custom_variables": req.custom_variables,
-        "execution_state": LeadExecutionState.QUEUED.value,
-        "pipeline_stage": "in_campaign",
-        "created_at": now,
-        "updated_at": now,
-    }
-
-    await db.outreach_leads.insert_one(lead_doc)
-    await db.outreach_campaigns.update_one(
-        {"id": req.campaign_id, "workspace_id": workspace_id},
-        {"$inc": {"leads_count": 1}},
-    )
-
-    # Emit durable event to outbox
-    await record_outbox_event(
-        db=db,
-        workspace_id=workspace_id,
-        event_type=WebhookEvent.LEAD_CREATED,
-        aggregate_id=lead_id,
-        dedupe_key=f"lead.created:{lead_id}",
-        data={
-            "lead_id": lead_id,
-            "campaign_id": req.campaign_id,
-            "linkedin_url": clean_url,
-            "channel": "linkedin",
-            "source_status": "confirmed",
-        },
-    )
-
-    return {"status": "enrolled", "lead_id": lead_id, "campaign_id": req.campaign_id}
+    async def enroll(current):
+        # Keep the public-key boundary separate from authenticated browser authority.
+        key = await current.outreach_api_keys.find_one({**workspace_scope(workspace_id),
+            "id": auth.get("key_id"), "key_hash": auth.get("key_hash"), "revoked_at": None})
+        now = datetime.now(timezone.utc)
+        expires = (key or {}).get("expires_at")
+        if (not key or not isinstance(auth.get("key_id"), str) or not auth.get("key_hash")
+                or "leads:write" not in key.get("scopes", [])):
+            raise HTTPException(401, "Invalid or revoked API key")
+        check_deadline(key)
+        checked = await current.outreach_api_keys.update_one({**workspace_scope(workspace_id),
+            "id": key["id"], "key_hash": key["key_hash"], "revoked_at": None,
+            "scopes": key["scopes"], "expires_at": expires if "expires_at" in key else {"$exists": False}},
+            {"$inc": {"lead_admission_revision": 1}})
+        if getattr(checked, "matched_count", 0) != 1:
+            raise HTTPException(401, "API key changed before enrollment")
+        receipt_scope = {"_id": request_id, **workspace_scope(workspace_id)}
+        receipt = await current.outreach_lead_admissions.find_one(receipt_scope)
+        if receipt:
+            if receipt.get("request_digest") != digest:
+                raise HTTPException(409, "Idempotency-Key is already bound to a different enrollment request")
+            check_deadline(key)
+            return receipt["result"]
+        row = {**req.model_dump(), "linkedin_url": clean_url}
+        result = await LeadImporter.ingest_leads([row], req.campaign_id, workspace_id, current,
+            source="public_api", include_rejections=True, _ordered=True)
+        if result["imported_count"]:
+            response = {"status": "enrolled", "lead_id": result["lead_ids"][0], "campaign_id": req.campaign_id}
+        elif result["duplicates_count"]:
+            existing = await current.outreach_leads.find_one({**workspace_scope(workspace_id),
+                "campaign_id": req.campaign_id, "linkedin_url": {"$in": list(_host_variants(clean_url))},
+                "execution_state": {"$ne": "staged"}})
+            if not existing:
+                raise HTTPException(409, "An existing recipient identity needs review before enrollment")
+            response = {"status": "already_enrolled", "lead_id": existing["id"], "campaign_id": req.campaign_id}
+        else:
+            raise HTTPException(400, result["rejections"][0]["reason"] if result["rejections"] else "Contact cannot be enrolled")
+        await current.outreach_lead_admissions.insert_one({"_id": request_id, "workspace_id": workspace_id,
+            "request_digest": digest, "result": response, "created_at": now})
+        check_deadline(key)
+        return response
+    try:
+        return await mutate_suppression(db, workspace_id, enroll)
+    except SuppressionUnavailable:
+        raise HTTPException(503, "Could not confirm enrollment. Retry with the same Idempotency-Key.") from None
 
 
 @public_router.post("/leads/{lead_id}/pause")

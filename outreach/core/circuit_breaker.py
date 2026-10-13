@@ -1,7 +1,7 @@
 """
 Sender-Scoped Circuit Breaker for LinkedIn Outreach Protection.
 Monitors platform responses, traps challenges (429, 999, CAPTCHA, proxy failure),
-atomically trips sender accounts to 'checkpoint_detected', pauses all pending tasks,
+trips sender accounts to 'checkpoint_detected', pauses pending tasks,
 and enforces a mandatory cooldown before manual resumption.
 """
 import logging
@@ -10,6 +10,8 @@ from typing import Any, Optional
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from outreach.models import AccountStatus, CampaignStatus, StopReason
+from outreach.core.workspace_scope import workspace_scope
+from outreach.core.authorization import canonical_hash
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +93,7 @@ class CircuitBreaker:
         Immediately marks account as 'checkpoint_detected', freezes all pending tasks,
         pauses active campaigns with no healthy senders, and enforces a cooldown window.
         """
+        scope = workspace_scope(workspace_id)
         reason_enum = reason if isinstance(reason, StopReason) else None
         if not reason_enum:
             try:
@@ -109,9 +112,7 @@ class CircuitBreaker:
             sender_id, reason_enum.value, cooldown_hours, cooldown_until.isoformat()
         )
 
-        query: dict[str, Any] = {"id": sender_id}
-        if workspace_id:
-            query["workspace_id"] = workspace_id
+        query: dict[str, Any] = {"id": sender_id, **scope}
 
         # 1. Update sender document
         account_update = {
@@ -126,11 +127,9 @@ class CircuitBreaker:
 
         # 2. Pause all pending queued tasks for this sender across the workspace
         task_query: dict[str, Any] = {
-            "assigned_account_id": sender_id,
-            "status": "pending",
+            **scope, "$or": [{"assigned_account_id": sender_id}, {"account_id": sender_id}],
+            "status": {"$in": ["pending", "queued", "scheduled"]},
         }
-        if workspace_id:
-            task_query["workspace_id"] = workspace_id
 
         paused_tasks_res = await db.outreach_tasks.update_many(
             task_query,
@@ -147,9 +146,8 @@ class CircuitBreaker:
         camp_query: dict[str, Any] = {
             "sender_account_ids": sender_id,
             "status": CampaignStatus.ACTIVE.value,
+            **scope,
         }
-        if workspace_id:
-            camp_query["workspace_id"] = workspace_id
 
         affected_campaigns = await db.outreach_campaigns.find(camp_query).to_list(length=100)
         paused_campaigns_count = 0
@@ -159,26 +157,29 @@ class CircuitBreaker:
             # Check if any OTHER senders are active
             other_active = await db.outreach_accounts.count_documents({
                 "id": {"$in": [s for s in configured_senders if s != sender_id]},
-                "status": "active",
+                "status": "active", **scope,
             })
             if other_active == 0:
-                await db.outreach_campaigns.update_one(
-                    {"id": camp["id"]},
+                paused = await db.outreach_campaigns.update_one(
+                    {"id": camp["id"], **scope, "status": CampaignStatus.ACTIVE.value,
+                     "sender_account_ids": sender_id, **({'_id': camp['_id']} if '_id' in camp else {})},
                     {
                         "$set": {
                             "status": CampaignStatus.PAUSED.value,
                             "pause_reason": f"Sender {sender_id} stopped ({reason_enum.value}) and no alternative senders active",
                             "updated_at": now,
-                        }
+                        }, "$inc": {"authorization_revision": 1},
+                        "$addToSet": {"pause_reasons": "sender_stopped"},
                     },
                 )
-                paused_campaigns_count += 1
+                if paused.matched_count == 1:
+                    paused_campaigns_count += 1
 
         # 4. Emit outbox event for integrations
         if hasattr(db, "outreach_event_outbox"):
             event_doc = {
-                "workspace_id": workspace_id or "global",
-                "dedupe_key": f"circuit_breaker:{sender_id}:{int(now.timestamp())}",
+                "workspace_id": workspace_id,
+                "dedupe_key": canonical_hash(['circuit_breaker', workspace_id, sender_id, int(now.timestamp())]),
                 "event_type": "outreach.circuit_breaker_tripped",
                 "payload": {
                     "sender_id": sender_id,
@@ -193,7 +194,7 @@ class CircuitBreaker:
             }
             try:
                 await db.outreach_event_outbox.update_one(
-                    {"dedupe_key": event_doc["dedupe_key"]},
+                    {"dedupe_key": event_doc["dedupe_key"], **scope},
                     {"$set": event_doc},
                     upsert=True,
                 )
@@ -249,55 +250,6 @@ class CircuitBreaker:
         db: AsyncIOMotorDatabase,
         force: bool = False,
     ) -> dict[str, Any]:
-        """
-        Resumes a stopped sender account after verifying cooldown period has passed
-        or if force=True is explicitly supplied by an operator.
-        """
-        now = datetime.now(timezone.utc)
-        sender = await db.outreach_accounts.find_one({"id": sender_id, "workspace_id": workspace_id})
-        if not sender:
-            raise ValueError(f"Sender account {sender_id} not found")
-
-        cooldown_until = sender.get("cooldown_until")
-        if not force and cooldown_until:
-            cooldown_dt = cooldown_until if isinstance(cooldown_until, datetime) else None
-            if not cooldown_dt and isinstance(cooldown_until, str):
-                try:
-                    cooldown_dt = datetime.fromisoformat(cooldown_until.replace("Z", "+00:00"))
-                except Exception:
-                    pass
-            if cooldown_dt:
-                if cooldown_dt.tzinfo is None:
-                    cooldown_dt = cooldown_dt.replace(tzinfo=timezone.utc)
-                if cooldown_dt > now:
-                    remaining = (cooldown_dt - now).total_seconds() / 3600.0
-                    raise ValueError(
-                        f"Sender is under mandatory platform cooldown for another {remaining:.1f} hours (until {cooldown_dt.isoformat()}). Pass force=True to override."
-                    )
-
-        # Reactivate sender
-        await db.outreach_accounts.update_one(
-            {"id": sender_id, "workspace_id": workspace_id},
-            {
-                "$set": {
-                    "status": AccountStatus.ACTIVE.value,
-                    "stop_reason": None,
-                    "stopped_at": None,
-                    "cooldown_until": None,
-                    "error_details": None,
-                    "updated_at": now,
-                }
-            },
-        )
-
-        # Unpause paused tasks for this sender
-        resumed_tasks = await db.outreach_tasks.update_many(
-            {"assigned_account_id": sender_id, "workspace_id": workspace_id, "status": "paused"},
-            {"$set": {"status": "pending", "skip_reason": None, "updated_at": now}},
-        )
-
-        return {
-            "sender_id": sender_id,
-            "status": "active",
-            "tasks_resumed": resumed_tasks.modified_count,
-        }
+        """Recover only a proven eligible connection; queued work stays stopped."""
+        from outreach.core.sender_recovery import resume_connection
+        return await resume_connection(db, workspace_id, sender_id, force=force)

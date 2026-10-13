@@ -192,6 +192,7 @@ async def test_bootstrap_user_enqueues_welcome_email():
     mock_db.users = MagicMock()
     mock_db.users.find_one = AsyncMock(return_value=None)
     mock_db.users.insert_one = AsyncMock()
+    mock_db.account_erasure_tombstones.with_options.return_value.find_one = AsyncMock(return_value=None)
 
     mock_task = MagicMock()
     with patch("celery_workers.tasks.notifications.send_notification_email_task.delay", mock_task):

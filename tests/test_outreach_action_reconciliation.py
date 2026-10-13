@@ -206,6 +206,9 @@ def test_confirmation_cannot_submit_without_explicit_acknowledgement_or_note():
 def test_action_review_routes_are_registered_under_outreach():
     from outreach.api.router import router
 
-    paths = {route.path for route in router.routes}
+    from fastapi import FastAPI
+    app = FastAPI()
+    app.include_router(router)
+    paths = app.openapi()['paths']
     assert "/outreach/action-reviews" in paths
     assert "/outreach/action-reviews/{task_id}/resolve" in paths

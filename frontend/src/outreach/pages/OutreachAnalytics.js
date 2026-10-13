@@ -142,6 +142,8 @@ export default function OutreachAnalytics() {
   };
 
   const kpis = analytics?.kpis || emptyKpis;
+  const email = kpis.email;
+  const emailCount = (key) => loading ? 'Loading…' : (email?.[key] ?? 'Not available');
 
   const dailyChart = analytics?.daily_chart || [];
   const maxBarValue = Math.max(
@@ -344,24 +346,45 @@ export default function OutreachAnalytics() {
           </p>
         </div>
 
-        {/* Card 4: Email Delivery */}
+        {/* Card 4: Stored email outcomes; acceptance never implies delivery. */}
         <div className="rounded-2xl p-5 border bg-white border-gray-200/90 shadow-2xs">
           <div className="flex items-center gap-3 mb-3">
             <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center">
               <Mail className="w-4 h-4" />
             </div>
-            <span className="text-xs font-semibold text-gray-700">Email Delivery</span>
+            <span className="text-xs font-semibold text-gray-700">Email Outcomes</span>
           </div>
           <div className="flex items-baseline justify-between">
             <span className="text-3xl font-extrabold text-gray-900 tracking-tight">
-              {kpis.email?.delivered ?? 0}
+              {emailCount('provider_accepted')}
             </span>
             <span className="text-[11px] font-semibold text-sky-700 bg-sky-50 px-2 py-0.5 rounded-full">
-              {kpis.email?.deliverability_rate != null ? `${kpis.email.deliverability_rate}% delivered` : 'Not available'}
+              Delivery unavailable
             </span>
           </div>
           <p className="text-[11px] text-gray-600 mt-2">
-            {kpis.email?.sent ? `${kpis.email.sent} sent · ${kpis.email.delivered} delivered` : '0 verified email delivery events'}
+            Provider acceptances recorded in the selected UTC period
+          </p>
+          <p className="text-[11px] text-gray-600 mt-2">
+            {emailCount('bounced')} recorded reference bounces · {emailCount('possible_bounced')} possible bounces
+          </p>
+          <p className="text-[11px] text-gray-600 mt-2">
+            {emailCount('delivery_unknown')} accepted emails with unknown delivery
+          </p>
+          {!loading && email?.human_reported > 0 && <p className="text-[11px] text-gray-600 mt-2">
+            {email.human_reported} human assertions kept separate
+          </p>}
+          {!loading && email?.pending_or_unknown_operations > 0 && <p className="text-[11px] text-gray-600 mt-2">
+            {email.pending_or_unknown_operations} pending or unknown operations created in this period
+          </p>}
+          {!loading && email?.evidence_status === 'partial' && <p role="status" className="text-[11px] text-amber-800 mt-2">
+            Some records lack usable evidence. Known counts are not a complete history.
+          </p>}
+          {!loading && (!email || email.evidence_status === 'unavailable') && <p role="status" className="text-[11px] text-amber-800 mt-2">
+            Email evidence is unavailable. Retry or narrow the filters.
+          </p>}
+          <p className="text-[10px] text-gray-500 mt-2">
+            Bounce classifications come from stored records. Delivery and submission coverage are unavailable.
           </p>
         </div>
       </div>

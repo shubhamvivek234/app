@@ -10,6 +10,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   backend-tests:
     name: Backend Test Suite
@@ -30,7 +33,7 @@ jobs:
 
       - name: Syntax & Compilation Check
         run: |
-          python -m compileall api/ celery_workers/ platform_adapters/ utils/ db/
+          python -m compileall api/ celery_workers/ platform_adapters/ utils/ db/ outreach/
 
       - name: Run Pytest
         env:
@@ -39,7 +42,40 @@ jobs:
           ENCRYPTION_KEY: dGVzdC1lbmNyeXB0aW9uLWtleS1mb3ItY2ktZGV2MSE=
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
         run: |
-          python -m pytest -p pytest_asyncio.plugin tests/ -v -m "not sandbox" --maxfail=5
+          python -m pytest -p pytest_asyncio.plugin -o asyncio_mode=auto tests/ -v -m "not sandbox" --maxfail=5
+
+  outreach-native:
+    name: Outreach Native Database Contracts
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - name: Install dependencies and owned Mongo runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libmagic1 gnupg curl
+          curl --fail --silent --show-error https://www.mongodb.org/static/pgp/server-8.0.asc | sudo gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg
+          echo "deb [ arch=amd64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/8.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list
+          sudo apt-get update
+          sudo apt-get install -y mongodb-org-server
+          python -m pip install -r requirements.txt
+      - name: Verify native tenant and stream contracts without skipped checks
+        env:
+          OUTREACH_TEST_LOCAL_MONGO: "1"
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          OUTREACH_LIVE_ACTIONS_ENABLED: "false"
+        run: |
+          python -m pytest -p pytest_asyncio.plugin -o asyncio_mode=auto -q --junitxml=test-results/outreach-native.xml tests/test_outreach_lead_workspace_scope_mongo.py tests/test_outreach_authorized_context_mongo.py tests/test_outreach_stream_access_mongo.py tests/test_outreach_billing_and_integration_responses_mongo.py tests/test_outreach_style_save_mongo.py tests/test_outreach_lead_admission_mongo.py tests/test_outreach_warmup_admission_mongo.py tests/test_outreach_campaign_deletion_mongo.py tests/test_outreach_engage_projection_mongo.py tests/test_outreach_sender_resume_mongo.py tests/test_outreach_campaign_readiness_mongo.py tests/test_outreach_email_reporting_mongo.py
+          python scripts/check_native_results.py test-results/outreach-native.xml --minimum 347
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: outreach-native-results
+          path: test-results/outreach-native.xml
 
   frontend-build:
     name: Frontend Production Build
@@ -65,3 +101,34 @@ jobs:
           CI: "true"
           GENERATE_SOURCEMAP: "false"
         run: npm run build
+
+      - name: Outreach Component Tests
+        env:
+          CI: "true"
+        run: npm test -- --watchAll=false --runInBand src/outreach
+
+  outreach-browser:
+    name: Outreach Browser Contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --legacy-peer-deps
+      - run: npx playwright install --with-deps chromium
+      - name: Browser recipient and unknown-outcome contracts
+        env:
+          CI: "true"
+        run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: outreach-browser-results
+          path: frontend/test-results/
