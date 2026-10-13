@@ -28,18 +28,23 @@ describe('OutreachAnalytics component', () => {
 
   const mockAnalyticsData = {
     has_connected_account: true,
+    linkedin_cohorts: { status: 'recorded', attribution_window_days: 30 },
     kpis: {
       requests: {
         sent: 20,
         accepted: 8,
         acceptance_rate: 40.0,
         denominator: 20,
+        period_activity: { sent: 20, accepted: 8 },
+        cohort: { denominator: 10, accepted: 4, acceptance_rate: 40.0 },
       },
       messages: {
         sent: 10,
         replied: 3,
         reply_rate: 30.0,
         denominator: 10,
+        period_activity: { sent: 10, replied: 3 },
+        cohort: { denominator: 5, replied: 2, reply_rate: 40.0 },
       },
       engagement: {
         total_actions: 15,
@@ -88,12 +93,12 @@ describe('OutreachAnalytics component', () => {
 
     expect(container.textContent).toContain('Analytics');
     expect(container.textContent).toContain('20');
-    expect(container.textContent).toContain('8 accepted (40%)');
-    expect(container.textContent).toContain('20 invitations recorded');
+    expect(container.textContent).toContain('4 associated acceptances (40%)');
+    expect(container.textContent).toContain('10 original sends · 30-day observation window');
 
     expect(container.textContent).toContain('10');
-    expect(container.textContent).toContain('3 replies (30%)');
-    expect(container.textContent).toContain('10 messages recorded');
+    expect(container.textContent).toContain('2 associated replies (40%)');
+    expect(container.textContent).toContain('5 original sends · 30-day observation window');
 
     expect(container.textContent).toContain('Email Outcomes');
     expect(container.textContent).toContain('Delivery unavailable');
@@ -210,5 +215,51 @@ describe('OutreachAnalytics component', () => {
     expect(emailCard().textContent).toContain('Not available accepted emails with unknown delivery');
     expect(emailCard().textContent).toContain('Email evidence is unavailable');
     expect(emailCard().textContent).not.toContain('0 accepted');
+  });
+
+  it('does not revive the legacy mixed-cohort rate when cohort fields are absent', async () => {
+    global.fetch = jest.fn((url) => Promise.resolve(ok(url.includes('/campaigns') || url.includes('/accounts')
+      ? [] : { ...mockAnalyticsData, linkedin_cohorts: undefined, kpis: {
+        ...mockAnalyticsData.kpis, requests: { sent: 1, accepted: 2, acceptance_rate: 200 },
+        messages: { sent: 1, replied: 2, reply_rate: 200 } } })));
+    await act(async () => root.render(<OutreachAnalytics />));
+    expect(container.textContent).not.toContain('200%');
+    expect(container.textContent).toContain('Not available associated acceptances');
+    expect(container.textContent).toContain('Cohort observations unavailable');
+  });
+
+  it('distinguishes empty recorded cohorts from incomplete reads', async () => {
+    global.fetch = jest.fn((url) => Promise.resolve(ok(url.includes('/campaigns') || url.includes('/accounts')
+      ? [] : { ...mockAnalyticsData, kpis: { ...mockAnalyticsData.kpis,
+        requests: { cohort: { denominator: 0, accepted: 0, acceptance_rate: null } } } })));
+    await act(async () => root.render(<OutreachAnalytics />));
+    expect(container.textContent).toContain('0 associated acceptances');
+    expect(container.textContent).toContain('0 original sends · 30-day observation window');
+    expect(container.textContent).not.toContain('(0%)');
+  });
+
+  it('keeps null cohort counts unavailable and suppresses partial percentages', async () => {
+    global.fetch = jest.fn((url) => Promise.resolve(ok(url.includes('/campaigns') || url.includes('/accounts')
+      ? [] : { ...mockAnalyticsData, linkedin_cohorts: { status: 'partial', attribution_window_days: 30 },
+        kpis: { ...mockAnalyticsData.kpis,
+          requests: { cohort: { denominator: null, accepted: null, acceptance_rate: 200 } },
+          messages: { cohort: { denominator: 1, replied: 1, reply_rate: 100 } } } })));
+    await act(async () => root.render(<OutreachAnalytics />));
+    expect(container.textContent).toContain('Not available associated acceptances');
+    expect(container.textContent).toContain('Known records only · rates unavailable');
+    expect(container.textContent).not.toContain('200%');
+    expect(container.textContent).not.toContain('100%');
+    expect(container.textContent).not.toContain('0 associated acceptances');
+  });
+
+  it('does not show zero cohort observations while loading', async () => {
+    let resolve;
+    global.fetch = jest.fn((url) => url.includes('/campaigns') || url.includes('/accounts')
+      ? Promise.resolve(ok([])) : new Promise((done) => { resolve = done; }));
+    await act(async () => root.render(<OutreachAnalytics />));
+    expect(container.textContent).toContain('Loading… associated replies');
+    expect(container.textContent).not.toContain('0 associated replies');
+    await act(async () => resolve(ok(mockAnalyticsData)));
+    expect(container.textContent).toContain('2 associated replies (40%)');
   });
 });

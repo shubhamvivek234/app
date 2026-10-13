@@ -11,7 +11,7 @@ import time
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Any
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -19,6 +19,7 @@ from db.mongo import get_db
 from outreach.api.dependencies import get_outreach_user, workspace_id
 from outreach.core.activity_stream import StreamAccess, activity_events, STREAM_LIFETIME_SECONDS
 from outreach.core.email_reporting import email_report
+from outreach.core.linkedin_reporting import linkedin_cohort_report
 
 logger = logging.getLogger(__name__)
 
@@ -89,22 +90,25 @@ async def get_outreach_analytics(
     has_connected_account = acc_count > 0
 
     def task_filter(task_type: str | dict, date_filter: dict | None = None) -> dict:
-        return {"$and": [queue_query, {"task_type": task_type, "status": "completed", **(date_filter or {"updated_at": {"$gte": period_start}})}]}
+        return {"$and": [queue_query, {"task_type": task_type, "status": "completed", **(date_filter or {"updated_at": {"$gte": period_start, "$lte": now}})}]}
 
     def lead_filter(fields: dict) -> dict:
         return {"$and": [lead_query, fields]}
 
     # Only recorded actions count; CRM stage changes must not fabricate sends.
     requests_sent = await db.outreach_tasks.count_documents(task_filter("connection_request"))
-    requests_accepted = await db.outreach_leads.count_documents(lead_filter({"is_connected": True, "accepted_at": {"$gte": period_start}}))
+    requests_accepted = await db.outreach_leads.count_documents(lead_filter({"is_connected": True, "accepted_at": {"$gte": period_start, "$lte": now}}))
 
     # Messages metrics
     messages_sent = await db.outreach_tasks.count_documents(task_filter("send_message"))
-    messages_replied = await db.outreach_leads.count_documents(lead_filter({"has_replied": True, "replied_at": {"$gte": period_start}}))
+    messages_replied = await db.outreach_leads.count_documents(lead_filter({"has_replied": True, "replied_at": {"$gte": period_start, "$lte": now}}))
 
     # Provider acceptance, stored bounce classification and delivery are distinct.
     email_evidence = await email_report(db, workspace=workspace_id, campaign=campaign_id,
         sender=sender_account_id, start=period_start, as_of=now)
+    linkedin_cohorts = await linkedin_cohort_report(
+        db, workspace=workspace_id, campaign=campaign_id, sender=sender_account_id,
+        start=period_start, as_of=now)
 
     # Engagement metrics (pre-warming visits, likes, comments)
     profile_visits = await db.outreach_tasks.count_documents(task_filter("visit_profile"))
@@ -135,7 +139,7 @@ async def get_outreach_analytics(
         label = day_date.strftime("%d %b")
         day_start = day_date.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day_start + timedelta(days=1)
-        day_range = {"$gte": day_start, "$lt": day_end}
+        day_range = {"$gte": day_start, "$lt": day_end, "$lte": now}
         sent, messages_day, accepted, replied, visits_day, post_eng_day = await asyncio.gather(
             count_for_day(db.outreach_tasks, task_filter("connection_request", {"updated_at": day_range})),
             count_for_day(db.outreach_tasks, task_filter("send_message", {"updated_at": day_range})),
@@ -172,16 +176,20 @@ async def get_outreach_analytics(
         "has_connected_account": has_connected_account,
         "kpis": {
             "requests": {
-                "sent": requests_sent,
-                "accepted": requests_accepted,
-                "acceptance_rate": round(requests_accepted / requests_sent * 100, 1) if requests_sent > 0 else None,
-                "denominator": requests_sent,
+                "sent": linkedin_cohorts["requests"]["denominator"],
+                "accepted": linkedin_cohorts["requests"]["accepted"],
+                "acceptance_rate": linkedin_cohorts["requests"]["acceptance_rate"],
+                "denominator": linkedin_cohorts["requests"]["denominator"],
+                "period_activity": {"sent": requests_sent, "accepted": requests_accepted},
+                "cohort": linkedin_cohorts["requests"],
             },
             "messages": {
-                "sent": messages_sent,
-                "replied": messages_replied,
-                "reply_rate": round(messages_replied / messages_sent * 100, 1) if messages_sent > 0 else None,
-                "denominator": messages_sent,
+                "sent": linkedin_cohorts["messages"]["denominator"],
+                "replied": linkedin_cohorts["messages"]["replied"],
+                "reply_rate": linkedin_cohorts["messages"]["reply_rate"],
+                "denominator": linkedin_cohorts["messages"]["denominator"],
+                "period_activity": {"sent": messages_sent, "replied": messages_replied},
+                "cohort": linkedin_cohorts["messages"],
             },
             "engagement": {
                 "total_actions": total_engagement,
@@ -197,6 +205,7 @@ async def get_outreach_analytics(
             },
         },
         "daily_chart": daily_chart,
+        "linkedin_cohorts": linkedin_cohorts,
         "timeframe": timeframe,
         "campaign_id": campaign_id or "all",
         "sender_account_id": sender_account_id or "all",
@@ -243,6 +252,19 @@ async def export_outreach_analytics(
         "email_as_of_utc",
         "email_cohort_basis",
         "email_bounce_basis",
+        "linkedin_cohort_basis",
+        "linkedin_attribution_window_days",
+        "linkedin_request_cohort_denominator",
+        "linkedin_request_cohort_accepted",
+        "linkedin_request_cohort_rate",
+        "linkedin_message_cohort_denominator",
+        "linkedin_message_cohort_replied",
+        "linkedin_message_cohort_rate",
+        "linkedin_cohort_status",
+        "linkedin_outcome_basis",
+        "linkedin_period_start_utc",
+        "linkedin_as_of_utc",
+        "linkedin_summary_scope",
     ])
     for day in daily_chart:
         raw_date = day.get("timestamp", day.get("date"))
@@ -264,6 +286,19 @@ async def export_outreach_analytics(
             day.get("email_as_of_utc"),
             day.get("email_cohort_basis"),
             day.get("email_bounce_basis"),
+            analytics_data.get("linkedin_cohorts", {}).get("basis"),
+            analytics_data.get("linkedin_cohorts", {}).get("attribution_window_days"),
+            analytics_data.get("linkedin_cohorts", {}).get("requests", {}).get("denominator"),
+            analytics_data.get("linkedin_cohorts", {}).get("requests", {}).get("accepted"),
+            analytics_data.get("linkedin_cohorts", {}).get("requests", {}).get("acceptance_rate"),
+            analytics_data.get("linkedin_cohorts", {}).get("messages", {}).get("denominator"),
+            analytics_data.get("linkedin_cohorts", {}).get("messages", {}).get("replied"),
+            analytics_data.get("linkedin_cohorts", {}).get("messages", {}).get("reply_rate"),
+            analytics_data.get("linkedin_cohorts", {}).get("status"),
+            analytics_data.get("linkedin_cohorts", {}).get("outcome_basis"),
+            analytics_data.get("linkedin_cohorts", {}).get("period_start"),
+            analytics_data.get("linkedin_cohorts", {}).get("as_of"),
+            "selected_period_summary_repeated_on_each_daily_row",
         ])
 
     csv_bytes = output.getvalue().encode("utf-8")
@@ -278,6 +313,7 @@ async def export_outreach_analytics(
 
 @router.get("/live-feed")
 async def live_activity_feed(
+    request: Request = None,
     current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
@@ -291,7 +327,7 @@ async def live_activity_feed(
     deadline = time.monotonic() + STREAM_LIFETIME_SECONDS
 
     return StreamingResponse(
-        activity_events(db, access, deadline),
+        activity_events(db, access, deadline, request.headers.get('last-event-id') if request else None),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

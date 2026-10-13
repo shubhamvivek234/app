@@ -142,6 +142,18 @@ export default function OutreachAnalytics() {
   };
 
   const kpis = analytics?.kpis || emptyKpis;
+  const requestCohort = kpis.requests?.cohort || {};
+  const messageCohort = kpis.messages?.cohort || {};
+  const linkedin = analytics?.linkedin_cohorts;
+  const cohortCount = (cohort, key) => loading ? 'Loading…' : (cohort[key] ?? 'Not available');
+  const cohortRate = (cohort, key) => !loading && linkedin?.status === 'recorded' && Number.isFinite(cohort[key])
+    ? ` (${cohort[key]}%)` : '';
+  const cohortDescription = (cohort) => {
+    if (loading) return 'Loading cohort observations…';
+    if (!linkedin || linkedin.status === 'unavailable') return 'Cohort observations unavailable';
+    if (linkedin.status === 'partial') return 'Known records only · rates unavailable';
+    return `${cohort.denominator ?? 'Not available'} original sends · ${linkedin.attribution_window_days}-day observation window`;
+  };
   const email = kpis.email;
   const emailCount = (key) => loading ? 'Loading…' : (email?.[key] ?? 'Not available');
 
@@ -284,15 +296,16 @@ export default function OutreachAnalytics() {
           </div>
           <div className="flex items-baseline justify-between">
             <span className="text-3xl font-extrabold text-gray-900 tracking-tight">
-              {kpis.requests?.sent ?? 0}
+              {loading ? 'Loading…' : (kpis.requests?.period_activity?.sent ?? 'Not available')}
             </span>
             <span className="text-[11px] font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full">
-              {kpis.requests?.accepted ?? 0} accepted
-              {kpis.requests?.acceptance_rate != null ? ` (${kpis.requests.acceptance_rate}%)` : ''}
+              {cohortCount(requestCohort, 'accepted')} associated acceptances
+              {cohortRate(requestCohort, 'acceptance_rate')}
             </span>
           </div>
+          <p className="text-[11px] text-gray-500 mt-1">Recorded activity in period</p>
           <p className="text-[11px] text-gray-600 mt-2">
-            {kpis.requests?.denominator ? `${kpis.requests.denominator} invitations recorded in this period` : 'Confirmed invitations sent in this period'}
+            {cohortDescription(requestCohort)}
           </p>
         </div>
 
@@ -313,15 +326,16 @@ export default function OutreachAnalytics() {
           </div>
           <div className="flex items-baseline justify-between">
             <span className="text-3xl font-extrabold text-gray-900 tracking-tight">
-              {kpis.messages?.sent ?? 0}
+              {loading ? 'Loading…' : (kpis.messages?.period_activity?.sent ?? 'Not available')}
             </span>
             <span className="text-[11px] font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full">
-              {kpis.messages?.replied ?? 0} replies
-              {kpis.messages?.reply_rate != null ? ` (${kpis.messages.reply_rate}%)` : ''}
+              {cohortCount(messageCohort, 'replied')} associated replies
+              {cohortRate(messageCohort, 'reply_rate')}
             </span>
           </div>
+          <p className="text-[11px] text-gray-500 mt-1">Recorded activity in period</p>
           <p className="text-[11px] text-gray-600 mt-2">
-            {kpis.messages?.denominator ? `${kpis.messages.denominator} messages recorded in this period` : 'Confirmed direct messages sent in this period'}
+            {cohortDescription(messageCohort)}
           </p>
         </div>
 
@@ -427,6 +441,11 @@ export default function OutreachAnalytics() {
       </div>
 
       {/* Main Bar Chart Panel matching prosp_campaign_analytics.jpg */}
+      <p className="mb-4 text-xs text-gray-600">
+        Activity counts cover updates in the selected UTC period. Cohort rates associate original recorded sends with
+        LinkedIn observations during the next {linkedin?.attribution_window_days ?? 30} days, up to the report time.
+        Recent observation windows are still open. Recorded association does not establish causation.
+      </p>
       <div className="bg-white rounded-2xl border border-gray-200/90 p-6 shadow-2xs">
         {/* Chart Legend Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 pb-4 border-b border-gray-100">
@@ -434,13 +453,13 @@ export default function OutreachAnalytics() {
             <div className="flex items-center gap-2">
               <span className="w-3.5 h-3.5 rounded bg-indigo-600 inline-block shadow-2xs" />
               <span className="text-xs font-semibold text-gray-700">
-                Sent: <strong className="text-gray-900">{selectedMetric === 'requests' ? kpis.requests?.sent ?? 0 : kpis.messages?.sent ?? 0}</strong>
+                Sent activity: <strong className="text-gray-900">{selectedMetric === 'requests' ? kpis.requests?.period_activity?.sent ?? 'Not available' : kpis.messages?.period_activity?.sent ?? 'Not available'}</strong>
               </span>
             </div>
             <div className="flex items-center gap-2">
               <span className="w-3.5 h-3.5 rounded bg-sky-400 inline-block shadow-2xs" />
               <span className="text-xs font-semibold text-gray-700">
-                {selectedMetric === 'requests' ? 'Accepted' : 'Replied'}: <strong className="text-gray-900">{selectedMetric === 'requests' ? kpis.requests?.accepted ?? 0 : kpis.messages?.replied ?? 0}</strong>
+                {selectedMetric === 'requests' ? 'Acceptance observations' : 'Reply flags'}: <strong className="text-gray-900">{selectedMetric === 'requests' ? kpis.requests?.period_activity?.accepted ?? 'Not available' : kpis.messages?.period_activity?.replied ?? 'Not available'}</strong>
               </span>
             </div>
           </div>

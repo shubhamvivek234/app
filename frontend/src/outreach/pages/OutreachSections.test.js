@@ -46,7 +46,8 @@ describe('Outreach analytics, swipe files, and inbox screens', () => {
     });
 
     await act(async () => root.render(<OutreachAnalytics />));
-    expect(container.textContent).toContain('Confirmed invitations sent in this period');
+    expect(container.textContent).toContain('Cohort observations unavailable');
+    expect(container.textContent).toContain('Not available associated acceptances');
     expect(container.textContent).not.toContain('99.4% health');
     expect(container.textContent).not.toContain('Email Delivered');
     expect(global.fetch).toHaveBeenCalledWith(

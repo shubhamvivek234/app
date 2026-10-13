@@ -11,6 +11,7 @@ export default function OutreachHome({ onNavigate, onOpenWizard, onOpenCampaign 
   const [liveEvents, setLiveEvents] = useState([]);
   const [streamStatus, setStreamStatus] = useState('connecting');
   const [overviewError, setOverviewError] = useState('');
+  const [streamNotice, setStreamNotice] = useState('');
 
   const loadOverview = async () => {
     try {
@@ -46,6 +47,8 @@ export default function OutreachHome({ onNavigate, onOpenWizard, onOpenCampaign 
     let eventSource;
     let streamClosed = false;
     let acceptingActivity = false;
+    const seen = new Set();
+    let retainedEvents = [];
     try {
       eventSource = new EventSource(`${env.BACKEND_URL}/api/v1/outreach/analytics/live-feed`, { withCredentials: true });
 
@@ -53,6 +56,8 @@ export default function OutreachHome({ onNavigate, onOpenWizard, onOpenCampaign 
         if (streamClosed) return;
         acceptingActivity = true;
         setStreamStatus('live');
+        setStreamNotice('');
+        setLiveEvents(retainedEvents);
       });
 
       eventSource.addEventListener('heartbeat', () => {
@@ -64,17 +69,29 @@ export default function OutreachHome({ onNavigate, onOpenWizard, onOpenCampaign 
         if (streamClosed || !acceptingActivity) return;
         try {
           const data = JSON.parse(e.data);
-          setLiveEvents((prev) => [data, ...prev.slice(0, 19)]);
+          const key = e.lastEventId || data.event_id || `${data.id}:${data.timestamp}`;
+          if (!data.id || !data.timestamp || seen.has(key)) return;
+          seen.add(key);
+          if (seen.size > 4096) seen.delete(seen.values().next().value);
+          retainedEvents = [data, ...retainedEvents.slice(0, 19)];
+          setLiveEvents(retainedEvents);
         } catch (_) {}
       });
 
-      eventSource.addEventListener('stream_closed', () => {
+      eventSource.addEventListener('stream_closed', (event) => {
         if (streamClosed) return;
         streamClosed = true;
         acceptingActivity = false;
+        retainedEvents = [];
+        seen.clear();
         eventSource.close();
         setLiveEvents([]);
         setStreamStatus('stopped');
+        let reason;
+        try { reason = JSON.parse(event.data).reason; } catch (_) {}
+        setStreamNotice(reason === 'resume_unavailable'
+          ? 'The saved activity position is no longer available. Refresh to load recent observations.'
+          : 'Refresh to check access again.');
       });
 
       eventSource.onerror = () => {
@@ -90,6 +107,8 @@ export default function OutreachHome({ onNavigate, onOpenWizard, onOpenCampaign 
     return () => {
       streamClosed = true;
       acceptingActivity = false;
+      retainedEvents = [];
+      seen.clear();
       if (eventSource) {
         eventSource.close();
       }
@@ -253,7 +272,7 @@ export default function OutreachHome({ onNavigate, onOpenWizard, onOpenCampaign 
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Activity className="w-4 h-4 text-indigo-600" />
-              <h3 className="font-bold text-gray-900 text-sm">Real-Time Outreach Activity</h3>
+              <h3 className="font-bold text-gray-900 text-sm">Completed Task Activity</h3>
             </div>
             {streamStatus === 'live' ? (
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -272,14 +291,15 @@ export default function OutreachHome({ onNavigate, onOpenWizard, onOpenCampaign 
               </span>
             )}
           </div>
+          <p className="text-[11px] text-gray-500">Recent stored task completions, followed by new observations. Reconnect resumes for up to 24 hours while the saved task is retained. This feed does not verify sends, replies, or campaign health.</p>
 
           {liveEvents.length === 0 ? (
             <div className="py-6 px-4 bg-gray-50/60 rounded-xl border border-gray-100 text-center">
               <p className="text-xs font-medium text-gray-700">
-                {streamStatus === 'stopped' ? 'Activity connection ended' : 'Listening to live outreach pipeline'}
+                {streamStatus === 'stopped' ? 'Activity connection ended' : 'Waiting for completed-task observations'}
               </p>
               <p className="text-[11px] text-gray-400 mt-0.5">
-                {streamStatus === 'stopped' ? 'Refresh to check access again.' : 'Sent invitations, accepted invites, replies, and pre-warming visits stream here in real-time.'}
+                {streamStatus === 'stopped' ? streamNotice : 'Starts with the last 10 minutes. Older or backdated changes may be absent; this is not a complete event history.'}
               </p>
             </div>
           ) : (

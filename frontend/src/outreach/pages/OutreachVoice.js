@@ -318,14 +318,17 @@ export default function OutreachVoice() {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
         },
-        body: JSON.stringify({ account_ids: newAssigned }),
+        credentials: 'include',
+        body: JSON.stringify({ account_ids: newAssigned, revision: targetVoice.revision }),
       });
 
-      if (res.ok) {
-        await fetchVoices();
+      if (!res.ok) {
+        const failure = await res.json().catch(() => ({}));
+        throw new Error(failure.detail || 'Could not update the sender voice. Reload and try again.');
       }
+      await fetchVoices();
     } catch (err) {
-      console.error('Failed to assign account to voice:', err);
+      setErrorMsg(err.message || 'Could not update the sender voice.');
     }
   };
 
@@ -558,7 +561,7 @@ export default function OutreachVoice() {
                 </span>
               </div>
               <p className="text-xs text-gray-500 leading-relaxed">
-                One voice can speak for several senders, but each sender has exactly one voice.
+                Select a voice explicitly for each sender that uses voice notes. Choosing another voice replaces the earlier assignment; removing it leaves no voice selected.
               </p>
 
               {loading ? (
@@ -622,7 +625,7 @@ export default function OutreachVoice() {
                         {/* Sender Account Assignment Selector */}
                         <div className="relative">
                           <button
-                            disabled={v.status !== "active" || !v.consent_current}
+                            disabled={(v.status !== "active" || !v.consent_current) && !v.assigned_account_ids?.length}
                             onClick={() =>
                               setActiveAssignVoiceId((curr) => (curr === v.id ? null : v.id))
                             }
@@ -649,6 +652,7 @@ export default function OutreachVoice() {
                                   return (
                                     <button
                                       key={acc.id}
+                                      disabled={(v.status !== "active" || !v.consent_current) && !isAssigned}
                                       onClick={() => handleAssignSender(v.id, acc.id)}
                                       className="w-full flex items-center justify-between px-2.5 py-1.5 text-xs rounded-lg hover:bg-gray-50 transition-colors text-left"
                                     >

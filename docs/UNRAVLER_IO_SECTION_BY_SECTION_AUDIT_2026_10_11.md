@@ -1,6 +1,14 @@
 # Unravler outreach: section-by-section audit — 11 October 2026
 
-Reviewed checkout: `3fc64f70cea68dbaf19aefaf349020d5c9c789a3` (`main`). The latest recorded deployed application change is v2.55 Leads isolation repair, `b85b2df`; subsequent commits change tests/documentation. This report supersedes the earlier audit's pending-work list, while preserving its historical evidence.
+Reviewed checkout: `0033c57d7523a70d42e25a1058f7aa33f64b1a4a` (`main`). The latest deployed application change is v2.61 `14cf635`; current v2.62–v2.64 slices are local. This report supersedes the earlier audit's pending-work list, while preserving its historical evidence.
+
+## Local implementation update — v2.63/v2.64 (13 October 2026 IST)
+
+[Completed-task paging/resume](/Users/shubham/Documents/Workspace/SocialEntangler/app/docs/UNRAVLER_IO_ACTIVITY_RESUME_RELEASE.md) fixes newest-ten burst loss for retained ordered rows, introduces scoped timestamp/ID SSE resume and explicitly rejects stale anchors. Home deduplicates, hides interrupted history until readmission and scrubs terminal cache. This is a mutable projection: late/backdated/lower-ID ties behind the cursor and immutable reply/send/manual-event completeness remain open A15 work. [Explicit sender voice selection](/Users/shubham/Documents/Workspace/SocialEntangler/app/docs/UNRAVLER_IO_EXPLICIT_VOICE_SELECTION_RELEASE.md) repairs bounded A18: no arbitrary fallback, atomic removal of previous selections, strict client/profile revisions and current exact artifact/review identity. Revoked clearing restores no consent; prior evidence remains retained. 447 native checks with zero skips,185 frontend,eight compiled synthetic-browser checks,build/compile/scoped Bandit/diff pass; independent bounded source review approves. No commit/deployment/live enablement. Security, legacy migrations, authenticated recovery/activation and live/IAM-egress/pilot/combined release remain open. Earlier checkpoints below preserve their historical open-group counts.
+
+## Local implementation update — v2.62 (13 October 2026 IST)
+
+Reverified A14 repair: [v2.62 corrections, evidence and limits](/Users/shubham/Documents/Workspace/SocialEntangler/app/docs/UNRAVLER_IO_LINKEDIN_COHORT_REPORTING_RELEASE.md) supersedes the initial five-check completion claim. The earlier implementation admitted recent follow-ups after old original sends, used mutable task dates/cross-channel lead flags and retained mixed API ratios/unavailable UI zeros. Corrected canonical original intent/attempt/owner evidence and exact LinkedIn outbox observations use the lifetime minimum per campaign/lead/sender/action before period selection. This is a bounded recorded association through a 30-day observation window; causal/enrollment/message/provider-time/completeness proof remains unavailable. Denominators survive lead deletion/reassignment; legacy/human/uncertain/malformed evidence makes rates partial/null. API aliases, separate period activity, UI and CSV preserve basis and unavailable states. Fresh 373 affected backend, 181 frontend and six synthetic-API browser checks pass; core coverage98%, build/compile/Bandit/diff pass. Mandatory native CI now includes 58 cohort cases and a minimum405; remote enforcement remains unverified. A15 P2 and A18 remain next, with wider security, authenticated recovery/activation, migrations and live operational gates open. Local only; no commit/deployment/provider/AWS/grant/purchase/flag change.
 
 ## Local implementation update — v2.61 (13 October 2026 IST)
 
@@ -83,10 +91,10 @@ Priority: **P0** repair immediately before expanding access; **P1** repair befor
 | Sheets import and public lead API | Bounded local repair | v2.58 common admission and key/body-bound idempotency with native rollback/standalone controls. Older incomplete enrollments are not backfilled. A04–A05. |
 | Inbox, replies, tags/snippets/reminders | Bounded local repair | A03 recipient/revision drafts and tab-session request recovery repaired in v2.58; exact approval/freshness/uncertainty controls retained. Two synthetic-API browser checks are not a live reply journey. |
 | Engage lists, manual drafts and reports | Bounded local repair | v2.58 current cohort edit guards and generation-fenced projection/draft writes. Older orphan rows and abrupt-death running-state recovery remain separate. A06, A09. |
-| Voice Studio and campaign voice preparation | Fix needed; rollout targets remain | Ambiguous/absent sender assignment still selects a voice. Consent/review/uncertainty retained; legacy/custody/live targets separate. A18. |
+| Voice Studio and campaign voice preparation | Bounded local repair; rollout targets remain | v2.64 requires explicit unique sender selection and guarded revision changes. Missing/ambiguous choices stop; old artifacts/reviews cannot authorize a new binding. Legacy/custody/live targets separate. A18. |
 | Swipe files, writing styles and prompt tools | Bounded local repair | A01/curated prompt usage repaired v2.56; A19 failed analysis no longer saves generic styles, with guarded default insertion in v2.58. |
-| Analytics, filters and CSV | A13 bounded local repair; A14 open | v2.61 recorded email acceptance/reference/possible/unknown evidence and scoped original-operation joins replace inferred delivery. LinkedIn acceptance/reply cohorts remain mismatched. |
-| Live activity feed | Access repaired; delivery open | v2.57 current original-workspace access retained; burst loss/reconnect/durable coverage remains. A15 P2. |
+| Analytics, filters and CSV | A13 bounded repair; A14 recorded-association repair | v2.61 email evidence and corrected v2.62 original recorded intent/LinkedIn observation cohorts. API/UI/CSV preserve partial/unavailable states and separate activity; causal/source-authenticated completeness remains unproven. |
+| Live activity feed | Access and bounded paging/resume repaired; completeness open | v2.57 access retained; v2.63 drains retained chronological rows and resumes scoped anchors. Mutable/backdated history and durable event completeness remain A15 P2. |
 | Settings: LinkedIn accounts/proxy | Bounded recovery repair; live proof outstanding | A12 eligible connection-only recovery and tenant-safe stops repaired v2.59. No task/campaign resume or execution grant. Fresh authentication/health/proxy/IAM/network proof remains separate. |
 | Settings: Gmail/Microsoft mailboxes and Hunter | Bounded checks pass; live proof outstanding | Scoped/held custody and sync contracts retained; actual OAuth/scopes/cursor/send/reply/STOP journey unverified. |
 | Settings: Content Review | Bounded checks pass | Exact revision/expiry/content/audio/RBAC retained. Explicit voice selection needed before preparing approval. A18. |
@@ -234,7 +242,7 @@ Acceptance: provider acceptance alone never becomes delivery; foreign campaign b
 
 Verified local repair: [v2.61](/Users/shubham/Documents/Workspace/SocialEntangler/app/docs/UNRAVLER_IO_EMAIL_EVIDENCE_REPORTING_RELEASE.md) counts supported stable scoped provider-accepted operations using original dates, excludes human provenance and treats legacy/contradictory projections separately. Recorded reference bounces join exact original operation/workspace/sender/time; conversation/address matches stay possible. No positive delivery/submission coverage is claimed. API, screen and CSV preserve unavailable/partial status; bounds and sequential fixed-as-of limits remain explicit. A14 is unchanged.
 
-### A14 — Acceptance/reply rates mix unrelated cohorts (P2)
+### A14 — Acceptance/reply rates mix unrelated cohorts (P2) — bounded recorded-association repair in v2.62
 
 Source: [period event counts](/Users/shubham/Documents/Workspace/SocialEntangler/app/outreach/api/analytics.py:92), [rate denominators](/Users/shubham/Documents/Workspace/SocialEntangler/app/outreach/api/analytics.py:182).
 
@@ -244,7 +252,11 @@ Repair: expose period activity counts separately from cohort conversion rates. D
 
 Acceptance: old-cohort responses, repeated touches, delayed repairs, multiple senders and zero denominators produce explainable counts/rates, including exports.
 
+Reverified local repair: original retained intent confirmations define the lifetime-first campaign/lead/sender/action cohort before selecting the period. Stored LinkedIn observations join exact references and observation time; known duplicate/repeated/older/foreign/uncertain/human cases cannot produce mixed-cohort percentages. API/UI/CSV keep period activity separate and preserve partial/unavailable status. This supports recorded associations with incomplete/open-window limits; causal attribution, message/enrollment lineage, actual provider outcome time and authenticated completeness are not established. See the v2.62 report above for current native/coverage/browser checks and corrected earlier claims.
+
 ### A15 — Live activity access locally repaired; event delivery remains open (P1 fixed locally; P2 open)
+
+v2.63 local status: chronological 100-row pages and explicit SSE timestamp/ID resume repair retained ordered-task burst/reconnect behavior. Current admission and terminal scrubbing remain. This does not close A15 completely: mutable/late/backdated/lower-ID ties behind the cursor and immutable wider event completeness remain outside coverage. See the v2.63 release above.
 
 Source: [stream access and activity cursor](/Users/shubham/Documents/Workspace/SocialEntangler/app/outreach/core/activity_stream.py:126), [Home activity handling](/Users/shubham/Documents/Workspace/SocialEntangler/app/frontend/src/outreach/pages/OutreachHome.js:48).
 
@@ -252,9 +264,9 @@ Current local status: [v2.57 verification and limits](/Users/shubham/Documents/W
 
 Historical baseline evidence: eleven eligible completed tasks yielded ten task events; the next cycle was only a heartbeat. The newest-ten query advances to the current clock, permanently skipping the remaining event. There is no SSE event ID/resume contract; reconnect can repeat recent events. The producer scans task completion, despite broader activity claims, and the connection has no ongoing membership-revalidation loop. A fresh native database producer probe authenticated workspace membership, opened the generator, deleted the membership and inserted a new completed task; the same generator emitted that task. This is evidence of stale stream authorization, not a browser or production exploit demonstration. This access defect motivated the v2.57 repair; burst/reconnect correctness remains unfinished.
 
-Remaining repair: page chronologically with a stable `(event_time, ID)` cursor, drain bursts, deduplicate and resume explicitly. Prefer the durable event surface if it can truthfully cover replies/acceptances/manual events.
+Historical bounded repair target: page chronologically with a stable `(event_time, ID)` cursor, drain bursts, deduplicate and resume explicitly. v2.63 now implements this for retained ordered task projections. Current remaining work is immutable insertion ordering and writer coverage for the wider event surface, with explicit retention/gap semantics and migration.
 
-Acceptance: bursts/tied times/reconnects do not silently lose or duplicate activity, and revoked membership ends access. Do not interpret a heartbeat as campaign health.
+Original acceptance target: bursts/tied times/reconnects do not silently lose or duplicate activity, and revoked membership ends access. The bounded implementation is verified for retained ordered rows and existing ties; late/backdated/lower-ID ties behind the cursor still prevent complete-history acceptance. Do not interpret a heartbeat as campaign health.
 
 ### A16 — Header, prompt usage and billing states fabricate certainty (P2) — bounded local repair in v2.58
 
@@ -276,7 +288,9 @@ Repair: confirm the exact cancellation transition and return conflict/reload on 
 
 Acceptance: renewal/revocation/concurrent cancellation/lost acknowledgement cannot return false success or cancel the wrong term. Retried confirmed cancellation remains idempotent.
 
-### A18 — Voice selection is ambiguous and ignores unassignment (P2)
+### A18 — Voice selection ambiguity/unassignment (P2) — bounded local repair in v2.64
+
+Current local status: a strict scoped unique sender assignment replaces first-match/workspace fallback. One guard transaction removes earlier choices and increments affected revisions; missing/ambiguous/malformed references deny. Current selection/profile identity invalidates earlier prepared artifacts/reviews without deleting their evidence or replaying unknown paid work. Revoked unassignment preserves revoked consent. Client revision and new binding rollout requirements are in the v2.64 report. The following evidence describes the historical baseline.
 
 Source: [voice assignment](/Users/shubham/Documents/Workspace/SocialEntangler/app/outreach/api/voice.py:144), [voice selection](/Users/shubham/Documents/Workspace/SocialEntangler/app/outreach/core/content_approval.py:75).
 
@@ -314,7 +328,7 @@ Relevant evidence: [CI workflow](/Users/shubham/Documents/Workspace/SocialEntang
 | 2 | A03/A17/A10 repaired locally in v2.58 | Recipient/revision/unknown recovery, exact-term cancellation and BSON/secret exclusion checks pass. Live messaging/provider cancellation remains unverified. |
 | 3 | A04–A07 repaired for participating current paths in v2.58 | Shared ordered intake/warm-up/cancel contracts pass natively; census/migrate older incomplete enrollments and verify live crawler separately. |
 | 4 | A08/A09 repaired for current lifecycle/projection paths in v2.58 | Native phase faults, simulated commit-response loss and generation replacement controls pass. Older detached/orphan history and abrupt-death recovery remain separate. |
-| 5 | Next: A14 cohort rates, A15 P2 feed, A18 voice | A13 email evidence repaired v2.61, A11 admission/checklist v2.60 and A12 recovery v2.59. Remaining work needs coherent LinkedIn conversion cohorts, ordered feed recovery and explicit voice provenance. |
+| 5 | v2.63 bounded feed paging/resume and v2.64 voice selection repaired locally; durable A15 completeness remains | A14 v2.62,A13 v2.61,A11 v2.60,A12 v2.59 retained. Immutable broader activity history, late/backdated ordering and authenticated causal/source facts remain unproven. |
 | 6 | Authenticated recovery/activation, remaining migrations, charged health, IAM/egress/pilot, release | Current local checks do not prove source-authenticated completeness, activation or actual live controls. Complete those contracts and authorize the release before rollout. |
 
 Avoid a framework/database rewrite or more metadata-only “completion” slices. Fix the customer paths against the existing conservative execution contracts, then prove the operational workflows. Refactor duplicated admission/readiness/API-client logic while repairing it; preserve stable identities, existing receipts, unknown outcomes and stop-on-reply controls.

@@ -252,8 +252,8 @@ async def test_voice_profile_crud_is_scoped_and_provider_failure_preserves_recor
     with pytest.raises(HTTPException):
         await delete_voice('other', 'delete-other', user, voice_db)
     with pytest.raises(HTTPException):
-        await assign_voice('other', AssignVoiceRequest(account_ids=['a']), user, voice_db)
-    await assign_voice('v', AssignVoiceRequest(account_ids=['a']), user, voice_db)
+        await assign_voice('other', AssignVoiceRequest(account_ids=['a'], revision=1), user, voice_db)
+    await assign_voice('v', AssignVoiceRequest(account_ids=['a'], revision=1), user, voice_db)
     job = await delete_voice('v', 'delete-test', user, voice_db)
     assert job['status'] == 'queued' and voice_db.outreach_voices.docs[0]['status'] == 'deleting'
     result = await VoiceStudio(voice_db).run('w', job['_id'], provider=AsyncMock(return_value={'deleted': False}))

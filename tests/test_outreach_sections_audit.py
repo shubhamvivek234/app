@@ -33,6 +33,7 @@ def empty_email_sources(db):
 async def test_analytics_does_not_turn_manual_pipeline_stages_into_sends():
     db = MagicMock()
     empty_email_sources(db)
+    db.outreach_intents.find.return_value.limit.return_value.to_list = AsyncMock(return_value=[])
     db.outreach_leads.count_documents = AsyncMock(return_value=4)
     db.outreach_tasks.count_documents = AsyncMock(return_value=0)
     db.outreach_engage_posts.count_documents = AsyncMock(return_value=0)
@@ -75,7 +76,7 @@ async def test_live_analytics_feed_is_workspace_scoped():
     await anext(stream)
     query = db.outreach_tasks.find.call_args.args[0]
     assert query["workspace_id"] == "workspace_a"
-    assert "$or" not in query
+    assert len(query["$or"]) == 2  # chronological timestamp/ID tie boundary
     await stream.aclose()
 
 
@@ -352,17 +353,19 @@ async def test_analytics_rate_denominators_and_provenance():
 
     result = await get_outreach_analytics(campaign_id="all", timeframe="7d", current_user=USER, db=db)
 
-    # Acceptance rate = 4 / 10 = 40.0%
-    assert result["kpis"]["requests"]["sent"] == 10
-    assert result["kpis"]["requests"]["accepted"] == 4
-    assert result["kpis"]["requests"]["acceptance_rate"] == 40.0
-    assert result["kpis"]["requests"]["denominator"] == 10
+    # Period projections alone cannot establish a coherent original send cohort.
+    assert result["kpis"]["requests"]["sent"] is None
+    assert result["kpis"]["requests"]["accepted"] is None
+    assert result["kpis"]["requests"]["acceptance_rate"] is None
+    assert result["kpis"]["requests"]["denominator"] is None
+    assert result["kpis"]["requests"]["period_activity"] == {"sent": 10, "accepted": 4}
 
-    # Reply rate = 2 / 5 = 40.0%
-    assert result["kpis"]["messages"]["sent"] == 5
-    assert result["kpis"]["messages"]["replied"] == 2
-    assert result["kpis"]["messages"]["reply_rate"] == 40.0
-    assert result["kpis"]["messages"]["denominator"] == 5
+    # Missing retained evidence remains unavailable despite nonzero activity.
+    assert result["kpis"]["messages"]["sent"] is None
+    assert result["kpis"]["messages"]["replied"] is None
+    assert result["kpis"]["messages"]["reply_rate"] is None
+    assert result["kpis"]["messages"]["denominator"] is None
+    assert result["kpis"]["messages"]["period_activity"] == {"sent": 5, "replied": 2}
 
     # Email with 0 sent has deliverability_rate = None
     assert result["kpis"]["email"]["sent"] == 0
@@ -397,5 +400,9 @@ async def test_analytics_export_csv_streaming():
     lines = [line.strip() for line in csv_text.strip().split("\n") if line.strip()]
     assert lines[0] == ("date,requests_sent,requests_accepted,messages_sent,messages_replied,profile_visits,post_engagements,"
         "email_provider_accepted,email_bounced,email_delivered,email_delivery_status,email_evidence_status,"
-        "email_period_start_utc,email_as_of_utc,email_cohort_basis,email_bounce_basis")
+        "email_period_start_utc,email_as_of_utc,email_cohort_basis,email_bounce_basis,"
+        "linkedin_cohort_basis,linkedin_attribution_window_days,linkedin_request_cohort_denominator,"
+        "linkedin_request_cohort_accepted,linkedin_request_cohort_rate,linkedin_message_cohort_denominator,"
+        "linkedin_message_cohort_replied,linkedin_message_cohort_rate,linkedin_cohort_status,"
+        "linkedin_outcome_basis,linkedin_period_start_utc,linkedin_as_of_utc,linkedin_summary_scope")
     assert len(lines) == 8  # 1 header + 7 days

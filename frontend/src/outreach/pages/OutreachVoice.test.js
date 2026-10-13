@@ -8,8 +8,24 @@ beforeEach(() => {
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
   Object.defineProperty(window, 'crypto', { configurable: true, value: { randomUUID: jest.fn(() => 'stable-request-id') } });
   global.fetch = jest.fn(async url => ({ ok: true, json: async () => url.includes('/accounts') ? [] : {
-    studio_enabled: true, voices: [{ id: 'local-voice', name: 'My voice', status: 'active', consent_current: true, assigned_account_ids: [] }],
+    studio_enabled: true, voices: [{ id: 'local-voice', name: 'My voice', revision: 3, status: 'active', consent_current: true, assigned_account_ids: [] }],
     jobs: [{ _id: 'held', operation: 'clone', status: 'held_outcome' }] } }));
+});
+
+test.each([true, false])('sender selection sends current revision and handles success=%s visibly', async success => {
+  global.fetch = jest.fn(async url => {
+    if (url.endsWith('/accounts')) return { ok: true, json: async () => [{ id: 'a', account_name: 'Alice' }] };
+    if (url.endsWith('/assign')) return { ok: success, json: async () => ({ detail: 'Voice assignment changed; reload Voice Studio' }) };
+    return { ok: true, json: async () => ({ studio_enabled: true, voices: [{ id: 'local-voice', name: 'My voice',
+      revision: 3, status: 'active', consent_current: true, assigned_account_ids: [] }], jobs: [] }) };
+  });
+  await act(async () => root.render(<OutreachVoice />));
+  await act(async () => [...container.querySelectorAll('button')].find(button => button.textContent.includes('Assign to connected sender')).click());
+  await act(async () => [...container.querySelectorAll('button')].find(button => button.textContent === 'Alice').click());
+  const request = global.fetch.mock.calls.find(([url]) => url.endsWith('/assign'))[1];
+  expect(JSON.parse(request.body)).toEqual({ account_ids: ['a'], revision: 3 });
+  expect(request.credentials).toBe('include');
+  if (!success) expect(container.textContent).toContain('Voice assignment changed; reload Voice Studio');
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); delete global.fetch; jest.restoreAllMocks(); });
 

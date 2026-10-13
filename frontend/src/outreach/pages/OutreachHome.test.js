@@ -108,6 +108,7 @@ describe('Activity stream access lifetime', () => {
     expect(container.textContent).not.toContain('late-private');
     expect(container.textContent).not.toContain('Live Feed');
     await act(async () => { handlers.connected(); emitTask('fresh-task'); });
+    expect(container.textContent).toContain('old-private');
     expect(container.textContent).toContain('fresh-task');
     expect(container.textContent).toContain('Live Feed');
   });
@@ -119,5 +120,22 @@ describe('Activity stream access lifetime', () => {
     expect(container.textContent).toContain('Activity unavailable');
     expect(container.textContent).toContain('Refresh to check access again');
     expect(container.textContent).not.toContain('Listening to live outreach pipeline');
+  });
+
+  it('deduplicates repeated observations and keeps their history after readmission', async () => {
+    await act(async () => root.render(<OutreachHome />));
+    await act(async () => { handlers.connected(); emitTask('same-task'); emitTask('same-task'); });
+    expect(container.textContent.match(/same-task/g)).toHaveLength(1);
+    await act(async () => source.onerror());
+    expect(container.textContent).not.toContain('same-task');
+    await act(async () => { handlers.connected(); emitTask('same-task'); });
+    expect(container.textContent.match(/same-task/g)).toHaveLength(1);
+  });
+
+  it('explains unavailable resume without showing a complete history claim', async () => {
+    await act(async () => root.render(<OutreachHome />));
+    await act(async () => handlers.stream_closed({ data: '{"reason":"resume_unavailable"}' }));
+    expect(container.textContent).toContain('saved activity position is no longer available');
+    expect(container.textContent).toContain('does not verify sends, replies, or campaign health');
   });
 });

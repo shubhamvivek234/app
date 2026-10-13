@@ -358,6 +358,7 @@ async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
     await _safe_create_index(db.outreach_accounts, [("workspace_id", 1), ("id", 1)], unique=True)
     await _safe_create_index(db.outreach_accounts, [("status", 1), ("priority_sync_due_at", 1)])
     await _safe_create_index(db.outreach_tasks, [("workspace_id", 1), ("id", 1)], unique=True)
+    await _safe_create_index(db.outreach_tasks, [("workspace_id", 1), ("status", 1), ("updated_at", 1), ("id", 1)])
     await _safe_create_index(db.outreach_sequence_jobs, [("status", 1), ("next_due_at", 1), ("next_publish_at", 1)])
     await _safe_create_index(db.outreach_sequence_jobs, [("status", 1), ("claim_expires_at", 1)])
     await _safe_create_index(db.outreach_campaigns, [("status", 1), ("next_sequence_scan_at", 1), ("id", 1)])

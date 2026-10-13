@@ -16,7 +16,7 @@ pytestmark = pytest.mark.usefixtures("outreach_paid_gate_stub")
 def sandbox_linkedin_sessions(monkeypatch):
     monkeypatch.setenv("OUTREACH_MOCK_AUTH", "true")
     monkeypatch.setenv("ELEVENLABS_API_KEY", "mock")
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from fastapi import UploadFile
 import io
 
@@ -89,7 +89,7 @@ async def test_voice_api_assignment_and_deletion(studio_db):
     profile = studio_db.outreach_voices.docs[0]
     studio_db.outreach_accounts.docs.append({'id': 'a', 'workspace_id': 'w'})
     user = {'user_id': 'actor', 'default_workspace_id': 'w'}
-    assert (await assign_voice(profile['id'], AssignVoiceRequest(account_ids=['a']), user, studio_db))['status'] == 'success'
+    assert (await assign_voice(profile['id'], AssignVoiceRequest(account_ids=['a'], revision=profile['revision']), user, studio_db))['status'] == 'success'
     deletion = await delete_voice(profile['id'], 'api-delete-1', user, studio_db)
     assert deletion['status'] == 'queued' and len(studio_db.outreach_voices.docs) == 1
 
@@ -151,13 +151,15 @@ async def test_sequence_executor_handles_voice_note_step(monkeypatch):
     from outreach.core.voice_studio import source_digest
     from datetime import datetime, timezone
     monkeypatch.setenv('ELEVENLABS_API_KEY', 'local-provider-key')
-    mock_db.outreach_voices.find_one = AsyncMock(return_value={
+    from tests.outreach_memory import Cursor
+    mock_db.outreach_voices.find = MagicMock(return_value=Cursor([{
         'status': 'active', 'provider_source_digest': source_digest(),
         'consent': {'actor': 'actor', 'version': 1, 'asserted_at': datetime.now(timezone.utc), 'assertion_digest': 'test-consent'},
         "id": "v_voice_1",
         "workspace_id": "ws_123",
         "elevenlabs_voice_id": "voice_mock_custom",
-    })
+        "assigned_account_ids": ["acc_voice_1"], "revision": 1,
+    }]))
     mock_db.outreach_accounts.update_one = AsyncMock()
     mock_db.outreach_leads.update_one = AsyncMock()
 

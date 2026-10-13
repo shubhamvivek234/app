@@ -73,14 +73,15 @@ async def sequence_binding(db: AsyncIOMotorDatabase, workspace_id: str, lead_id:
         if not content["sender_email"]:
             raise ValueError("Email review needs a connected mailbox identity")
     elif action == "voice_note":
-        voice = await db.outreach_voices.find_one({"workspace_id": workspace_id, "assigned_account_ids": account["id"]})
-        voice = voice or await db.outreach_voices.find_one({"workspace_id": workspace_id}) or {}
+        from outreach.core.voice_selection import selected_voice
+        voice = await selected_voice(db, workspace_id, account['id'])
         from outreach.core.voice_studio import require_profile, profile_identity
         require_profile(voice)
         script = config.get("script", "Hey {{first_name}}, saw your work at {{company_name}} and wanted to send a quick voice note!")
-        content = {"body": interpolate_template(script, lead), "voice_id": voice.get("elevenlabs_voice_id", "voice_mock_default")}
+        content = {"body": interpolate_template(script, lead), "voice_id": voice['elevenlabs_voice_id']}
         from outreach.core.voice_policy import VOICE_POLICY_DIGEST
         context["voice_profile_identity"] = profile_identity(voice)
+        context["voice_selection_id"] = voice['id']
         context["voice_policy_digest"] = VOICE_POLICY_DIGEST
         context["voice_provider_source_digest"] = voice["provider_source_digest"]
         if voice_artifact:

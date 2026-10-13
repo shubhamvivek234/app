@@ -10,6 +10,8 @@ from outreach.core.erasure import require_open_workspace
 from outreach.core.voice_studio import VoiceStudio, public_job, require_profile, consent_current, now, enabled
 from outreach.core.voice_policy import MAX_PCM_BYTES
 from outreach.core.dag_compiler import interpolate_template
+from outreach.core.voice_selection import assignment_ids, require_reference
+from outreach.core.workspace_scope import workspace_scope
 
 class StudioRoute(APIRoute):
     """Cap clone bodies before Starlette buffers the multipart form."""
@@ -58,6 +60,7 @@ class VoicePreviewRequest(BaseModel):
 
 class AssignVoiceRequest(BaseModel):
     account_ids: list[str] = Field(default_factory=list, max_length=5)
+    revision: int = Field(ge=1, strict=True)
 
 
 class ConsentRequest(BaseModel):
@@ -145,21 +148,57 @@ async def saved_audio(job_id: str, current_user: dict = require_outreach_permiss
 async def assign_voice(voice_id: str, req: AssignVoiceRequest, current_user: dict = require_outreach_permission('voice:manage'), db=Depends(get_db)):
     await available(current_user, db)
     ws = workspace(current_user)
+    try:
+        requested = assignment_ids(req.account_ids)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
     async def apply(current):
         await VoiceStudio(db)._access(current, ws, current_user.get('user_id'), 'delete')
-        profile = require_profile(await current.outreach_voices.find_one({'workspace_id': ws, 'id': voice_id}))
+        scope = {**workspace_scope(ws), 'id': voice_id, 'id.0': {'$exists': False}}
+        profile = await current.outreach_voices.find_one(scope)
+        if not profile:
+            raise ValueError('Voice profile is unavailable')
+        if (type(profile.get('revision')) is not int or profile['revision'] < 1
+                or profile['revision'] != req.revision):
+            raise ValueError('Voice assignment changed; reload Voice Studio')
+        old = assignment_ids(profile.get('assigned_account_ids'))
+        if set(requested) - set(old):
+            require_profile(profile)
+            require_reference(profile)
         if profile.get('studio_job_id'):
             raise ValueError('Wait for unfinished Studio work')
-        for account in req.account_ids:
-            if not await current.outreach_accounts.find_one({'workspace_id': ws, 'id': account, 'is_deleted': {'$ne': True}}):
+        for account in requested:
+            if not await current.outreach_accounts.find_one({**workspace_scope(ws), 'id': account,
+                    'id.0': {'$exists': False}, 'is_deleted': {'$ne': True}}):
                 raise ValueError('Sender is unavailable in this workspace')
-        await current.outreach_voices.update_one({'workspace_id': ws, 'id': voice_id, 'revision': profile['revision']},
-            {'$set': {'assigned_account_ids': list(dict.fromkeys(req.account_ids))}, '$inc': {'revision': 1}})
+        # One guard transaction removes older selections and installs the new
+        # one. Revision changes invalidate exact prepared/audio/review bindings.
+        others = await current.outreach_voices.find({**workspace_scope(ws),
+            'id': {'$ne': voice_id}, 'assigned_account_ids': {'$in': requested}}).limit(6).to_list(length=6)
+        if len(others) > 5:
+            raise ValueError('Voice inventory exceeds its supported bounds')
+        for other in others:
+            if (other.get('studio_job_id') or type(other.get('revision')) is not int
+                    or other['revision'] < 1 or not isinstance(other.get('id'), str)):
+                raise ValueError('An earlier voice selection needs review or has unfinished Studio work')
+            assigned = assignment_ids(other.get('assigned_account_ids'))
+            changed = await current.outreach_voices.update_one({**workspace_scope(ws),
+                'id': other['id'], 'revision': other['revision'], 'assigned_account_ids': assigned},
+                {'$set': {'assigned_account_ids': [item for item in assigned if item not in requested],
+                          'updated_at': now()}, '$inc': {'revision': 1}})
+            if changed.matched_count != 1:
+                raise ValueError('Earlier voice assignment changed; reload Voice Studio')
+        changed = await current.outreach_voices.update_one({**scope, 'revision': req.revision,
+            'assigned_account_ids': old}, {'$set': {'assigned_account_ids': requested, 'updated_at': now()},
+                                        '$inc': {'revision': 1}})
+        if changed.matched_count != 1:
+            raise ValueError('Voice assignment changed; reload Voice Studio')
     try:
         await suppression.mutate_suppression(db, ws, apply)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from None
-    return {'status': 'success', 'voice_id': voice_id, 'assigned_account_ids': req.account_ids}
+    return {'status': 'success', 'voice_id': voice_id, 'assigned_account_ids': requested,
+            'revision': req.revision + 1}
 
 
 @router.post('/{voice_id}/consent')
