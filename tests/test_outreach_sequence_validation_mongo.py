@@ -56,6 +56,41 @@ async def test_preview_denies_revocation_and_stopped_workspace(replica_db):
         assert (await api.post('/sequences/preview',json=body)).status_code==409
 
 
+@pytest.mark.parametrize('role', ['admin', 'viewer'])
+async def test_gallery_reads_scoped_email_without_mutating_native_template_or_granting_execution(replica_db, role):
+    from tests.test_outreach_template_gallery import template
+    row=template();row.pop('_id')
+    await replica_db.outreach_templates.insert_one(row)
+    await replica_db.outreach_templates.insert_one({**row,'_id':'other-native','id':'other-template','workspace_id':'other'})
+    before=await replica_db.outreach_templates.find({}).to_list(10)
+    async with await client(replica_db,role) as api:
+        result=await api.get('/sequences/templates')
+    assert result.status_code==200,result.text
+    custom=[item for item in result.json() if item['id']=='custom-email']
+    assert len(custom)==1 and custom[0]['compatibility']['configuration_available'] is True
+    assert custom[0]['compatibility']['execution_authorized'] is False
+    assert all(item['id']!='other-template' for item in result.json())
+    assert await replica_db.outreach_templates.find({}).to_list(10)==before
+    assert await replica_db.outreach_tasks.count_documents({})==0
+    assert await replica_db.outreach_campaigns.count_documents({})==0
+
+
+async def test_gallery_existing_resolution_excludes_revoked_workspace_and_denies_stopped_workspace(replica_db):
+    from tests.test_outreach_template_gallery import template
+    row=template();row.pop('_id')
+    await replica_db.outreach_templates.insert_one(row)
+    async with await client(replica_db) as api:
+        await replica_db.workspace_members.delete_many({})
+        # Existing authentication may create/select a personal workspace.
+        # It must not expose templates from the workspace just revoked.
+        result=await api.get('/sequences/templates')
+        assert result.status_code==200
+        assert all(item['id']!='custom-email' for item in result.json())
+        await replica_db.workspace_members.insert_one({'workspace_id':'workspace','user_id':'actor','role':'admin'})
+        await replica_db.outreach_suppression_guards.insert_one({**guard_scope('workspace'),'erasure_state':'stopped'})
+        assert (await api.get('/sequences/templates')).status_code==409
+
+
 async def test_new_authoring_revision_preserves_original_snapshot_and_stopped_authority(replica_db):
     await seed_readiness(replica_db)
     nodes,edges=graph()

@@ -106,7 +106,7 @@ async def _preflight_dispatch(db, lead: dict, expected: dict, node_type: str, *,
                 return reason
     elif not await get_active_entitlement(db, workspace_id):
         return "paid_access_required"
-    if node_type == 'has_data_in_column':
+    if node_type in {'has_data_in_column', 'if_email_available'}:
         saved = current_lead.get('identifiers')
         if (any(current_lead.get(key) is not None and not isinstance(current_lead[key], str) for key in
                 ('email', 'phone', 'linkedin_url', 'linkedin_urn', 'member_urn'))
@@ -523,21 +523,9 @@ class SequenceExecutor:
         if connection_result is not None:
             return connection_result
 
-        if node_type == SequenceNodeType.HAS_DATA_IN_COLUMN:
+        if node_type in (SequenceNodeType.HAS_DATA_IN_COLUMN, SequenceNodeType.IF_EMAIL_AVAILABLE):
             from outreach.core.sequence_conditions import decide
             return await decide(db, lead)
-
-        if node_type == SequenceNodeType.IF_EMAIL_AVAILABLE:
-            from outreach.core.email_finder import is_lead_email_available
-
-            available = await is_lead_email_available(db, workspace_id, lead)
-            branch = "positive" if available else "negative"
-            next_node_id = node.get("branches", {}).get(branch)
-            now = datetime.now(timezone.utc)
-            if not await _advance_lead(db, lead, {**successor_fields(compiled, next_node_id, now), "updated_at": now}):
-                return {"status": "lead_changed"}
-            return {"status": "branch_advanced", "next_node_id": next_node_id,
-                    "condition_met": bool(available)}
 
         # Email-only sequences must not require (or decrypt) LinkedIn cookies.
         voyager = None

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
+import InboxOrganization from '../components/InboxOrganization';
 
 const THREAD_PAGE_SIZE = 50;
 const REPLY_HOLDS_KEY = 'unravler.inbox.reply-holds.v1';
@@ -21,6 +22,11 @@ const threadKey = (thread) => thread && [thread.workspace_id, thread.account_id,
   .every((value) => typeof value === 'string' && value.trim())
   ? JSON.stringify([thread.workspace_id, thread.account_id, thread.channel || 'linkedin', thread.id,
     thread.lead_urn || '', thread.conversation_urn || '']) : null;
+
+const mergeOrganization = (previous, incoming) => previous && threadKey(previous) === threadKey(incoming)
+  && previous.organization?.identity_digest && previous.organization.identity_digest === incoming.organization?.identity_digest
+  && previous.organization.revision > incoming.organization.revision
+  ? { ...incoming, organization: previous.organization } : incoming;
 
 const inboxFetch = (url, options = {}) => {
   const token = localStorage.getItem('token');
@@ -126,6 +132,7 @@ export default function OutreachInbox() {
   const [tagsOpen, setTagsOpen] = useState(false);
   const [tagsList, setTagsList] = useState([]);
   const [tagFilter, setTagFilter] = useState('');
+  const [inboxView, setInboxView] = useState('inbox');
   const [updatingTags, setUpdatingTags] = useState(false);
   const [newTagName, setNewTagName] = useState('');
   const [newTagColor, setNewTagColor] = useState('#3b82f6');
@@ -163,6 +170,7 @@ export default function OutreachInbox() {
     try {
       const token = localStorage.getItem('token');
       let url = `/api/v1/outreach/inbox?account_id=${selectedAccountId}&skip=${offset}&limit=${THREAD_PAGE_SIZE}`;
+      url += `&view=${inboxView}`;
       if (filterSource === 'outreach') {
         url += '&source=outreach';
       }
@@ -176,11 +184,15 @@ export default function OutreachInbox() {
       if (!res.ok) throw new Error('Could not load conversations');
       const data = await res.json();
       if (requestId !== threadsRequestId.current) return;
-      setThreads((previous) => offset ? [...previous, ...data] : data);
+      setThreads((previous) => {
+        const known = new Map(previous.map((row) => [threadKey(row), row]));
+        const updated = data.map((row) => mergeOrganization(known.get(threadKey(row)), row));
+        return offset ? [...previous, ...updated.filter((row) => !known.has(threadKey(row)))] : updated;
+      });
       setHasMoreThreads(data.length === THREAD_PAGE_SIZE);
       if (offset) return;
       const updated = data.find((t) => threadKey(t) === selectedThreadKey.current);
-      if (updated) setSelectedThread(updated);
+      if (updated) setSelectedThread((previous) => mergeOrganization(previous, updated));
       else if (data.length) {
         handleSelectThread(data[0]);
       } else {
@@ -499,7 +511,7 @@ export default function OutreachInbox() {
     const timer = setTimeout(() => fetchThreads(), searchQuery ? 250 : 0);
     return () => { clearTimeout(timer); threadsRequestId.current += 1; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedAccountId, filterSource, searchQuery, tagFilter]);
+  }, [selectedAccountId, filterSource, searchQuery, tagFilter, inboxView]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -509,7 +521,7 @@ export default function OutreachInbox() {
     const key = threadKey(thread);
     selectedThreadKey.current = key;
     selectedThreadId.current = thread.id;
-    setSelectedThread(thread);
+    setSelectedThread((previous) => mergeOrganization(previous, thread));
     setAiSuggestions([]);
     setRemindersList([]);
     fetchReminders(thread.id);
@@ -522,7 +534,13 @@ export default function OutreachInbox() {
         const full = await res.json();
         if (selectedThreadKey.current !== key || full.id !== thread.id) return;
         selectedThreadKey.current = threadKey(full);
-        setSelectedThread(full);
+        setSelectedThread((previous) => {
+          const original = previous?.organization;
+          const incoming = full.organization;
+          if (original?.identity_digest && original.identity_digest === incoming?.identity_digest
+              && original.revision > incoming.revision) return { ...full, organization: original };
+          return full;
+        });
         setThreads((prev) =>
           prev.map((t) => (t.id === thread.id ? { ...t, unread_count: 0 } : t))
         );
@@ -531,6 +549,18 @@ export default function OutreachInbox() {
       console.error('Failed to fetch thread detail:', err);
       toast.error('Could not load conversation details');
     }
+  };
+
+  const handleOrganizationSaved = (original, organization) => {
+    const key = threadKey(original);
+    const sameRecord = (row) => threadKey(row) === key
+      && row?.organization?.identity_digest === organization.identity_digest;
+    const merge = (row) => sameRecord(row) && row.organization.revision <= organization.revision
+      ? { ...row, organization } : row;
+    setSelectedThread(merge);
+    setThreads((previous) => previous.map(merge));
+    // Read current filters, including if the user switched views during the save.
+    refreshThreads.current?.();
   };
 
   const finishReply = async (key, submission, job) => {
@@ -764,6 +794,13 @@ export default function OutreachInbox() {
           </div>
 
           {/* Accounts Selector Dropdown Button matching media_1790103710555.png */}
+          <select aria-label="Conversation view" value={inboxView} onChange={(event) => setInboxView(event.target.value)}
+            className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700">
+            <option value="inbox">Inbox</option>
+            <option value="starred">Starred · in inbox</option>
+            <option value="archived">Archived</option>
+            <option value="all">All conversations</option>
+          </select>
           <select aria-label="Filter conversations by lead tag" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)} className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700">
             <option value="">All lead tags</option>
             {tagsList.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
@@ -875,7 +912,7 @@ export default function OutreachInbox() {
             </div>
           ) : threads.length === 0 ? (
             <div className="my-auto py-24 text-center px-4 space-y-3">
-              <p className="text-xs text-gray-400 font-normal">No conversations yet.</p>
+              <p className="text-xs text-gray-400 font-normal">No conversations match this view.</p>
               <div className="flex flex-col items-center gap-2 pt-1">
                 {accounts.length > 0 && (
                   <button
@@ -922,6 +959,8 @@ export default function OutreachInbox() {
                   <p className="text-xs text-gray-500 truncate mb-2">
                     {t.last_message_snippet || 'No message snippet'}
                   </p>
+                  {t.organization?.is_starred && <span className="mr-2 text-[10px] text-amber-700">★ Starred</span>}
+                  {t.organization?.is_archived && <span className="text-[10px] text-gray-500">Archived</span>}
 
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
@@ -967,6 +1006,7 @@ export default function OutreachInbox() {
 
       {/* Right Column: Conversation View or Empty State matching media_1790103710555.png */}
       <div className="flex-1 flex flex-col bg-white overflow-hidden">
+        <InboxOrganization thread={selectedThread} request={inboxFetch} onSaved={handleOrganizationSaved} />
         {selectedThread ? (
           <>
             {/* Conversation Header */}

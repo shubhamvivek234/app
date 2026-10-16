@@ -18,6 +18,8 @@ import {
 import { toast } from 'sonner';
 import OutreachCampaignWizard from './OutreachCampaignWizard';
 import OutreachCampaignDetail from './OutreachCampaignDetail';
+import { flattenTreeToDAG } from '../components/sequence/sequenceGraph';
+import { reviewedTemplateDeletion, matchesTemplateDeletionReceipt } from '../utils/templateDeletion';
 
 const DELETION_REFERENCES_KEY = 'unravler.campaign-deletions.v1';
 const readDeletionReferences = () => {
@@ -399,12 +401,26 @@ export const PREBUILT_TEMPLATES = [
   },
 ];
 
-const LIVE_SEQUENCE_TYPES = new Set(['visit_profile', 'connection_request', 'send_message', 'like_last_post', 'voice_note', 'if_connected']);
-export const isLaunchableTemplate = (template) => Boolean(
+// Configuration eligibility comes from shared server graph/capability analysis.
+// It grants neither live execution nor sender/mailbox readiness.
+export const isLaunchableTemplate = (template) => {
+  if (!Boolean(
   template && Array.isArray(template.nodes) && template.nodes.length > 0
-  && (!template.compatibility || template.compatibility.contract_version === 1 && template.compatibility.valid === true)
-  && template.nodes.every((node) => node && LIVE_SEQUENCE_TYPES.has(node.type))
-);
+  && template.nodes.length <= 100 && Array.isArray(template.edges) && template.edges.length <= 200
+  && Array.isArray(template.tree) && template.tree.length > 0 && template.tree.length <= 100
+  && template.compatibility?.contract_version === 1 && template.compatibility.valid === true
+  && template.compatibility.configuration_available === true && template.compatibility.execution_authorized === false
+  )) return false;
+  try {
+    const visible = flattenTreeToDAG(template.tree);
+    const ids = new Set(template.nodes.map((node) => node?.id));
+    return ids.size === template.nodes.length
+      && template.nodes.every((node) => node && typeof node.id === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(node.id) && typeof node.type === 'string')
+      && template.edges.every((edge) => edge && ids.has(edge.source) && ids.has(edge.target))
+      && visible.nodes.length === template.nodes.length
+      && visible.nodes.every((node) => template.nodes.some((raw) => raw.id === node.id && raw.type === node.type));
+  } catch { return false; }
+};
 
 export default function OutreachCampaigns({
   onOpenWizard,
@@ -432,6 +448,18 @@ export default function OutreachCampaigns({
   const [isTemplatesOpen, setIsTemplatesOpen] = useState(false);
   const [templatesList, setTemplatesList] = useState([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [templateError, setTemplateError] = useState('');
+  const templateRequestRef = useRef(0);
+  const templateUseRef = useRef(false);
+  const [usingTemplateId, setUsingTemplateId] = useState(null);
+  const templateDeleteRef = useRef(null);
+  const [templateDeletion, setTemplateDeletion] = useState(null);
+  const templateDeletionBlocked = templateDeletion && templateDeletion.phase !== 'reviewed';
+  const templateMountedRef = useRef(true);
+  useEffect(() => {
+    templateMountedRef.current = true;
+    return () => { templateMountedRef.current = false; };
+  }, []);
   const [deletionOperations, setDeletionOperations] = useState(readDeletionReferences);
   const deletionOperationsRef = useRef(deletionOperations);
   const [deletionBusy, setDeletionBusy] = useState({});
@@ -492,8 +520,18 @@ export default function OutreachCampaigns({
     }
   };
 
-  const fetchTemplates = async () => {
+  const fetchTemplates = async (reviewUnconfirmed = false) => {
+    if (templateUseRef.current || ['pending', 'refreshing'].includes(templateDeleteRef.current?.phase)) return;
+    let refreshedDeletion = null;
+    if (reviewUnconfirmed === true && templateDeleteRef.current) {
+      refreshedDeletion = { ...templateDeleteRef.current, phase: 'refreshing' };
+      templateDeleteRef.current = refreshedDeletion;
+      setTemplateDeletion(refreshedDeletion);
+    }
+    const generation = ++templateRequestRef.current;
     setLoadingTemplates(true);
+    setTemplatesList([]);
+    setTemplateError('');
     try {
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/sequences/templates', {
@@ -502,15 +540,33 @@ export default function OutreachCampaigns({
       });
       if (res.ok) {
         const data = await res.json();
-        setTemplatesList(Array.isArray(data) ? data : []);
+        if (!Array.isArray(data) || data.length > 104 || data.some((item) => !item || typeof item.id !== 'string'
+          || !item.id || typeof item.name !== 'string' || !item.name || item.description != null && typeof item.description !== 'string')
+          || new Set(data.map((item) => item.id)).size !== data.length) {
+          throw new Error('Sequence template data needs review. Please retry.');
+        }
+        if (generation === templateRequestRef.current) {
+          setTemplatesList(data);
+          if (refreshedDeletion && templateDeleteRef.current === refreshedDeletion) {
+            const reviewed = { ...refreshedDeletion, phase: 'reviewed' };
+            templateDeleteRef.current = reviewed;
+            setTemplateDeletion(reviewed);
+          }
+        }
       } else {
-        const error = await res.json().catch(() => ({}));
-        toast.error(error.detail || 'Could not load sequence templates.');
+        throw new Error('Could not load sequence templates. Please retry.');
       }
     } catch (err) {
-      console.error('Failed to fetch templates:', err);
+      if (generation === templateRequestRef.current) {
+        setTemplateError(err.message || 'Could not load sequence templates. Please retry.');
+        if (refreshedDeletion && templateDeleteRef.current === refreshedDeletion) {
+          const held = { ...refreshedDeletion, phase: 'held' };
+          templateDeleteRef.current = held;
+          setTemplateDeletion(held);
+        }
+      }
     } finally {
-      setLoadingTemplates(false);
+      if (generation === templateRequestRef.current) setLoadingTemplates(false);
     }
   };
 
@@ -523,43 +579,58 @@ export default function OutreachCampaigns({
     if (isTemplatesOpen) {
       fetchTemplates();
     }
+    return () => { templateRequestRef.current += 1; };
   }, [isTemplatesOpen]);
 
-  const handleDeleteTemplate = async (templateId) => {
+  const handleDeleteTemplate = async (template) => {
+    const captured = reviewedTemplateDeletion(template);
+    if (!captured || loadingTemplates || templateError || templateUseRef.current
+      || templateDeleteRef.current && templateDeleteRef.current.phase !== 'reviewed') return;
+    const operation = { ...captured, template_id: template.id, phase: 'pending', generation: templateRequestRef.current };
+    templateDeleteRef.current = operation;
+    setTemplateDeletion(operation);
+    const current = () => templateMountedRef.current && templateDeleteRef.current === operation;
+    const hold = () => {
+      if (!current()) return;
+      const held = { ...operation, phase: 'held' };
+      templateDeleteRef.current = held;
+      setTemplateDeletion(held);
+    };
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`/api/v1/outreach/sequences/templates/${templateId}`, {
+      const res = await fetch(`/api/v1/outreach/sequences/templates/${encodeURIComponent(template.id)}/reviewed`, {
         method: 'DELETE',
         credentials: 'include',
-        headers: { Authorization: token ? `Bearer ${token}` : '' },
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify(captured),
       });
-      if (res.ok) {
-        setTemplatesList((prev) => prev.filter((t) => t.id !== templateId));
-        toast.success('Template deleted');
-      } else {
-        toast.error('Failed to delete template');
-      }
-    } catch (err) {
-      console.error('Failed to delete template:', err);
-      toast.error('Error deleting template');
+      const data = await res.json();
+      if (!current()) return;
+      if (res.status !== 200 || res.ok !== true || !matchesTemplateDeletionReceipt(data, template.id, captured)
+        || operation.generation !== templateRequestRef.current) { hold(); return; }
+      setTemplatesList((previous) => previous.filter((row) => {
+        const review = reviewedTemplateDeletion(row);
+        return row.id !== template.id || !review || Object.keys(captured).some((key) => review[key] !== captured[key]);
+      }));
+      templateDeleteRef.current = null;
+      setTemplateDeletion(null);
+      toast.success('Reviewed template deleted');
+    } catch {
+      hold();
     }
   };
 
   const handleUseTemplate = async (tpl) => {
-    const fullTpl = Array.isArray(tpl.nodes) && Array.isArray(tpl.edges) ? tpl :
-      PREBUILT_TEMPLATES.find(
-        (p) => p.id === tpl.id || (tpl.id === 'tpl_inmail_engage' && p.id === 'tpl_multitouch_inmail') || p.name === tpl.name
-      ) || tpl;
-
-    if (!Array.isArray(fullTpl.nodes) || !Array.isArray(fullTpl.edges) || !fullTpl.nodes.length) {
-      toast.error('This template is missing its sequence data.');
+    const fullTpl = tpl;
+    if (templateUseRef.current || loadingTemplates || templateError || !isLaunchableTemplate(fullTpl)
+      || templateDeleteRef.current && templateDeleteRef.current.phase !== 'reviewed') {
+      toast.error('This template needs a successful compatibility review before configuration.');
       return false;
     }
-    if (!isLaunchableTemplate(fullTpl)) {
-      toast.error('This template contains steps that are not available for live campaigns yet.');
-      return false;
-    }
-
+    templateUseRef.current = true;
+    setUsingTemplateId(fullTpl.id);
+    const generation = templateRequestRef.current;
+    const currentUse = () => templateMountedRef.current && generation === templateRequestRef.current;
     try {
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/campaigns/auto-draft', {
@@ -583,6 +654,7 @@ export default function OutreachCampaigns({
       }
       const draft = await res.json();
       if (!draft?.id) throw new Error('The campaign draft was not saved.');
+      if (!currentUse()) return false;
       const sequenceRes = await fetch('/api/v1/outreach/sequences', {
         method: 'POST',
         credentials: 'include',
@@ -601,7 +673,7 @@ export default function OutreachCampaigns({
         const error = await sequenceRes.json().catch(() => ({}));
         throw new Error(error.detail || 'The campaign was created, but its sequence could not be saved.');
       }
-
+      if (!currentUse()) return false;
       setIsTemplatesOpen(false);
       toast.success(`Template loaded: “${fullTpl.name}”`);
       if (onOpenWizard) onOpenWizard(draft.id, 2, fullTpl.name);
@@ -611,9 +683,11 @@ export default function OutreachCampaigns({
       }
       return true;
     } catch (err) {
-      console.error('Failed to use template:', err);
-      toast.error(err.message || 'Could not load this template. Please try again.');
+      if (currentUse()) toast.error(err.message || 'Could not load this template. Please try again.');
       return false;
+    } finally {
+      templateUseRef.current = false;
+      if (templateMountedRef.current) setUsingTemplateId(null);
     }
   };
 
@@ -825,12 +899,13 @@ export default function OutreachCampaigns({
 
   // Templates View matching media_1790104784825.png
   if (isTemplatesOpen) {
-    const displayTemplates = templatesList.length > 0 ? templatesList : PREBUILT_TEMPLATES;
+    const displayTemplates = loadingTemplates || templateError ? [] : templatesList;
 
     return (
       <div className="max-w-6xl mx-auto px-6 py-8">
         <button
           onClick={() => setIsTemplatesOpen(false)}
+          disabled={usingTemplateId !== null || templateDeletion?.phase === 'pending' || templateDeletion?.phase === 'refreshing'}
           className="text-xs font-semibold text-gray-500 hover:text-gray-900 transition-colors mb-4 inline-flex items-center gap-1.5"
         >
           ← Campaigns
@@ -846,6 +921,21 @@ export default function OutreachCampaigns({
             <span className="text-xs text-gray-400 animate-pulse">Loading templates...</span>
           )}
         </div>
+
+        {templateError && <div role="alert" className="mb-4 rounded-lg border border-rose-200 p-4 text-sm">
+          <p>{templateError}</p>
+          <button type="button" onClick={fetchTemplates} className="mt-2 font-semibold">Retry templates</button>
+        </div>}
+        {!loadingTemplates && !templateError && displayTemplates.length === 0 && <p className="mb-4 text-sm text-gray-500">No sequence templates are available.</p>}
+
+        {templateDeletion && <div role={templateDeletion.phase === 'pending' ? 'status' : 'alert'} className="mb-4 rounded-lg border border-amber-200 p-4 text-sm">
+          {templateDeletion.phase === 'pending' ? <p>Deleting the reviewed template…</p> : <>
+            <p>Earlier deletion is unconfirmed. A refreshed catalog is not a deletion receipt.</p>
+            <p>{templateDeletion.phase === 'reviewed' ? 'Review the refreshed template before choosing Delete again.' : 'Reload and review templates before another deletion. The earlier request will not be replayed.'}</p>
+            <button type="button" disabled={loadingTemplates || templateDeletion.phase === 'refreshing'}
+              onClick={() => fetchTemplates(true)} className="mt-2 font-semibold">Reload and review templates</button>
+          </>}
+        </div>}
 
         <div className="rounded-2xl border border-gray-200 bg-white shadow-2xs overflow-hidden">
           <table className="w-full text-left text-xs">
@@ -875,26 +965,28 @@ export default function OutreachCampaigns({
                   </td>
                   <td className="py-4 px-5 text-gray-500">{Array.isArray(tpl.nodes) ? tpl.nodes.length : '—'}</td>
                   <td className="py-4 px-5 text-gray-500">{isLaunchableTemplate(tpl) ? 'Ready to configure' : 'Graph needs review'}
-                    {tpl.compatibility?.valid === false && <p className="max-w-sm text-xs">{tpl.compatibility.error || tpl.compatibility.issues?.find((issue) => issue.severity === 'error')?.message || 'Open the sequence editor and correct this template.'}</p>}
+                    {!isLaunchableTemplate(tpl) && <p className="max-w-sm text-xs">{typeof tpl.compatibility?.error === 'string' ? tpl.compatibility.error : 'This saved graph needs compatibility review before configuration.'}</p>}
                   </td>
                   <td className="py-4 px-5 text-right">
                     <div className="flex items-center justify-end gap-2">
-                      {tpl.is_custom && (
+                      {tpl.is_custom === true && (
                         <button
-                          onClick={() => handleDeleteTemplate(tpl.id)}
+                          onClick={() => handleDeleteTemplate(tpl)}
+                          disabled={usingTemplateId !== null || Boolean(templateDeletionBlocked) || !reviewedTemplateDeletion(tpl)}
                           className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                          title="Delete custom template"
+                          title={reviewedTemplateDeletion(tpl) ? 'Delete reviewed custom template' : 'Reload a valid template review before deleting'}
+                          aria-label={`Delete template ${tpl.name}`}
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       )}
                       <button
                         onClick={() => handleUseTemplate(tpl)}
-                        disabled={!isLaunchableTemplate(tpl)}
-                        title={!isLaunchableTemplate(tpl) ? 'Contains sequence steps not supported by the live runner' : undefined}
+                        disabled={!isLaunchableTemplate(tpl) || usingTemplateId !== null || Boolean(templateDeletionBlocked)}
+                        title={!isLaunchableTemplate(tpl) ? 'Requires a compatible, editable sequence graph' : undefined}
                         className="rounded-lg bg-indigo-50 text-[#5145cd] hover:bg-indigo-100 px-3.5 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        {isLaunchableTemplate(tpl) ? 'Use' : 'Unavailable'}
+                        {usingTemplateId === tpl.id ? 'Creating draft…' : isLaunchableTemplate(tpl) ? 'Use' : 'Unavailable'}
                       </button>
                     </div>
                   </td>

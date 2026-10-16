@@ -1,0 +1,34 @@
+# Unravler.io — Template deletion governance checkpoint
+
+Updated: 2026-10-16 IST. **Historical pre-integration checkpoint.** The resumed implementation is described in [reviewed template deletion](UNRAVLER_IO_TEMPLATE_GOVERNANCE_RELEASE.md), which supersedes the paused state and plan below. Both deferred review findings were corrected before wiring. Existing v2.72–v2.74 work remains preserved and undeployed. The following sections record the earlier usage-limit pause; they are not current unfinished-work instructions.
+
+## Implemented foundation
+
+New, deliberately unwired `outreach/core/template_governance.py` provides native BSON template review, a literal full-record deletion precondition and a current-identity/permission transaction helper. Neither the API nor browser imports these helpers yet; existing custom-template POST/DELETE behavior remains unchanged. No deletion safety improvement is active in the application until the remaining integration is finished and independently reviewed.
+
+Review requires a scalar supported native ID, exact workspace, existing custom-template ID format, strict custom marker and creator identity, plus a missing-or-valid revision bounded to the JavaScript-safe integer range. It fingerprints the received BSON record, including native numeric representations, revision presence and unknown fields. Malformed/oversized BSON remains unavailable. The1MB accepted-record limit applies after loading/encoding; it is not an ingress/database-read memory bound. A review never grants deletion or execution.
+
+The deletion precondition checks the original revision/digest and captures a deep copy of the full row with Mongo `$literal`, avoiding interpretation of operator-looking stored values. It also binds workspace/public/native identities. Mongo object equality is not strict BSON-byte equality; the future transactional consumer must reread/digest-check the row and deny ambiguous identities. Native races against raw or nonparticipating writers still require explicit testing/limits.
+
+The authority helper requires the original scalar Firebase UID and actor, current unique user, active status, no identity-erasure tombstone, and current unique member with sequence:delete permission or current workspace owner. It writes native authority counters in the caller's suppression transaction to conflict with changes. It performs no template deletion, creates no grant and cannot establish authority outside that same transaction. Existing shared guard/snapshot/majority machinery is reused by the native tests.
+
+## Verification at the pause
+
+The current combined foundation selection passes **46 checks:30 pure and16 native**, zero skips, one existing python_multipart warning, in5.49s. Earlier26pure/6native runs precede the final defensive fixes/authority additions and are historical. New malformed-BSON and captured-query mutation regressions address the initial independent review findings. The final authority source and whole checkpoint still require independent review completion. Python compilation, scoped medium/high Bandit and diff checks pass at the current foundation. Existing application/frontend/broad evidence belongs to v2.74; it is not a fresh release check for v2.75.
+
+Tests use an owned disposable loopback Mongo replica set. Native checks cover exact/full-row CAS, public-ID recreation, content/new-field/revision drift, operator-looking literal values, current UID/role/status/erasure/duplicate identity denial and owner replacement. They do not yet prove the actual deletion route, commit-acknowledgement recovery, concurrent revocation/erasure ordering, standalone denial or browser behavior.
+
+Evidence and baseline backup: `/tmp/unravler-template-governance-gh2_pgnz`. The three new source/test files are the only implementation additions so far. Earlier source/test/docs/artifacts, user Mongo1735/Redis1742, root coverage, wedding files and unrelated worktrees must remain preserved. No commit, push, deployment, production migration, provider/AWS call, grant, purchase or live-flag change is authorized here.
+
+Paused at the requested2% remaining threshold. Same-chat automation `continue-unravler-template-governance` was created successfully for **16 October2026,9:05p.m. IST**, after the reported reset. No implementation edits followed the threshold. Independent review approves the corrected30pure review-contract checks only. Before wiring, fix two deferred findings: reject another native user with a different public user ID but the same authenticated Firebase UID, and correct the module docstring to disclose the authority helper's counter writes. Authority integration/race/rollback/standalone/erasure ordering remains unapproved. This is a checkpoint, not completion.
+
+## Plan at the pause, superseded by the release report
+
+1. Finish independent review of the foundation and resolve findings before wiring it.
+2. Implement the database-only deletion boundary under one shared workspace guard/snapshot/majority transaction: original UID/current role/erasure fences, unique scoped native template lookup, exact review/digest recheck and literal full-row CAS. Missing/duplicate/legacy/malformed/native-replaced records must hold. No automatic replay on unknown commit.
+3. Expose read-only deletion-review metadata from original native records before response sanitization. Require strict review fields on DELETE. Keep preview/prebuilt templates protected; preserve workspace and existing role admission. Define response identity and unknown/404 semantics explicitly; do not claim durable deletion receipts that do not exist.
+4. Update gallery deletion controls for review-bound requests, single-flight/stale/unknown holds and explicit reload. An uncertain acknowledgement cannot be shown as confirmed deletion. Decide recoverable deletion evidence separately if required; do not silently add unscoped journals or PII retention.
+5. Add actual API/native authorization, duplicate/native replacement, graph/metadata drift, concurrent role/erasure/transaction/standalone/unknown-commit regressions; verify frontend errors and late completions. Add native CI selection/check minimum only after verified integration.
+6. Independent source/test/docs review, appropriate combined checks, final architecture/report/Desktop synchronization and session memory last. Template creation retry/idempotency, revisioned editing/sharing/team/sender ownership remain separate subsequent work.
+
+When account remaining reaches2%, stop implementation, save this checkpoint and schedule one continuation in this chat after the actual short-term reset. The current account window is five hours, although the user calls it hourly. Recheck the actual reset/remaining values at resumption; preserve the same rule if another pause is necessary. Keep all work local.

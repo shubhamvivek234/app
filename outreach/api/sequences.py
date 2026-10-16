@@ -5,8 +5,8 @@ Supports sequence graph validation, compiling, saving, and template retrieval.
 import logging
 from typing import Any, Literal
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field, ConfigDict, StrictBool
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field, ConfigDict, StrictBool, StrictInt, StrictStr
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from db.mongo import get_db
@@ -16,6 +16,9 @@ from outreach.core.sequence_versions import load_sequence, publish_sequence
 from outreach.core.sequence_contract import bounded_json, visual_graph
 from outreach.core.sequence_preview import analyze_sequence, same_execution_graph, simulate_sequence
 from outreach.core.authorization import canonical_hash
+from outreach.core.template_governance import MAX_REVISION, scoped_review, delete_template, create_template
+from outreach.core.workspace_scope import workspace_scope
+from outreach.core import template_saves
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +62,26 @@ class SaveTemplateRequest(ValidateSequenceRequest):
     description: str | None = Field(default="", max_length=1000)
 
 
+class DeleteTemplateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    contract_version: StrictInt = Field(ge=1, le=1)
+    workspace_id: StrictStr = Field(min_length=1, max_length=200)
+    revision: StrictInt = Field(ge=0, le=MAX_REVISION)
+    review_digest: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
+    identity_digest: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
+    scope_digest: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class RecoverableTemplateRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    contract_version: StrictInt = Field(ge=1, le=1)
+    workspace_id: StrictStr = Field(min_length=1, max_length=200)
+    scope_digest: StrictStr = Field(pattern=r'^[0-9a-f]{64}$')
+    request_id: StrictStr = Field(pattern='^'+template_saves.UUID_PATTERN+'$')
+    input_digest: StrictStr = Field(pattern=r'^[0-9a-f]{64}$')
+    content_json: StrictStr = Field(min_length=1, max_length=template_saves.MAX_INPUT_BYTES)
+
+
 class PreviewSequenceRequest(ValidateSequenceRequest):
     request_scope: str = Field(pattern=r"^[0-9a-f]{64}$")
     request_id: str = Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -96,29 +119,34 @@ async def get_sequence_templates(
     current_user: dict | None = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase | None = Depends(get_db),
 ):
-    """Returns library of pre-built, high-converting sequence templates + user-saved templates."""
+    """Inspect starter and workspace templates without granting execution."""
+    if db is None or current_user is None:
+        raise HTTPException(503, "Sequence templates are unavailable. Please retry.")
     templates = list(DAGCompiler.get_prebuilt_templates())
     if db is not None and current_user is not None:
         try:
             ws_id = _workspace_id(current_user)
-            cursor = db.outreach_templates.find({
-                "workspace_id": ws_id,
-            }).sort("created_at", -1)
+            cursor = db.outreach_templates.find(workspace_scope(ws_id)).sort("created_at", -1)
             custom_templates = await cursor.to_list(length=100)
             for doc in custom_templates:
-                doc.pop("_id", None)
-                templates.append(doc)
-        except Exception as exc:
-            logger.warning(f"Could not load custom templates from db: {exc}")
+                templates.append({**{key: value for key, value in doc.items() if key != "_id"},
+                    "deletion_review": scoped_review(doc, ws_id, current_user.get("user_id"), current_user.get("firebase_uid"))})
+        except Exception:
+            logger.warning("Could not load workspace sequence templates")
+            raise HTTPException(503, "Sequence templates are unavailable. Please retry.") from None
 
     inspected = []
     for template in templates:
         try:
             _, compatibility = _authoring_graph(ValidateSequenceRequest(
                 nodes=template.get('nodes'), edges=template.get('edges'), tree=template.get('tree')))
+            compatibility['configuration_available'] = compatibility['valid'] and bool(template.get('tree'))
+            if not template.get('tree'):
+                compatibility['error'] = 'Saved template has no editable visual sequence. Review it before use.'
         except (ValueError, TypeError, AttributeError):
             compatibility = {'contract_version': 1, 'valid': False, 'issues': [],
-                'error': 'Saved template structure needs review.', 'execution_authorized': False}
+                'error': 'Saved template structure needs review.', 'execution_authorized': False,
+                'configuration_available': False}
         inspected.append({**template, 'compatibility': compatibility})
     return inspected
 
@@ -158,26 +186,73 @@ async def save_custom_template(
         "compiler_contract_version": 1,
         "created_at": datetime.now(timezone.utc),
     }
-    await db.outreach_templates.insert_one(doc)
-    doc.pop("_id", None)
-    return {"status": "success", "template": doc}
+    saved = await create_template(db, ws_id, current_user.get("user_id"), doc,
+                                  authenticated_uid=current_user.get("firebase_uid"))
+    return {"status": "success", "template": saved}
 
 
 @router.delete("/templates/{template_id}")
+@router.delete("/templates/{template_id}/reviewed")
 async def delete_custom_template(
     template_id: str,
+    req: DeleteTemplateRequest,
     current_user: dict = require_outreach_permission('sequence:delete'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """Deletes a user-saved custom template."""
+    """Delete only the native template reviewed under current authority."""
     ws_id = _workspace_id(current_user)
-    result = await db.outreach_templates.delete_one({
-        "id": template_id,
-        "workspace_id": ws_id,
-    })
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Template not found or cannot delete prebuilt template")
-    return {"status": "success", "message": "Template deleted"}
+    if req.workspace_id != ws_id:
+        raise HTTPException(403, "Template review workspace changed; reload before deleting")
+    return await delete_template(db, ws_id, current_user.get("user_id"), template_id,
+        req.revision, req.review_digest, req.identity_digest,
+        authenticated_uid=current_user.get("firebase_uid"), scope_digest=req.scope_digest)
+
+
+@router.get('/template-saves/context')
+async def template_save_context(current_user: dict = require_outreach_permission('sequence:create')):
+    return template_saves.save_context(_workspace_id(current_user), current_user.get('user_id'), current_user.get('firebase_uid'))
+
+
+@router.get('/template-saves/{request_id}')
+async def inspect_template_save(request_id: str,
+    workspace_id: str = Query(min_length=1, max_length=200),
+    scope_digest: str = Query(pattern=r'^[0-9a-f]{64}$'),
+    current_user: dict = require_outreach_permission('sequence:create'),
+    db: AsyncIOMotorDatabase = Depends(get_db)):
+    ws = _workspace_id(current_user)
+    if workspace_id != ws:
+        raise HTTPException(403, 'Template save workspace changed')
+    return await template_saves.inspect_save(db, ws, current_user.get('user_id'),
+        current_user.get('firebase_uid'), request_id, scope_digest)
+
+
+@router.post('/template-saves')
+async def save_recoverable_template(req: RecoverableTemplateRequest,
+    current_user: dict = require_outreach_permission('sequence:create'),
+    db: AsyncIOMotorDatabase = Depends(get_db)):
+    ws = _workspace_id(current_user)
+    if req.workspace_id != ws:
+        raise HTTPException(403, 'Template save workspace changed')
+
+    def build():
+        # Parsing/compilation is deliberately inside the new-request branch;
+        # completed original receipts remain readable across compiler changes.
+        try:
+            original = SaveTemplateRequest.model_validate_json(req.content_json)
+            compiled, analysis = _authoring_graph(original)
+            _require_executable_analysis(analysis)
+        except (ValueError, TypeError, RecursionError) as exc:
+            raise HTTPException(400, 'Template structure needs review before saving') from exc
+        import uuid
+        return {'id': 'tpl_custom_'+uuid.uuid4().hex[:10], 'name': original.name,
+            'description': original.description or '', 'user_id': current_user.get('user_id'),
+            'workspace_id': ws, 'is_custom': True, 'uses': '—', 'acceptance': '—', 'reply': '—',
+            'nodes': original.nodes, 'edges': original.edges, 'tree': original.tree,
+            'compiled_dag': compiled, 'compiler_contract_version': 1, 'created_at': datetime.now(timezone.utc)}
+
+    return await template_saves.save_template(db, ws, current_user.get('user_id'),
+        current_user.get('firebase_uid'), req.request_id, req.scope_digest,
+        req.content_json, req.input_digest, build)
 
 
 @router.post("/validate", dependencies=[require_outreach_permission("sequence:update")])

@@ -7,7 +7,7 @@ jest.mock('sonner', () => ({ toast: { success: jest.fn(), error: jest.fn() } }))
 
 describe('Campaign template readiness', () => {
   it('allows runner-supported templates and blocks unsupported InMail steps', () => {
-    expect(isLaunchableTemplate(PREBUILT_TEMPLATES.find((template) => template.id === 'tpl_connect_and_follow_up'))).toBe(true);
+    expect(isLaunchableTemplate(ready(PREBUILT_TEMPLATES.find((template) => template.id === 'tpl_connect_and_follow_up')))).toBe(true);
     expect(isLaunchableTemplate(PREBUILT_TEMPLATES.find((template) => template.id === 'tpl_multitouch_inmail'))).toBe(false);
   });
 
@@ -41,7 +41,120 @@ describe('Campaign list availability', () => {
 
 it('does not treat failed or unknown server template compatibility as ready', () => {
   const template=PREBUILT_TEMPLATES.find((item) => item.id === 'tpl_connect_and_follow_up');
+  expect(isLaunchableTemplate(template)).toBe(false);
   expect(isLaunchableTemplate({...template,compatibility:{contract_version:1,valid:false}})).toBe(false);
   expect(isLaunchableTemplate({...template,compatibility:{contract_version:2,valid:true}})).toBe(false);
-  expect(isLaunchableTemplate({...template,compatibility:{contract_version:1,valid:true}})).toBe(true);
+  expect(isLaunchableTemplate(ready(template))).toBe(true);
+});
+
+const ready = (template) => ({ ...template, compatibility: { contract_version: 1, valid: true,
+  configuration_available: true, execution_authorized: false } });
+
+it.each(['send_email', 'find_email', 'if_email_available', 'has_data_in_column'])('allows server-reviewed %s templates for configuration', (type) => {
+  expect(isLaunchableTemplate(ready({nodes: [{id:'a',type}],edges:[],tree:[{id:'a',type}]}))).toBe(true);
+});
+
+it.each([
+  {compatibility: null}, {compatibility: {contract_version:1,valid:true}},
+  {compatibility: {contract_version:1,valid:true,configuration_available:true,execution_authorized:true}},
+  {tree: null}, {tree: []}, {edges: null}, {nodes: []},
+  {nodes: [null]}, {tree: [{}]}, {tree:[{id:'hidden',type:'send_email',steps:[{id:'child',type:'send_email'}]}]},
+])('rejects incomplete or authority-claiming template data %#', (change) => {
+  expect(isLaunchableTemplate({...ready(PREBUILT_TEMPLATES[0]),...change})).toBe(false);
+});
+
+describe('Server-reviewed gallery selection', () => {
+  let container, root, opened;
+  const response = (data, ok = true) => ({ok, json: async () => data});
+  const button = (text) => [...container.querySelectorAll('button')].find((item) => item.textContent.trim() === text);
+  const email = () => ready({id: 'email', name: 'Email template', nodes: [{id:'root',type:'send_email',config:{subject:'Hi',body:'Hello'}}],
+    edges: [], tree: [{id:'root',type:'send_email',config:{subject:'Hi',body:'Hello'}}]});
+  const open = async () => {
+    await act(async () => root.render(<OutreachCampaigns onOpenWizard={opened} />));
+    await act(async () => button('Browse winning templates').click());
+  };
+  beforeEach(() => {
+    global.IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement('div'); document.body.appendChild(container);
+    root = createRoot(container); opened = jest.fn();
+  });
+  afterEach(async () => {
+    await act(async () => root.unmount()); container.remove(); delete global.fetch;
+  });
+
+  it('shows no selectable fallback while loading and after failure; explicit retry recovers', async () => {
+    let resolve;
+    global.fetch = jest.fn().mockResolvedValueOnce(response([]))
+      .mockImplementationOnce(() => new Promise((done) => {resolve=done;}))
+      .mockResolvedValueOnce(response([email()]));
+    await open();
+    expect(container.textContent).toContain('Loading templates');
+    expect(button('Use')).toBeUndefined();
+    await act(async () => resolve(response({}, false)));
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+    expect(container.textContent).not.toContain('Connect and follow up');
+    await act(async () => button('Retry templates').click());
+    expect(container.textContent).toContain('Email template');
+    expect(button('Use').disabled).toBe(false);
+  });
+
+  it.each([[], {}, [{id:'a',name:{bad:true}}], [email(),email()]])('holds empty or malformed catalog without substituting starters %#', async (data) => {
+    global.fetch = jest.fn().mockResolvedValueOnce(response([])).mockResolvedValueOnce(response(data));
+    await open();
+    expect(button('Use')).toBeUndefined();
+    expect(container.textContent).not.toContain('Connect and follow up');
+    expect(container.textContent).toMatch(/No sequence templates|needs review/);
+  });
+
+  it('does not replace missing graph data by an identically named local template', async () => {
+    const original = PREBUILT_TEMPLATES[0];
+    global.fetch = jest.fn().mockResolvedValueOnce(response([]))
+      .mockResolvedValueOnce(response([{id:original.id,name:original.name,compatibility:ready({}).compatibility}]));
+    await open();
+    expect(button('Unavailable').disabled).toBe(true);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('copies the received email graph exactly into a draft and prevents overlapping Use', async () => {
+    const row=email(); let resolveDraft;
+    global.fetch = jest.fn().mockResolvedValueOnce(response([])).mockResolvedValueOnce(response([row]))
+      .mockImplementationOnce(() => new Promise((done) => {resolveDraft=done;}))
+      .mockResolvedValueOnce(response({status:'success'}));
+    await open();
+    await act(async () => {button('Use').click();button('Use').click();});
+    expect(global.fetch).toHaveBeenCalledTimes(3);
+    expect(button('Creating draft…').disabled).toBe(true);
+    await act(async () => resolveDraft(response({id:'saved-draft'})));
+    const save = global.fetch.mock.calls.find(([url]) => url === '/api/v1/outreach/sequences');
+    expect(JSON.parse(save[1].body)).toEqual({campaign_id:'saved-draft',nodes:row.nodes,edges:row.edges,tree:row.tree});
+    expect(opened).toHaveBeenCalledWith('saved-draft',2,row.name);
+    expect(global.fetch.mock.calls.some(([url]) => url.includes('/launch'))).toBe(false);
+  });
+
+  it('ignores late catalog responses after closing and reopening', async () => {
+    let resolveOld;
+    global.fetch = jest.fn().mockResolvedValueOnce(response([]))
+      .mockImplementationOnce(() => new Promise((done) => {resolveOld=done;}))
+      .mockResolvedValueOnce(response([email()]));
+    await open();
+    await act(async () => button('← Campaigns').click());
+    await act(async () => button('Browse winning templates').click());
+    await act(async () => resolveOld(response([ready({...email(),id:'old',name:'Old response'})])));
+    expect(container.textContent).toContain('Email template');
+    expect(container.textContent).not.toContain('Old response');
+    expect(button('Use').disabled).toBe(false);
+  });
+
+  it('stops dependent transport and navigation when unmounted during draft creation', async () => {
+    let resolveDraft;
+    global.fetch = jest.fn().mockResolvedValueOnce(response([])).mockResolvedValueOnce(response([email()]))
+      .mockImplementationOnce(() => new Promise((done) => {resolveDraft=done;}));
+    await open();
+    await act(async () => button('Use').click());
+    await act(async () => root.unmount());
+    root=createRoot(container);
+    await act(async () => resolveDraft(response({id:'saved-before-unmount'})));
+    expect(global.fetch).toHaveBeenCalledTimes(3);
+    expect(opened).not.toHaveBeenCalled();
+  });
 });

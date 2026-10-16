@@ -662,7 +662,8 @@ async def test_standalone_cannot_create_original_wait_without_transaction(replic
 @pytest.mark.parametrize('with_positive',[False,True])
 async def test_recorded_positive_prevents_actual_email_condition_from_escaping_to_shared_join(replica_db,monkeypatch,with_positive):
     import httpx
-    from outreach.tasks import sequence_dispatch,sequence_executor
+    from outreach.tasks import sequence_dispatch
+    from outreach.core import sequence_conditions
     from outreach.core.request_guard import RequestEnvelope
     from outreach.core.proxy_custody import prepare_proxy
     await seed(replica_db)
@@ -681,21 +682,21 @@ async def test_recorded_positive_prevents_actual_email_condition_from_escaping_t
         def __init__(self,*args,**kwargs):
             kwargs.pop('proxy',None);kwargs['transport']=httpx.MockTransport(response);super().__init__(*args,**kwargs)
     monkeypatch.setattr(httpx,'AsyncClient',SyntheticClient)
-    advance=sequence_executor._advance_lead;published=[]
-    async def before_advance(db,lead,updates,**kwargs):
-        if not with_positive:return await advance(db,lead,updates,**kwargs)
+    decide=sequence_conditions.decide;published=[]
+    async def before_decision(db,lead):
+        if not with_positive:return await decide(db,lead)
         positive=await record(db,True);received=await db.outreach_physical_requests.find_one({'_id':positive})
         await db.outreach_physical_requests.update_one({'_id':positive},{'$unset':{'connection_fact':''}})
         account=await db.outreach_accounts.find_one({'id':'sender'});proxy=await prepare_proxy(account['proxy'],WS)
         envelope=RequestEnvelope(db,WS,'sender','original','sequence',proxy.url,prepared_proxy=proxy)
         envelope.received_receipt=received
         published.append(await envelope.record_connection_fact(TARGET,kind='observed_connection',connected=True))
-        return await advance(db,lead,updates,**kwargs)
-    monkeypatch.setattr(sequence_executor,'_advance_lead',before_advance)
+        return await decide(db,lead)
+    monkeypatch.setattr(sequence_conditions,'decide',before_decision)
     assert (await sequence_dispatch.prepare_due(replica_db))['prepared']==1
     job=await replica_db.outreach_sequence_jobs.find_one({})
     result=await sequence_dispatch.execute_job(replica_db,WS,job['_id'])
-    assert result['status']==('lead_changed' if with_positive else 'branch_advanced') and len(published)==int(with_positive) and len(requests)==1,result
+    assert result['status']==('connection_redirected' if with_positive else 'branch_advanced') and len(published)==int(with_positive) and len(requests)==1,result
     lead=await replica_db.outreach_leads.find_one({'id':'lead'})
     retained=await replica_db.outreach_connection_waits.find_one({'_id':scope['_id']})
     assert lead['current_node_id']==('yes' if with_positive else 'merge')

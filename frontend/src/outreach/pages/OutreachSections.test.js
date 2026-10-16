@@ -71,7 +71,7 @@ describe('Outreach analytics, swipe files, and inbox screens', () => {
     global.fetch = jest.fn(() => Promise.resolve(ok([])));
     await act(async () => root.render(<OutreachInbox />));
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
-    expect(container.textContent).toContain('No conversations yet.');
+    expect(container.textContent).toContain('No conversations match this view.');
     expect(container.textContent).not.toContain('Load Sample Conversations');
     expect(global.fetch).toHaveBeenCalledWith(
       expect.stringContaining('/api/v1/outreach/inbox?'),

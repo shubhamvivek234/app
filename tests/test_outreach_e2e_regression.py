@@ -62,8 +62,11 @@ def test_winning_templates_dag_compilation():
 
 
 @pytest.mark.asyncio
-async def test_custom_templates_lifecycle():
-    """Verify saving, listing, and deleting custom outreach templates."""
+async def test_custom_templates_lifecycle(monkeypatch):
+    """Isolate route persistence; actual authority/transactions have native tests."""
+    from bson import ObjectId
+    from outreach.api.sequences import DeleteTemplateRequest
+    from outreach.core.template_governance import deletion_precondition
     mock_db = AsyncMock()
     saved_templates = []
 
@@ -91,7 +94,22 @@ async def test_custom_templates_lifecycle():
 
     mock_db.outreach_templates.delete_one = mock_delete_one
 
-    user = {"user_id": "test_user_regression", "workspace_id": "ws_regression"}
+    async def persist_create(db, workspace, actor, doc, **kwargs):
+        saved = {**doc, "_id": ObjectId(), "template_revision": 1}
+        await db.outreach_templates.insert_one(saved)
+        return {key: value for key, value in saved.items() if key != "_id"}
+
+    async def persist_delete(db, workspace, actor, template_id, revision, review_digest, identity_digest, **kwargs):
+        saved = next(item for item in saved_templates if item['id'] == template_id)
+        query = deletion_precondition(saved, workspace, revision, review_digest)
+        await db.outreach_templates.delete_one(query)
+        return {"contract_version": 1, "status": "deleted", "template_id": template_id,
+            "workspace_id": workspace, "revision": revision, "review_digest": review_digest,
+            "identity_digest": identity_digest, "scope_digest": kwargs['scope_digest']}
+
+    monkeypatch.setattr('outreach.api.sequences.create_template', persist_create)
+    monkeypatch.setattr('outreach.api.sequences.delete_template', persist_delete)
+    user = {"user_id": "test_user_regression", "workspace_id": "ws_regression", "firebase_uid": "synthetic-uid"}
 
     # 1. List templates (initially only prebuilt)
     initial_tpls = await get_sequence_templates(current_user=user, db=mock_db)
@@ -125,8 +143,10 @@ async def test_custom_templates_lifecycle():
     assert custom_entry["is_custom"] is True
 
     # 4. Delete the custom template
-    del_res = await delete_custom_template(template_id=tpl_id, current_user=user, db=mock_db)
-    assert del_res["status"] == "success"
+    review=custom_entry['deletion_review']
+    request=DeleteTemplateRequest(**{key:review[key] for key in ('contract_version','workspace_id','revision','review_digest','identity_digest','scope_digest')})
+    del_res = await delete_custom_template(template_id=tpl_id, req=request, current_user=user, db=mock_db)
+    assert del_res["status"] == "deleted"
 
     # 5. List templates after deletion (should be back to 4)
     after_del_tpls = await get_sequence_templates(current_user=user, db=mock_db)

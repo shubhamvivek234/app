@@ -44,9 +44,10 @@ def lead_stamp(lead: dict, campaign: dict, sequence: dict, account: dict) -> dic
         stamp.update({'connection_wait_id': lead.get('connection_wait_id'),
             'connection_wait_revision': lead.get('connection_wait_revision'), 'lead_native_digest': native(lead)})
     node = (sequence.get('compiled_dag') or {}).get('nodes', {}).get(stamp['node_id'], {})
-    if node.get('type') == 'has_data_in_column':
+    if node.get('type') in {'has_data_in_column', 'if_email_available'}:
         from outreach.core.connection_waits import native
-        stamp.update({'field_condition_contract_version': 1,
+        from outreach.core.sequence_conditions import CONDITION_MARKERS
+        stamp.update({CONDITION_MARKERS[node['type']]: 1,
             'condition_native_ids': [native(row) for row in (lead, campaign, sequence, account)]})
     return stamp
 
@@ -90,9 +91,9 @@ async def prepare_due(db: AsyncIOMotorDatabase, *, limit: int = 50, now: datetim
             if not node:
                 continue
             key = canonical_hash([ws, stamp])
-            if node.get('type') == 'has_data_in_column':
-                from outreach.core.sequence_conditions import field_job_bound
-                if not field_job_bound({'workspace_id': ws, '_id': key, 'stamp': stamp}):
+            if node.get('type') in {'has_data_in_column', 'if_email_available'}:
+                from outreach.core.sequence_conditions import condition_job_bound
+                if not condition_job_bound({'workspace_id': ws, '_id': key, 'stamp': stamp}):
                     continue
             intent_id = None
             if node.get("type") in EFFECT_ACTIONS:
@@ -136,9 +137,9 @@ async def validate_job(db: AsyncIOMotorDatabase, job: dict, owner: str | None = 
     ws, stamp = job["workspace_id"], job["stamp"]
     if not isinstance(stamp, dict) or not isinstance(stamp.get('node_id'), str):
         return 'stale_job'
-    if 'field_condition_contract_version' in stamp or 'condition_native_ids' in stamp:
-        from outreach.core.sequence_conditions import field_job_bound
-        if not field_job_bound(job):
+    if any(key in stamp for key in ('field_condition_contract_version', 'email_condition_contract_version', 'condition_native_ids')):
+        from outreach.core.sequence_conditions import condition_job_bound
+        if not condition_job_bound(job):
             return 'stale_job'
     if owner:
         current = await db.outreach_sequence_jobs.find_one({"workspace_id": ws, "_id": job["_id"], "owner": owner,
@@ -150,9 +151,9 @@ async def validate_job(db: AsyncIOMotorDatabase, job: dict, owner: str | None = 
     account = await db.outreach_accounts.find_one({"workspace_id": ws, "id": stamp["sender_id"], "is_deleted": {"$ne": True}})
     sequence = await load_sequence(db, ws, stamp["campaign_id"], campaign=campaign) if campaign else None
     node = ((sequence or {}).get('compiled_dag') or {}).get('nodes', {}).get(stamp.get('node_id'), {})
-    if node.get('type') == 'has_data_in_column' or 'field_condition_contract_version' in stamp:
-        from outreach.core.sequence_conditions import field_job_bound
-        if not field_job_bound(job):
+    if node.get('type') in {'has_data_in_column', 'if_email_available'}:
+        from outreach.core.sequence_conditions import condition_job_bound, condition_kind
+        if not condition_job_bound(job) or condition_kind(job) != node['type']:
             return 'stale_job'
     if (not lead or not campaign or not account or not sequence or lead_stamp(lead, campaign, sequence, account) != stamp
             or require_lead_owner and lead.get("execution_claim_token") != owner):
@@ -196,7 +197,7 @@ def dispatch_job_id() -> str | None:
 
 
 def condition_dispatch_context():
-    """Only the durable claimed job may choose a stored-field branch."""
+    """Only the durable claimed job may choose a stored-policy branch."""
     return _CONTEXT.get()
 
 

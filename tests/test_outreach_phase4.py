@@ -8,7 +8,7 @@ if not os.environ.get("ENCRYPTION_KEY"):
     os.environ["ENCRYPTION_KEY"] = Fernet.generate_key().decode()
 
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from outreach.core.dag_compiler import DAGCompiler, DAGValidationError
 from outreach.models import SequenceNodeType
 from outreach.api.sequences import (
@@ -86,7 +86,10 @@ async def test_sequence_api_endpoints():
     user = {"user_id": "u1"}
 
     # 1. Get templates
-    tpls = await get_sequence_templates()
+    cursor = MagicMock()
+    cursor.sort.return_value.to_list = AsyncMock(return_value=[])
+    mock_db.outreach_templates.find = MagicMock(return_value=cursor)
+    tpls = await get_sequence_templates(user, mock_db)
     assert len(tpls) >= 2
 
     # 2. Validate valid sequence

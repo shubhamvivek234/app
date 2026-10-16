@@ -473,10 +473,10 @@ async def negative_work(db: Any, scope: dict, lead: dict, sequence: dict, now: d
             raise ConnectionWaitUnavailable('negative_physical_evidence_requires_review')
     for job in jobs:
         stamp = job.get('stamp')
-        condition_job = isinstance(stamp, dict) and isinstance(stamp.get('node_id'), str) and nodes.get(stamp['node_id'], {}).get('type') == 'has_data_in_column'
+        condition_job = isinstance(stamp, dict) and isinstance(stamp.get('node_id'), str) and nodes.get(stamp['node_id'], {}).get('type') in {'has_data_in_column', 'if_email_available'}
         if condition_job:
-            from outreach.core.sequence_conditions import field_job_bound
-            if (not field_job_bound(job) or stamp['condition_native_ids'] !=
+            from outreach.core.sequence_conditions import condition_job_bound, condition_kind
+            if (not condition_job_bound(job) or condition_kind(job) != nodes[stamp['node_id']]['type'] or stamp['condition_native_ids'] !=
                     [scope[key] for key in ('lead_native', 'campaign_native', 'sequence_native', 'sender_native')]):
                 raise ConnectionWaitUnavailable('negative_condition_job_requires_review')
         if (not isinstance(stamp, dict) or job.get('_id') != canonical_hash([workspace, stamp])

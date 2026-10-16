@@ -44,19 +44,16 @@ async def test_one_sided_connection_yes_is_terminal_without_key_error():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('signal',[True,False])
-async def test_usable_email_branch_applies_delay_without_opening_linkedin(monkeypatch,signal):
+async def test_usable_email_without_durable_job_cannot_choose_branch_or_open_linkedin(monkeypatch):
     monkeypatch.setenv('OUTREACH_EMAIL_SEND_ENABLED','true');monkeypatch.setenv('OUTREACH_EMAIL_SYNC_ENABLED','true')
     db=_runner_db('if_email_available')
     nodes=db.outreach_sequences.find_one.return_value['compiled_dag']['nodes']
     nodes['step_a']['branches']={'positive':'yes','negative':'no'}
     nodes.update({key:{'id':key,'type':'find_email','delay_hours':6,'config':{},'branches':{},'next_default':None} for key in ('yes','no')})
-    before=datetime.now(timezone.utc)
-    with patch('outreach.core.email_finder.is_lead_email_available',new_callable=AsyncMock,return_value=signal),patch('outreach.tasks.sequence_executor.VoyagerClient') as voyager:
+    with patch('outreach.tasks.sequence_executor.VoyagerClient') as voyager:
         result=await SequenceExecutor.execute_lead_step('lead_a',db)
-    assert result['status']=='branch_advanced';voyager.assert_not_called()
-    fields=db.outreach_leads.update_one.await_args.args[1]['$set']
-    assert fields['execution_state']=='waiting_delay' and fields['next_action_due_at']>=before+timedelta(hours=6)
+    assert result['status']=='dispatch_context_missing';voyager.assert_not_called()
+    db.outreach_leads.update_one.assert_not_awaited()
 
 
 @pytest.mark.asyncio

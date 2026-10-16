@@ -23,6 +23,7 @@ import SequenceCanvas from '../components/sequence/SequenceCanvas';
 import ImportLeadsModal from '../components/ImportLeadsModal';
 import ConnectLinkedInModal from '../components/ConnectLinkedInModal';
 import useCampaignReadiness from '../hooks/useCampaignReadiness';
+import useTemplateSave from '../hooks/useTemplateSave';
 
 const TIME_OPTIONS = [
   '12:00 AM', '12:30 AM', '01:00 AM', '01:30 AM', '02:00 AM', '02:30 AM',
@@ -136,6 +137,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
   const [enrolledLeads, setEnrolledLeads] = useState([]);
   const [loadingLeads, setLoadingLeads] = useState(false);
   const [leadsError, setLeadsError] = useState('');
+  const templateSave = useTemplateSave(JSON.stringify([campaignId, activeCampaignId, currentStep]));
 
   const [schedule, setSchedule] = useState(createDefaultSchedule);
   const sequenceSaveRef = React.useRef(null);
@@ -273,10 +275,11 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
     showToast('Working hours copied to all weekdays');
   };
 
-  const syncDraft = async (overrideName, overrideStep) => {
+  const syncDraft = async (overrideName, overrideStep, assertCurrent = () => {}) => {
     const rawName = overrideName !== undefined ? overrideName : campaignName;
     const targetName = (rawName || '').trim() || 'Connect and follow up';
     try {
+      assertCurrent();
       const token = localStorage.getItem('token');
       const step = overrideStep !== undefined ? overrideStep : currentStep;
       const progress = step === 1 ? 20 : step === 2 ? 60 : 80;
@@ -317,6 +320,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
       if (res.ok) {
         const doc = await res.json();
         if (doc && doc.id) {
+          assertCurrent(doc);
           setActiveCampaignId(doc.id);
           if (!hasUserEditedName.current && doc.name) {
             setCampaignName(doc.name);
@@ -568,24 +572,36 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
   }, [senderRetryKey]);
 
   const handleSaveAsTemplate = async () => {
-    try {
+    const intendedCampaignId = activeCampaignId;
+    const saveSequence = sequenceSaveRef.current;
+    await templateSave.save(async (assertCurrent) => {
+      assertCurrent();
       const token = localStorage.getItem('token');
-      const savedDraft = await syncDraft();
+      const savedDraft = await syncDraft(undefined, undefined, (doc) => {
+        assertCurrent();
+        if (doc?.id && doc.id !== intendedCampaignId) throw new Error('Campaign changed before template preparation.');
+      });
+      assertCurrent();
       if (!savedDraft?.id) throw new Error('Save the campaign draft before creating a template.');
-      if (sequenceSaveRef.current && !(await sequenceSaveRef.current())) {
-        throw new Error('Save the sequence before creating a template.');
+      if (savedDraft.id !== intendedCampaignId) throw new Error('Campaign changed before template preparation.');
+      if (saveSequence) {
+        const sequenceSaved = await saveSequence(undefined, assertCurrent);
+        assertCurrent();
+        if (!sequenceSaved) throw new Error('Save the sequence before creating a template.');
       }
       let nodes = [];
       let edges = [];
       let tree = null;
 
-      if (activeCampaignId) {
-        const seqRes = await fetch(`/api/v1/outreach/sequences/${activeCampaignId}`, {
+      if (savedDraft.id) {
+        const seqRes = await fetch(`/api/v1/outreach/sequences/${savedDraft.id}`, {
           credentials: 'include',
           headers: { Authorization: token ? `Bearer ${token}` : '' },
         });
+        assertCurrent();
         if (seqRes.ok) {
           const seqData = await seqRes.json();
+          assertCurrent();
           if (seqData.is_default) {
             throw new Error('Open the sequence editor and save your sequence before creating a template.');
           }
@@ -597,31 +613,14 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
 
       if (!nodes.length) throw new Error('This campaign does not have a saved sequence yet.');
 
-      const res = await fetch('/api/v1/outreach/sequences/templates', {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: token ? `Bearer ${token}` : '',
-        },
-        body: JSON.stringify({
+      return {
           name: campaignName || 'Custom Template',
           description: `Custom sequence template saved from campaign "${campaignName || ''}"`,
           nodes,
           edges,
           tree,
-        }),
-      });
-      if (res.ok) {
-        showToast(`Saved "${campaignName}" as template!`);
-      } else {
-        const errData = await res.json().catch(() => ({}));
-        toast.error(errData.detail || 'Failed to save template');
-      }
-    } catch (err) {
-      console.error('Failed to save template:', err);
-      toast.error(err.message || 'Failed to save template.');
-    }
+      };
+    });
   };
 
   if (draftLoading || draftError || !activeCampaignId) {
@@ -692,10 +691,13 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
           <div className="flex items-center gap-3">
             <button
               onClick={handleSaveAsTemplate}
+              disabled={templateSave.blocked}
               className="rounded-xl border border-gray-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors shadow-2xs"
             >
               Save as template
             </button>
+            {templateSave.canCheck && <button type="button" onClick={templateSave.check}
+              className="text-xs font-semibold text-indigo-700">Check save status</button>}
             <button
               onClick={async () => {
                 const saved = await syncDraft(campaignName);
@@ -747,6 +749,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
           </div>
         </div>
 
+        {templateSave.message && <div role="status" className="px-6 py-2 text-xs text-gray-700 bg-gray-50">{templateSave.message}</div>}
         {/* Row 2: Step Indicator Tabs */}
         <div className="flex items-center gap-8 px-6 py-2.5 text-xs font-semibold bg-gray-50/40">
           <button

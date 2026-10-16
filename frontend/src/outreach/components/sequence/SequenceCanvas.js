@@ -71,7 +71,7 @@ const EMAIL_CONDITION_DEFINITIONS = [
   {
     type: 'if_email_available',
     label: 'If email available',
-    desc: 'Branch only when a valid, unsuppressed email is known',
+    desc: 'Check the current stored email policy',
     icon: GitBranch,
     color: 'text-teal-700 bg-teal-50',
     leftCondition: 'No',
@@ -432,7 +432,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
   }, [campaignId, sequenceRetryKey]);
 
   const saveQueueRef = React.useRef(Promise.resolve());
-  const persistSequence = React.useCallback((treeToSave = treeRef.current) => {
+  const persistSequence = React.useCallback((treeToSave = treeRef.current, assertCurrent) => {
     if (!campaignId || campaignId === 'new' || campaignId === 'new_campaign') return false;
     if (!hasLoaded.current) {
       setToastMessage('Sequence is still loading. Wait a moment, then save again.');
@@ -440,6 +440,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
     }
     const save = saveQueueRef.current.catch(() => {}).then(async () => {
       try {
+        assertCurrent?.();
         const token = localStorage.getItem('token');
         const { nodes, edges } = flattenTreeToDAG(treeToSave);
         const res = await fetch('/api/v1/outreach/sequences', {
@@ -451,14 +452,17 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
           },
           body: JSON.stringify({ campaign_id: campaignId, nodes, edges, tree: treeToSave }),
         });
+        assertCurrent?.();
         if (!res.ok) {
           const error = await res.json().catch(() => ({}));
+          assertCurrent?.();
           setToastMessage(error.detail || 'Sequence could not be saved. Please try again.');
           return false;
         }
         if (onSave) onSave({ nodes, edges, tree: treeToSave });
         return true;
       } catch (err) {
+        try { assertCurrent?.(); } catch (_) { return false; }
         console.error('Failed to save sequence:', err);
         setToastMessage(err.message || 'Sequence could not be saved. Check its graph and try again.');
         return false;
@@ -1651,7 +1655,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
 
             {selectedStep.type === 'if_email_available' && (
               <div className="rounded-xl border border-teal-100 bg-teal-50 p-3 text-xs text-teal-900">
-                Yes requires a valid, unsuppressed email. Unknown lookup results pause instead of taking the No branch.
+                Yes requires a correctly formatted address allowed by the current stored email policy and suppression checks. Missing verification follows the provided-address policy; this does not confirm delivery. Malformed policy data pauses for review.
               </div>
             )}
 

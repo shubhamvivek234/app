@@ -11,7 +11,7 @@ import json
 from typing import Any
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from db.mongo import get_db
@@ -30,6 +30,7 @@ from outreach.core.lead_tags import (
 )
 from utils.free_llm_router import free_llm
 from outreach.core.workspace_scope import workspace_scope
+from outreach.core import inbox_organization
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,15 @@ class AIReplyResponse(BaseModel):
     suggestions: list[str]
 
 
+class UpdateOrganizationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revision: int = Field(..., strict=True, ge=0, lt=inbox_organization.MAX_REVISION)
+    review_digest: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+    is_starred: bool = Field(default=False, strict=True)
+    is_archived: bool = Field(default=False, strict=True)
+    note: str = Field(default="", strict=True, max_length=4000)
+
+
 @router.get("")
 async def list_inbox_threads(
     account_id: str | None = Query(None, description="Filter by sender account id or null for All"),
@@ -79,6 +89,7 @@ async def list_inbox_threads(
     search: str | None = Query(None, description="Search prospect name or message snippet"),
     intent: str | None = Query(None, description="Filter by intent tag"),
     tag_ids: str | None = Query(None, description="Comma-separated lead tag ids"),
+    view: str = Query("all", pattern="^(all|inbox|starred|archived)$"),
     skip: int = 0,
     limit: int = 50,
     current_user: dict = Depends(get_outreach_user),
@@ -102,6 +113,9 @@ async def list_inbox_threads(
     requested_tags = list(dict.fromkeys(requested_tags))
 
     base_conditions: list[dict[str, Any]] = [workspace_scope(ws_id)]
+    selected_view = view if isinstance(view, str) else "all"
+    if selected_view not in {"all", "inbox", "starred", "archived"}:
+        raise HTTPException(422, "Invalid inbox view")
     if os.getenv("OUTREACH_MOCK_AUTH", "false").lower() not in {"true", "1"}:
         base_conditions.append({"is_demo": {"$ne": True}})
 
@@ -141,14 +155,19 @@ async def list_inbox_threads(
 
     filter_q: dict[str, Any] = {"$and": base_conditions} if len(base_conditions) > 1 else base_conditions[0]
 
-    cursor = db.outreach_inbox_threads.find(filter_q).sort("last_message_at", -1)
-    if skip:
-        cursor = cursor.skip(skip)
-    threads = await _fetch_cursor_docs(cursor, length=limit)
+    if selected_view != "all":
+        threads = await inbox_organization.filtered_page(db, ws_id, filter_q, selected_view, skip, limit)
+    else:
+        cursor = db.outreach_inbox_threads.find(filter_q).sort("last_message_at", -1)
+        if skip:
+            cursor = cursor.skip(skip)
+        threads = await _fetch_cursor_docs(cursor, length=limit)
 
     clean_threads = []
     for t in threads:
         doc = dict(t)
+        doc["organization"] = inbox_organization.public_organization(t)
+        doc.pop("inbox_organization", None)
         doc.pop("_id", None)
         clean_threads.append(doc)
 
@@ -172,12 +191,26 @@ async def get_thread(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
 
     doc = dict(thread)
+    doc["organization"] = inbox_organization.public_organization(thread)
+    doc.pop("inbox_organization", None)
     doc.pop("_id", None)
     await hydrate_thread_tags(db, ws_id, [doc])
     # Validate linked tag identities before consuming the unread indication.
     await db.outreach_inbox_threads.update_one(captured_scope(ws_id, thread), {"$set": {"unread_count": 0}})
     doc["unread_count"] = 0
     return doc
+
+
+@router.patch("/{thread_id}/organization")
+async def update_thread_organization(
+    thread_id: str,
+    req: UpdateOrganizationRequest,
+    current_user: dict = require_outreach_permission("inbox:manage"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    return await inbox_organization.update_organization(db, resolved_workspace_id(current_user),
+        current_user.get("user_id"), thread_id, req.revision, req.review_digest,
+        req.model_dump(exclude={"revision", "review_digest"}, exclude_unset=True), authenticated_uid=current_user.get("firebase_uid"))
 
 
 @router.post("/{thread_id}/reply", status_code=status.HTTP_202_ACCEPTED)
