@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import AudienceListImport, { audienceRequest, validAudience } from './AudienceListImport';
 
 const button = 'rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm disabled:opacity-50';
@@ -27,9 +27,11 @@ export default function AudienceListsPanel({ campaigns, initialCampaignId, selec
   const [importing, setImporting] = useState(null);
   const generation = useRef(0);
   const creation = useRef(null);
+  const nextGeneration = useCallback(() => ++generation.current, []);
   const row = inventory?.find((item) => item.id === selected);
   useEffect(() => {
-    const controller = new AbortController(); ++generation.current;
+    const controller = new AbortController();
+    nextGeneration();
     setLoading(true); setInventory(null); setPage(null); setError(''); setAfter(null); setBusy(false);
     if (!campaign) { setLoading(false); return undefined; }
     audienceRequest(`?campaign_id=${encodeURIComponent(campaign)}&include_archived=true`, undefined, undefined, controller.signal)
@@ -40,8 +42,11 @@ export default function AudienceListsPanel({ campaigns, initialCampaignId, selec
         setInventory(data.lists); setSelected((value) => data.lists.some((item) => item.id === value) ? value : data.lists[0]?.id || '');
       }).catch((failure) => { if (!controller.signal.aborted) setError(failure.message); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    return () => { controller.abort(); ++generation.current; };
-  }, [campaign, reload]);
+    return () => {
+      controller.abort();
+      nextGeneration();
+    };
+  }, [campaign, nextGeneration, reload]);
   useEffect(() => {
     const controller = new AbortController(); setPage(null); setRename(row?.name || '');
     if (!row) return undefined;
