@@ -22,6 +22,9 @@ from outreach.core.authorization import authorization_snapshot, canonical_hash, 
 from outreach.core.inbox_freshness import require_fresh_inbox
 from outreach.core.execution_outbox import CLAIM_SECONDS, ExecutionOutbox
 from outreach.core.sequence_versions import load_sequence
+from outreach.core.sequence_preview import validate_pinned_sequence, checked_compiled, successor_fields, content_templates, due_block_reason, waiting_start
+from outreach.core.sequence_contract import DAGValidationError
+
 from outreach.core.sender_execution import SenderExecution
 from outreach.engine.voyager_client import VoyagerClient
 from outreach.core.request_guard import RequestEnvelope, RequestDenied, request_parent, unresolved_physical
@@ -48,7 +51,8 @@ _CONFIRMED_STATUSES = {
 }
 
 
-async def _preflight_dispatch(db, lead: dict, expected: dict, node_type: str, *, authorizing: bool = False) -> str | None:
+async def _preflight_dispatch(db, lead: dict, expected: dict, node_type: str, *, authorizing: bool = False,
+                              observing_connection: bool = False) -> str | None:
     """Re-read authority after preparation; old snapshots cannot authorize a send."""
     job_reason = await validate_dispatch_context(db, authorize_submission=authorizing)
     if job_reason:
@@ -63,8 +67,28 @@ async def _preflight_dispatch(db, lead: dict, expected: dict, node_type: str, *,
     reason = dispatch_block_reason(current_lead, campaign, account, sequence, expected)
     if reason:
         return reason
+    due_reason = due_block_reason(current_lead, datetime.now(timezone.utc))
+    if due_reason:
+        return due_reason
+    try:
+        pinned = validate_pinned_sequence(sequence)
+        current_node = pinned['nodes'].get(current_lead.get('current_node_id'))
+        if not current_node or current_node['type'] != node_type:
+            return 'sequence_review_required'
+        if node_type == 'connection_request' and current_lead.get('is_connected') is True:
+            return 'already_connected'
+        for text in content_templates(current_node).values():
+            rendered = interpolate_template(text, current_lead)
+            if '{{' in rendered or '}}' in rendered:
+                return 'sequence_variables_missing'
+    except (DAGValidationError, TypeError, AttributeError):
+        return 'sequence_review_required'
     if current_lead.get("current_node_id") != lead.get("current_node_id"):
         return "lead_changed"
+    from outreach.core.connection_waits import scope_guard
+    reason = await scope_guard(db, current_lead, campaign, sequence, account, for_observation=observing_connection)
+    if reason:
+        return reason
     if not OutboundRateLimiter.is_within_working_hours(campaign.get("schedule") or {}):
         return "outside_working_hours"
     remember_schedule = getattr(type(db), "note_schedule", None)
@@ -82,6 +106,13 @@ async def _preflight_dispatch(db, lead: dict, expected: dict, node_type: str, *,
                 return reason
     elif not await get_active_entitlement(db, workspace_id):
         return "paid_access_required"
+    if node_type == 'has_data_in_column':
+        saved = current_lead.get('identifiers')
+        if (any(current_lead.get(key) is not None and not isinstance(current_lead[key], str) for key in
+                ('email', 'phone', 'linkedin_url', 'linkedin_urn', 'member_urn'))
+                or saved is not None and (not isinstance(saved, dict)
+                    or any(value is not None and not isinstance(value, str) for value in saved.values()))):
+            return 'condition_identity_review_required'
     from outreach.core.lead_importer import check_compound_suppression
     if await check_compound_suppression(workspace_id, [current_lead], db):
         return "lead_suppressed"
@@ -122,18 +153,27 @@ async def _recipient_has_reply(db, workspace_id: str, sender_id: str, lead: dict
 
 async def _advance_lead(db, lead: dict, updates: dict, *, unset: dict | None = None) -> bool:
     """CAS advancement cannot erase a reply observed during preparation/submission."""
+    from outreach.core.search_sources import SEARCH_PROVENANCE_QUERY, unverified_search_lead
+    if unverified_search_lead(lead):
+        return False
     query = {"id": lead["id"], "workspace_id": lead["workspace_id"],
              "campaign_id": lead["campaign_id"], "current_node_id": lead.get("current_node_id"),
-             "execution_state": lead.get("execution_state")}
+             "execution_state": lead.get("execution_state"), "$nor": [SEARCH_PROVENANCE_QUERY]}
     if not lead.get("has_replied"):
         query["has_replied"] = {"$ne": True}
     if "authorized_revision" in lead:
         query["authorized_revision"] = lead["authorized_revision"]
     if lead.get("execution_claim_token"):
         query["execution_claim_token"] = lead["execution_claim_token"]
+    if lead.get('connection_wait_required') or lead.get('connection_wait_id'):
+        query.update({'connection_wait_id': lead.get('connection_wait_id'), 'connection_wait_revision': lead.get('connection_wait_revision')})
     if await validate_dispatch_context():
         return False
-    result = await db.outreach_leads.update_one(query, {"$set": updates, **({"$unset": unset} if unset else {})})
+    update = {"$set": updates, **({"$unset": unset} if unset else {})}
+    if lead.get('connection_wait_required') or lead.get('connection_wait_id'):
+        from outreach.core.connection_waits import advance_scoped
+        return await advance_scoped(db, lead, query, update)
+    result = await db.outreach_leads.update_one(query, update)
     return getattr(result, "matched_count", 0) == 1
 
 
@@ -154,10 +194,11 @@ async def _pause_uncertain(db, lead: dict, operation_id: str, reason: str, *,
     revision_filter = {"authorized_revision": revision} if isinstance(revision, int) else {}
     campaign_revision_filter = {"authorization_revision": revision} if isinstance(revision, int) else {}
     node_id = expected_node_id if expected_node_id is not None else lead.get("current_node_id")
+    from outreach.core.search_sources import SEARCH_PROVENANCE_QUERY
     await db.outreach_leads.update_one(
         {"id": lead["id"], "workspace_id": lead["workspace_id"], "campaign_id": lead["campaign_id"],
          "current_node_id": node_id, **revision_filter, "has_replied": {"$ne": True},
-         "execution_state": {"$nin": ["replied", "bounced", "finished"]}},
+         "execution_state": {"$nin": ["replied", "bounced", "finished"]}, "$nor": [SEARCH_PROVENANCE_QUERY]},
         {"$set": {"execution_state": LeadExecutionState.WAITING_TRIGGER,
                   "failure_reason": safe_reason, "next_action_due_at": None, "updated_at": now}},
     )
@@ -344,7 +385,9 @@ async def _dispatch_action(db, lead: dict, expected: dict, node_type: str, opera
             recorded = await outbox.finish(workspace_id, intent_id, owner, outcome,
                                            provider_message_id=result.get("provider_message_id"),
                                            provider_thread_id=result.get("provider_thread_id"),
-                                           provider_result_status=result_status)
+                                           provider_result_status=result_status,
+                                           provider_recipient_urn=result.get('provider_recipient_urn'),
+                                           provider_request_id=result.get('provider_request_id'))
         except Exception as exc:
             logger.error("Execution evidence save failed (%s)", type(exc).__name__)
             return {"status": "uncertain"}
@@ -377,6 +420,9 @@ class SequenceExecutor:
         lead = await db.outreach_leads.find_one({"id": lead_id, **({"workspace_id": workspace_id} if workspace_id else {})})
         if not lead:
             return {"status": "lead_not_found"}
+        from outreach.core.search_sources import unverified_search_lead
+        if unverified_search_lead(lead):
+            return {"status": "search_source_review_required", "not_submitted": True}
 
         if lead.get("execution_state") in (
             LeadExecutionState.FINISHED,
@@ -386,8 +432,12 @@ class SequenceExecutor:
             "paused",
         ):
             return {"status": "terminal_state", "state": lead.get("execution_state")}
-        if (lead.get("execution_state") == LeadExecutionState.REPLIED or lead.get("has_replied")) and not lead.get("waiting_for_reply_at"):
+        if lead.get("execution_state") == LeadExecutionState.REPLIED or lead.get("has_replied"):
             return {"status": "terminal_state", "state": LeadExecutionState.REPLIED}
+
+        due_reason = due_block_reason(lead, datetime.now(timezone.utc))
+        if due_reason:
+            return {"status": due_reason, "not_submitted": True}
 
         # 1. Fetch Campaign and verify active status
         workspace_id = lead.get("workspace_id")
@@ -425,17 +475,19 @@ class SequenceExecutor:
             return {"status": "sequence_not_configured"}
 
         compiled = sequence["compiled_dag"]
+        try:
+            checked_compiled(compiled)
+        except DAGValidationError:
+            return {"status": "sequence_review_required", "not_submitted": True,
+                    "reason": "Review the saved execution graph before starting new work."}
         nodes_lookup = compiled.get("nodes", {})
         root_node_ids = compiled.get("root_node_ids", [])
 
         # Determine current node
         curr_node_id = lead.get("current_node_id")
-        if not curr_node_id:
-            curr_node_id = root_node_ids[0] if root_node_ids else None
-
-        if not curr_node_id or curr_node_id not in nodes_lookup:
-            await _advance_lead(db, lead, {"execution_state": LeadExecutionState.FINISHED})
-            return {"status": "finished", "reason": "no_more_nodes"}
+        if not isinstance(curr_node_id, str) or not curr_node_id or curr_node_id not in nodes_lookup:
+            return {"status": "sequence_review_required", "not_submitted": True,
+                    "reason": "Review the saved current step before starting new work."}
 
         node = nodes_lookup[curr_node_id]
         node_type = node.get("type")
@@ -451,6 +503,12 @@ class SequenceExecutor:
                 return {"status": "paid_access_required"}
         elif not await get_active_entitlement(db, workspace_id):
             return {"status": "paid_access_required"}
+        try:
+            validate_pinned_sequence(sequence)
+            wait_started = waiting_start(lead, node_type, datetime.now(timezone.utc))
+        except DAGValidationError:
+            return {"status": "sequence_review_required", "not_submitted": True,
+                    "reason": "Review and save a valid sequence revision before starting new work."}
         if contains_ai_prompt_token(node.get("config", {})):
             reason = "AI prompt tokens are not generated by the live campaign runner. Replace this step with finished message copy."
             await _advance_lead(db, lead, {
@@ -460,6 +518,15 @@ class SequenceExecutor:
                 })
             return {"status": "action_failed", "action": node_type, "reason": reason}
 
+        from outreach.tasks.connection_recheck import recheck_connection
+        connection_result = await recheck_connection(db, lead, campaign, sequence, account, node_type)
+        if connection_result is not None:
+            return connection_result
+
+        if node_type == SequenceNodeType.HAS_DATA_IN_COLUMN:
+            from outreach.core.sequence_conditions import decide
+            return await decide(db, lead)
+
         if node_type == SequenceNodeType.IF_EMAIL_AVAILABLE:
             from outreach.core.email_finder import is_lead_email_available
 
@@ -467,9 +534,7 @@ class SequenceExecutor:
             branch = "positive" if available else "negative"
             next_node_id = node.get("branches", {}).get(branch)
             now = datetime.now(timezone.utc)
-            if not await _advance_lead(db, lead, {"current_node_id": next_node_id,
-                          "execution_state": LeadExecutionState.QUEUED if next_node_id else LeadExecutionState.FINISHED,
-                          "next_action_due_at": now, "updated_at": now}):
+            if not await _advance_lead(db, lead, {**successor_fields(compiled, next_node_id, now), "updated_at": now}):
                 return {"status": "lead_changed"}
             return {"status": "branch_advanced", "next_node_id": next_node_id,
                     "condition_met": bool(available)}
@@ -483,6 +548,7 @@ class SequenceExecutor:
                 **(await account_session(account)),
                 proxy_url=proxy_url,
                 request_envelope=RequestEnvelope(db, workspace_id, account["id"], credential_generation(account), "sequence", proxy_url,
+                    operation_id=dispatch_intent_id() or f'{lead_id}:{curr_node_id}',
                     prepared_proxy=prepared_proxy, campaign_limits=campaign.get("limits") or {},
                     authority_validator=lambda: _preflight_dispatch(db, lead, authorization_snapshot(campaign, account, sequence), node_type),
                     transaction_validator=lambda current: _preflight_dispatch(current, lead, authorization_snapshot(campaign, account, sequence), node_type)),
@@ -494,21 +560,15 @@ class SequenceExecutor:
         waiting_field = "waiting_for_connection_at" if node_type in (SequenceNodeType.CONNECTION_REQUEST, SequenceNodeType.IF_CONNECTED) else (
             "waiting_for_reply_at" if node_type in (SequenceNodeType.SEND_MESSAGE, SequenceNodeType.VOICE_NOTE) else None
         )
-        if waiting_field and lead.get(waiting_field):
-            wait_started = lead[waiting_field]
-            if isinstance(wait_started, str):
-                try:
-                    wait_started = datetime.fromisoformat(wait_started)
-                except ValueError:
-                    wait_started = datetime.now(timezone.utc)
-            if wait_started.tzinfo is None:
-                wait_started = wait_started.replace(tzinfo=timezone.utc)
-
+        if waiting_field and wait_started is not None:
             branch_signal = (
                 await voyager.check_connection_status_strict(lead.get("linkedin_urn") or lead["linkedin_url"])
                 if node_type in (SequenceNodeType.CONNECTION_REQUEST, SequenceNodeType.IF_CONNECTED)
                 else bool(lead.get("has_replied"))
             )
+            if node_type in (SequenceNodeType.SEND_MESSAGE, SequenceNodeType.VOICE_NOTE) and not branch_signal:
+                if await require_fresh_inbox(db, workspace_id, account):
+                    branch_signal = None
             branches = node.get("branches", {})
             try:
                 default_timeout = 3 if node_type == SequenceNodeType.IF_CONNECTED else 7
@@ -519,7 +579,7 @@ class SequenceExecutor:
             now = datetime.now(timezone.utc)
             if branch_signal is None:
                 if now >= timeout_at:
-                    reason = "Connection status could not be verified before the condition deadline. Review this lead manually."
+                    reason = "The condition could not be verified before its deadline. Review this lead manually."
                     await _advance_lead(db, lead, {"execution_state": LeadExecutionState.WAITING_TRIGGER,
                                   "next_action_due_at": None, "failure_reason": reason, "updated_at": now})
                     return {"status": "condition_needs_review", "reason": reason}
@@ -530,9 +590,7 @@ class SequenceExecutor:
             if branch_signal or now >= timeout_at:
                 next_node_id = branches.get("positive") if branch_signal else branches.get("negative")
                 updates: dict[str, Any] = {
-                    "current_node_id": next_node_id,
-                    "execution_state": LeadExecutionState.QUEUED if next_node_id else LeadExecutionState.FINISHED,
-                    "next_action_due_at": now,
+                    **successor_fields(compiled, next_node_id, now),
                     "updated_at": now,
                 }
                 if node_type in (SequenceNodeType.CONNECTION_REQUEST, SequenceNodeType.IF_CONNECTED) and branch_signal:
@@ -816,6 +874,16 @@ class SequenceExecutor:
                     )
 
         if node_type == SequenceNodeType.CONNECTION_REQUEST and node.get("branches"):
+            if lead.get('_id') is not None and lead.get('enrollment_id') and campaign.get('sequence_version_id'):
+                from outreach.core.connection_waits import begin_wait, ConnectionWaitUnavailable
+                from outreach.core.suppression import SuppressionUnavailable
+                from outreach.core.restore_epoch import EpochUnavailable
+                try:
+                    retained = await begin_wait(db, workspace_id, lead_id)
+                except (ConnectionWaitUnavailable, SuppressionUnavailable, EpochUnavailable):
+                    return {'status': 'connection_wait_review_required'}
+                if retained:
+                    return {'status': 'success', 'action': action_name, 'waiting_for': 'connection', 'connection_wait_id': retained['_id']}
             waiting_since = datetime.now(timezone.utc)
             if not await _advance_lead(db, lead, {
                     "waiting_for_connection_at": waiting_since,
@@ -858,7 +926,7 @@ class SequenceExecutor:
             else:
                 branch_signal = bool(lead.get("has_replied"))
             if branch_signal:
-                next_node_id = branches["positive"]
+                next_node_id = branches.get("positive")
                 if node_type == SequenceNodeType.IF_CONNECTED:
                     newly_connected = not lead.get("is_connected")
                     if not await _advance_lead(db, lead, {
@@ -907,23 +975,12 @@ class SequenceExecutor:
         else:
             next_node_id = node.get("next_default")
 
-        # Determine delay for next step
-        next_node = nodes_lookup.get(next_node_id) if next_node_id else None
-        delay_hours = next_node.get("delay_hours", 24) if next_node else 0
-        next_due = datetime.now(timezone.utc) + timedelta(hours=delay_hours)
-
+        transition = successor_fields(compiled, next_node_id, datetime.now(timezone.utc))
+        next_due = transition['next_action_due_at']
         update_fields: dict[str, Any] = {
-            "last_action_taken": action_name,
-            "last_action_at": datetime.now(timezone.utc),
-            "updated_at": datetime.now(timezone.utc),
+            **transition, "last_action_taken": action_name,
+            "last_action_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc),
         }
-
-        if next_node_id:
-            update_fields["current_node_id"] = next_node_id
-            update_fields["execution_state"] = LeadExecutionState.WAITING_DELAY if delay_hours > 0 else LeadExecutionState.QUEUED
-            update_fields["next_action_due_at"] = next_due
-        else:
-            update_fields["execution_state"] = LeadExecutionState.FINISHED
 
         if not await _advance_lead(db, lead, update_fields):
             return {"status": "lead_changed", "action": action_name}
@@ -931,5 +988,5 @@ class SequenceExecutor:
             "status": "success",
             "action": action_name,
             "next_node_id": next_node_id,
-            "next_action_due_at": next_due.isoformat(),
+            "next_action_due_at": next_due.isoformat() if next_due else None,
         }

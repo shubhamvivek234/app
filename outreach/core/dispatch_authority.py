@@ -6,8 +6,10 @@ The workspace guard also orders participating suppression writers when a
 recipient lookup is empty. Direct database writes do not follow that protocol.
 """
 import asyncio
+import hashlib
 from copy import copy, deepcopy
-from datetime import timedelta
+from datetime import datetime, timedelta
+from bson import BSON
 
 from pymongo import ReturnDocument
 from pymongo.errors import PyMongoError
@@ -25,6 +27,7 @@ class AuthorityDatabase:
     def __init__(self, database, session, request_id: str) -> None:
         self.database, self.session, self.request_id = database, session, request_id
         self.fenced = set()
+        self.native_fenced = {}
         self.deadlines = []
         self.checks = []
 
@@ -33,6 +36,9 @@ class AuthorityDatabase:
         started = _utc((account.get("inbox_sync") or {}).get("coverage_started_at"))
         if started:
             self.deadlines.append(started + timedelta(seconds=MAX_FRESHNESS_SECONDS))
+
+    def note_connection_deadline(self, deadline: datetime) -> None:
+        self.deadlines.append(deadline)
 
     async def fence_suppression(self, workspace_id: str) -> None:
         from outreach.core.suppression import touch_suppression_guard
@@ -112,6 +118,11 @@ class AuthorityCollection:
         if "_id" not in document:
             raise RuntimeError("Authority row identity is unavailable")
         key = (self.name, canonical_hash(document["_id"]))
+        native_hash = hashlib.sha256(BSON.encode({'_id': document['_id']})).hexdigest()
+        if key in self.database.native_fenced and self.database.native_fenced[key] != native_hash:
+            from outreach.core.request_guard import RequestDenied
+            raise RequestDenied('ambiguous_native_authority')
+        self.database.native_fenced[key] = native_hash
         if key in self.database.fenced:
             return
         changed = await self.collection.update_one({**query, "_id": document["_id"]}, {
@@ -187,7 +198,8 @@ class DispatchAuthority:
                     raise RequestDenied("sender_owner_changed")
                 content = await current._authorize_content(action, clock())
                 authorization = {"mode": "transaction", "authorized_at": clock(),
-                    "authority_refs": [{"collection": name, "id_hash": identity} for name, identity in sorted(scoped.fenced)]}
+                    "authority_refs": [{"collection": name, "id_hash": identity,
+                        "native_hash": scoped.native_fenced.get((name, identity))} for name, identity in sorted(scoped.fenced)]}
                 saved = await scoped.outreach_physical_requests.update_one({"_id": request_id,
                     "workspace_id": envelope.workspace_id, "sender_id": envelope.sender_id,
                     "owner_token": owner, "status": "in_flight", "credential_generation": envelope.generation,

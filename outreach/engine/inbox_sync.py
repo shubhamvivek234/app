@@ -319,10 +319,13 @@ class InboxSynchronizer:
         # imports too. Every other enrollment for this same sender stops;
         # thread attribution and its primary lead KPI remain separate.
         if has_lead_reply:
+            from outreach.core.search_sources import retain_search_source_hold
+            other_targets = {"workspace_id": self.workspace_id, "assigned_account_id": account_id,
+                "$or": exact_identities, "has_replied": {"$ne": True},
+                **({"id": {"$ne": matched_lead["id"]}} if isinstance(matched_lead, dict) else {})}
+            await retain_search_source_hold(self.db, self.workspace_id, other_targets)
             await self.db.outreach_leads.update_many(
-                {"workspace_id": self.workspace_id, "assigned_account_id": account_id,
-                 "$or": exact_identities, "has_replied": {"$ne": True},
-                 **({"id": {"$ne": matched_lead["id"]}} if isinstance(matched_lead, dict) else {})},
+                other_targets,
                 {"$set": {"has_replied": True, "execution_state": LeadExecutionState.REPLIED,
                           "replied_at": datetime.now(timezone.utc), "pause_reason": "Lead replied to this sender",
                           "next_action_due_at": None}},
@@ -330,6 +333,8 @@ class InboxSynchronizer:
 
         # If lead replied, flag lead in CRM, update campaign reply counter, and stop sequence
         if has_lead_reply and isinstance(matched_lead, dict):
+            await retain_search_source_hold(self.db, self.workspace_id,
+                {"id": matched_lead["id"], "workspace_id": self.workspace_id, "has_replied": {"$ne": True}})
             lead_update = await self.db.outreach_leads.update_one(
                 {
                     "id": matched_lead["id"],

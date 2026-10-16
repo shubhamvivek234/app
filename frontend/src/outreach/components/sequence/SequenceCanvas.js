@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { flattenTreeToDAG } from './sequenceGraph';
+import SequenceReview from './SequenceReview';
+import FieldConditionEditor, { DEFAULT_FIELD_CONDITION, conditionBranchLabel } from './FieldConditionEditor';
 import {
   Eye, UserPlus, MessageSquare, Mic, Mail, UserCheck, ThumbsUp, MessageCircle,
   CornerDownRight, Award, GitBranch, Clock, Plus, X, ZoomIn, ZoomOut, Maximize2,
@@ -55,12 +58,12 @@ const CONDITION_DEFINITIONS = [
   },
   {
     type: 'has_data_in_column',
-    label: 'Has data in column',
-    desc: 'Verify email or phone',
+    label: 'Check contact field',
+    desc: 'Check a stored value or typed comparison',
     icon: Clock,
     color: 'text-amber-700 bg-amber-100/70',
-    leftCondition: 'missing data',
-    rightCondition: 'has data',
+    leftCondition: 'No',
+    rightCondition: 'Yes',
   },
 ];
 
@@ -87,67 +90,10 @@ const VARIABLE_PILLS = [
   '{{location_raw}}',
 ];
 
-// Helper to flatten a hierarchical tree into execution DAG nodes and edges
-export function flattenTreeToDAG(tree) {
-  const nodes = [];
-  const edges = [];
-  let yOffset = 50;
+export { flattenTreeToDAG } from './sequenceGraph';
 
-  function traverse(steps, parentId = null, branchLabel = null) {
-    let prevId = parentId;
-    for (let i = 0; i < steps.length; i++) {
-      const step = steps[i];
-      const nodeId = step.id || `node_${Math.random().toString(36).slice(2, 9)}`;
-      const delayHours =
-        step.delay_days !== undefined
-          ? step.delay_days * 24
-          : step.delay_hours !== undefined
-          ? step.delay_hours
-          : 0;
-
-      nodes.push({
-        id: nodeId,
-        type: step.type,
-        title: step.title || '',
-        subtitle: step.subtitle || '',
-        delay_hours: Math.round(delayHours),
-        config: step.config || {},
-        position: { x: 250, y: yOffset },
-      });
-      yOffset += 130;
-
-      if (prevId) {
-        const edgeLabel = i === 0 && branchLabel ? branchLabel : undefined;
-        edges.push({
-          id: `edge_${prevId}_to_${nodeId}`,
-          source: prevId,
-          target: nodeId,
-          ...(edgeLabel ? { label: edgeLabel } : {}),
-        });
-      }
-      prevId = nodeId;
-
-      if (step.branches) {
-        if (step.branches.left?.steps?.length > 0) {
-          traverse(step.branches.left.steps, nodeId, step.branches.left.condition || 'not accepted yet');
-        }
-        if (step.branches.right?.steps?.length > 0) {
-          traverse(step.branches.right.steps, nodeId, step.branches.right.condition || 'accepted');
-        }
-      }
-
-      if (step.steps?.length > 0) {
-        traverse(step.steps, nodeId, null);
-      }
-    }
-  }
-
-  traverse(tree);
-  return { nodes, edges };
-}
-
-const formatDelay = (days = 0) => {
-  const hours = Math.max(0, Math.round(Number(days) * 24 || 0));
+const stepDelayHours = (step) => step.delay_hours === undefined ? (step.delay_days || 0) * 24 : step.delay_hours;
+const formatDelay = (hours = 0) => {
   if (!hours) return 'No delay';
   if (hours < 24) return `Wait ${hours} hour${hours === 1 ? '' : 's'}, then`;
   if (hours % 24 === 0) {
@@ -258,6 +204,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
   const [showTip, setShowTip] = useState(true);
   const [toastMessage, setToastMessage] = useState(null);
   const [sequenceLoadError, setSequenceLoadError] = useState('');
+  const [loadedCampaignId, setLoadedCampaignId] = useState(null);
   const [sequenceRetryKey, setSequenceRetryKey] = useState(0);
   const hasLoaded = useRef(false);
   const treeRef = useRef(tree);
@@ -326,6 +273,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
   const [promptsList, setPromptsList] = useState([]);
   const [promptsLoading, setPromptsLoading] = useState(false);
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
+  const [sequenceReviewOpen, setSequenceReviewOpen] = useState(false);
   const [previewData, setPreviewData] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [showVariablePicker, setShowVariablePicker] = useState(false);
@@ -445,10 +393,13 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
   useEffect(() => {
     let cancelled = false;
     hasLoaded.current = false;
+    setLoadedCampaignId(null);
+    setSequenceReviewOpen(false);
     setSequenceLoadError('');
 
     if (!campaignId || campaignId === 'new' || campaignId === 'new_campaign') {
       hasLoaded.current = true;
+      setLoadedCampaignId(campaignId);
       return;
     }
     const loadSequence = async () => {
@@ -460,12 +411,16 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.detail || 'Sequence could not be loaded.');
+        if (data.editor_error) throw new Error(data.editor_error);
+        if (!Array.isArray(data.tree) || !data.tree.length) throw new Error('This saved sequence has no faithful visual tree. Review its original graph before editing.');
         if (!cancelled) {
           if (data.tree && Array.isArray(data.tree) && data.tree.length > 0) {
+            flattenTreeToDAG(data.tree);
             setTree(data.tree);
             setSelectedStepId(null);
           }
           hasLoaded.current = true;
+          setLoadedCampaignId(campaignId);
         }
       } catch (err) {
         console.error('Failed to load sequence:', err);
@@ -505,7 +460,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
         return true;
       } catch (err) {
         console.error('Failed to save sequence:', err);
-        setToastMessage('Sequence could not be saved. Please check your connection and try again.');
+        setToastMessage(err.message || 'Sequence could not be saved. Check its graph and try again.');
         return false;
       }
     });
@@ -557,21 +512,14 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
   const updateNode = (nodes, id, updater) => {
     return nodes.map((node) => {
       if (node.id === id) {
-        return typeof updater === 'function' ? updater(node) : { ...node, ...updater };
+        const updated = typeof updater === 'function' ? updater(node) : { ...node, ...updater };
+        if (Object.hasOwn(updated, 'delay_hours')) delete updated.delay_days;
+        return updated;
       }
       if (node.branches) {
         return {
           ...node,
-          branches: {
-            left: {
-              ...node.branches.left,
-              steps: node.branches.left?.steps ? updateNode(node.branches.left.steps, id, updater) : [],
-            },
-            right: {
-              ...node.branches.right,
-              steps: node.branches.right?.steps ? updateNode(node.branches.right.steps, id, updater) : [],
-            },
-          },
+          branches: Object.fromEntries(Object.entries(node.branches).map(([key, branch]) => [key, { ...branch, steps: updateNode(branch.steps || [], id, updater) }])),
         };
       }
       return node;
@@ -586,16 +534,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
         if (node.branches) {
           return {
             ...node,
-            branches: {
-              left: {
-                ...node.branches.left,
-                steps: node.branches.left?.steps ? deleteNode(node.branches.left.steps, id) : [],
-              },
-              right: {
-                ...node.branches.right,
-                steps: node.branches.right?.steps ? deleteNode(node.branches.right.steps, id) : [],
-              },
-            },
+            branches: Object.fromEntries(Object.entries(node.branches).map(([key, branch]) => [key, { ...branch, steps: deleteNode(branch.steps || [], id) }])),
           };
         }
         return node;
@@ -638,16 +577,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
       if (node.branches) {
         return {
           ...node,
-          branches: {
-            left: {
-              ...node.branches.left,
-              steps: insertStep(node.branches.left?.steps || [], target, newStep),
-            },
-            right: {
-              ...node.branches.right,
-              steps: insertStep(node.branches.right?.steps || [], target, newStep),
-            },
-          },
+          branches: Object.fromEntries(Object.entries(node.branches).map(([key, branch]) => [key, { ...branch, steps: insertStep(branch.steps || [], target, newStep) }])),
         };
       }
       return node;
@@ -671,7 +601,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
         title: condDef.label,
         subtitle: condDef.desc,
         delay_days: 0,
-        config: {},
+        config: type === 'has_data_in_column' ? { ...DEFAULT_FIELD_CONDITION } : {},
         branches: {
           left: {
             condition: condDef.leftCondition,
@@ -728,21 +658,22 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
   const handleStartInlineDelayEdit = (step, e) => {
     e.stopPropagation();
     setEditingDelayId(step.id);
-    const delayHours = (step.delay_days || 0) * 24;
-    if (delayHours > 0 && delayHours < 24) {
+    const delayHours = stepDelayHours(step);
+    if (delayHours % 24 !== 0) {
       setTempDelayValue(delayHours);
       setTempDelayUnit('hours');
     } else {
-      setTempDelayValue(step.delay_days || 0);
+      setTempDelayValue(delayHours / 24);
       setTempDelayUnit('days');
     }
   };
 
   const handleSaveInlineDelay = (stepId, e) => {
     e.stopPropagation();
-    const val = Math.max(0, Number(tempDelayValue) || 0);
-    const delayDays = tempDelayUnit === 'hours' ? val / 24 : val;
-    setTree((prev) => updateNode(prev, stepId, { delay_days: delayDays }));
+    const val = Number(tempDelayValue);
+    const hours = tempDelayUnit === 'hours' ? val : val * 24;
+    if (!Number.isInteger(hours) || hours < 0 || hours > 8760) { setToastMessage('Use whole hours from 0 to 8760.'); return; }
+    setTree((prev) => updateNode(prev, stepId, { delay_hours: hours }));
     setEditingDelayId(null);
   };
 
@@ -906,7 +837,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
             <>
               <div className="flex items-center gap-1.5 font-medium">
                 <Clock className="w-3.5 h-3.5 text-slate-400" />
-                <span>{formatDelay(step.delay_days)}</span>
+                <span>{formatDelay(stepDelayHours(step))}</span>
               </div>
               <button
                 type="button"
@@ -1113,7 +1044,8 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
   // Render SVG Branch Splitter for any branching node
   const renderBranches = (node) => {
     if (!node.branches) return null;
-    const { left, right } = node.branches;
+    const left = node.branches.left || { condition: 'No path saved', type: 'danger', steps: [], endsHere: true };
+    const right = node.branches.right || { condition: 'No path saved', type: 'success', steps: [], endsHere: true };
 
     return (
       <div className="flex flex-col items-center w-full min-w-max">
@@ -1145,7 +1077,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
             </div>
 
             {/* Left Branch Subtree */}
-            {renderBranchSubtree(left.steps, node.id, 'left', left.endsHere)}
+            {node.branches.left ? renderBranchSubtree(left.steps, node.id, 'left', left.endsHere) : <p className="mt-3 text-xs text-slate-500">No path saved; this outcome ends here.</p>}
           </div>
 
           {/* Right Branch Column */}
@@ -1171,7 +1103,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
             </div>
 
             {/* Right Branch Subtree */}
-            {renderBranchSubtree(right.steps, node.id, 'right', right.endsHere)}
+            {node.branches.right ? renderBranchSubtree(right.steps, node.id, 'right', right.endsHere) : <p className="mt-3 text-xs text-slate-500">No path saved; this outcome ends here.</p>}
           </div>
         </div>
       </div>
@@ -1195,6 +1127,9 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
         setSelectedStepId(null);
       }}
     >
+      <button type="button" className="absolute bottom-4 left-4 z-30 rounded-xl border border-indigo-200 bg-white px-4 py-2 text-sm font-semibold text-indigo-700 shadow-sm"
+        disabled={!!sequenceLoadError || loadedCampaignId !== campaignId} onClick={(event) => { event.stopPropagation(); setSequenceReviewOpen(true); }}>Validate & preview sequence</button>
+      {sequenceReviewOpen && <SequenceReview tree={tree} campaignId={campaignId} onClose={() => setSequenceReviewOpen(false)} />}
       {/* Left Canvas Column */}
       <div className="relative flex-1 h-full min-h-0 overflow-hidden flex flex-col">
         {/* Background Dot Grid */}
@@ -1425,7 +1360,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
                 <div>
                   <h3 className="font-bold text-gray-900 text-sm">{selectedStep.title}</h3>
                   <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">
-                    LinkedIn Outreach
+                    {selectedStep.type === 'has_data_in_column' ? 'Contact field condition' : 'Outreach sequence'}
                   </span>
                 </div>
               </div>
@@ -1448,7 +1383,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
                     onClick={() =>
                       setTree((prev) =>
                         updateNode(prev, selectedStep.id, {
-                          delay_days: Math.max(0, (selectedStep.delay_days || 0) - 1),
+                          delay_hours: Math.max(0, stepDelayHours(selectedStep) - 24),
                         })
                       )
                     }
@@ -1457,13 +1392,13 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
                     –
                   </button>
                   <span className="px-4 py-1.5 text-xs font-bold text-gray-900 w-12 text-center">
-                    {selectedStep.delay_days || 0}
+                    {stepDelayHours(selectedStep) / 24}
                   </span>
                   <button
                     onClick={() =>
                       setTree((prev) =>
                         updateNode(prev, selectedStep.id, {
-                          delay_days: (selectedStep.delay_days || 0) + 1,
+                          delay_hours: Math.min(8760, stepDelayHours(selectedStep) + 24),
                         })
                       )
                     }
@@ -2013,7 +1948,8 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
             )}
 
             {/* CONDITIONS CONFIGURATION */}
-            {CONDITION_DEFINITIONS.some((c) => c.type === selectedStep.type) && (
+            {selectedStep.type === 'has_data_in_column' && <FieldConditionEditor key={`${campaignId}:${selectedStep.id}`} config={selectedStep.config} onChange={(config) => setTree((prev) => updateNode(prev, selectedStep.id, { config, branches: Object.fromEntries(Object.entries(selectedStep.branches || {}).map(([side, branch]) => [side, { ...branch, condition: conditionBranchLabel(branch.condition) }])) }))} />}
+            {selectedStep.type !== 'has_data_in_column' && CONDITION_DEFINITIONS.some((c) => c.type === selectedStep.type) && (
               <div className="space-y-4 pt-2 border-t border-gray-100">
                 <div className="p-3 bg-amber-50/70 border border-amber-200/70 rounded-xl text-xs text-amber-900 leading-relaxed">
                   <strong>{selectedStep.title} Check:</strong> Sequences split dynamically based on lead response. Green branch runs if the condition is met, red branch runs if not.

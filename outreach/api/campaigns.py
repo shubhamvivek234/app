@@ -782,7 +782,7 @@ async def _launch_campaign_impl(
     seq = assessment.sequence
     senders = list(dict.fromkeys(campaign['sender_account_ids']))
     capability_map = sequence_capability_map()
-    needs_linkedin = any(capability_map.get(node.get('type'), {}).get('channel') != 'email' for node in seq['nodes'])
+    needs_linkedin = any(capability_map.get(node.get('type'), {}).get('channel') == 'linkedin' for node in seq['nodes'])
     # Scoped key access remains a final launch check; preflight never opens KMS.
     if needs_linkedin:
         try:
@@ -813,6 +813,10 @@ async def _launch_campaign_impl(
     updates.update({'limits': campaign['limits'], 'updated_at': datetime.now(timezone.utc)})
     root_node_id = seq['compiled_dag']['root_node_ids'][0]
     warmup_until = refreshed.warmup['ready_at']
+    from outreach.core.sequence_preview import successor_fields
+    root_started_at = datetime.now(timezone.utc)
+    root_base = max(root_started_at, warmup_until) if warmup_until else root_started_at
+    root_due = successor_fields(seq['compiled_dag'], root_node_id, root_base)['next_action_due_at']
 
     # Freeze legacy/default sequence data before publishing authorization.
     pointer = campaign.get("sequence_version_id")
@@ -835,25 +839,31 @@ async def _launch_campaign_impl(
             {"workspace_id": workspace_id, "campaign_id": campaign_id, "authorized_revision": revision,
              "current_node_id": None, "has_replied": {"$ne": True},
              "execution_state": {"$in": ["queued", "waiting_delay"]}},
-            {"$set": {"current_node_id": root_node_id}},
+            {"$set": {"current_node_id": root_node_id, "next_action_due_at": root_due}},
         )
+        from outreach.core.search_sources import SEARCH_PROVENANCE_QUERY
         unassigned_leads = await _fetch_cursor_docs(
             db.outreach_leads.find({"campaign_id": campaign_id, "workspace_id": workspace_id,
                                    "authorized_revision": revision, "assigned_account_id": None,
-                                   "execution_state": {"$ne": "staged"}}),
+                                   "execution_state": {"$ne": "staged"}, "$nor": [SEARCH_PROVENANCE_QUERY]}),
             length=10000,
         )
         for i, lead in enumerate(unassigned_leads):
             lead_updates = {"assigned_account_id": senders[i % len(senders)],
                             "execution_state": LeadExecutionState.QUEUED}
             if warmup_until and warmup_until > datetime.now(timezone.utc):
-                lead_updates["next_action_due_at"] = warmup_until
-            if not lead.get("current_node_id"):
+                old_due = lead.get("next_action_due_at")
+                if isinstance(old_due, datetime) and old_due.tzinfo is None:
+                    old_due = old_due.replace(tzinfo=timezone.utc)
+                lead_updates["next_action_due_at"] = max(warmup_until, old_due) if isinstance(old_due, datetime) else warmup_until
+            if lead.get("current_node_id") is None:
                 lead_updates["current_node_id"] = root_node_id
+                lead_updates["next_action_due_at"] = root_due
             await db.outreach_leads.update_one(
                 {"id": lead["id"], "workspace_id": workspace_id, "campaign_id": campaign_id,
                  "authorized_revision": revision, "assigned_account_id": None, "has_replied": {"$ne": True},
-                 "execution_state": {"$nin": ["staged", "replied", "finished", "bounced", "failed"]}},
+                 "execution_state": {"$nin": ["staged", "replied", "finished", "bounced", "failed"]},
+                 "$nor": [SEARCH_PROVENANCE_QUERY]},
                 {"$set": lead_updates},
             )
         updates.update({"authorization_revision": revision, "pause_reasons": [],

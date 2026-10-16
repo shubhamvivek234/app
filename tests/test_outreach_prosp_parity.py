@@ -292,37 +292,18 @@ async def test_inbox_snippets():
 
 @pytest.mark.asyncio
 async def test_inbox_tags():
-    db = MockDatabase()
-    thread_doc = {
-        "id": "th_tag_1",
-        "user_id": USER["user_id"],
-        "workspace_id": USER["default_workspace_id"],
-        "tags": ["Hot lead"],
-    }
-    db.outreach_inbox_threads.items.append(thread_doc)
-
-    # 1. Listing seeds default tags if empty
-    tags = await list_tags(current_user=USER, db=db)
-    assert len(tags) >= 5
-    tag_names = [t["name"] for t in tags]
-    assert "Hot lead" in tag_names
-    assert "Wants to speak later" in tag_names
-
-    # 2. Create custom tag
-    new_tag_req = CreateTagRequest(name="Enterprise VIP", color="#10b981")
-    created = await create_tag(new_tag_req, current_user=USER, db=db)
-    assert created["name"] == "Enterprise VIP"
-
-    # 3. Toggle tag on thread (add new tag)
-    toggle_req = ToggleTagRequest(tag_name="Enterprise VIP")
-    toggle_res = await toggle_thread_tag("th_tag_1", toggle_req, current_user=USER, db=db)
-    assert "Enterprise VIP" in toggle_res["tags"]
-    assert "Hot lead" in toggle_res["tags"]
-
-    # 4. Toggle tag off
-    toggle_off_res = await toggle_thread_tag("th_tag_1", toggle_req, current_user=USER, db=db)
-    assert "Enterprise VIP" not in toggle_off_res["tags"]
-    assert "Hot lead" in toggle_off_res["tags"]
+    from tests.outreach_memory import Database
+    db = Database(outreach_inbox_threads=[{"id": "th_tag_1", "workspace_id": USER["default_workspace_id"],
+        "lead_id": "lead-tag", "tags": ["Hot lead"]}], outreach_leads=[
+        {"id": "lead-tag", "workspace_id": USER["default_workspace_id"]}])
+    assert await list_tags(current_user=USER, db=db) == []
+    created = await create_tag(CreateTagRequest(name="Enterprise VIP", color="#10b981"), current_user=USER, db=db)
+    result = await toggle_thread_tag("th_tag_1", ToggleTagRequest(tag_id=created["id"], operation="add", revision=0), current_user=USER, db=db)
+    assert [tag["name"] for tag in result["tags"]] == ["Enterprise VIP"]
+    assert result["legacy_tags"] == ["Hot lead"]
+    result = await toggle_thread_tag("th_tag_1", ToggleTagRequest(tag_id=created["id"], operation="remove", revision=1), current_user=USER, db=db)
+    assert result["tags"] == []
+    assert db.outreach_inbox_threads.docs[0]["tags"] == ["Hot lead"]
 
 
 # ── 3. AI Prompts Library & Message Preview Tests ──────────────────────────

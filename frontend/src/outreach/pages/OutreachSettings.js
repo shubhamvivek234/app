@@ -27,6 +27,7 @@ import OutreachMailboxes from './OutreachMailboxes';
 import OutreachActionReview from './OutreachActionReview';
 import OutreachContentReview from './OutreachContentReview';
 import OutreachIntegrations from './OutreachIntegrations';
+import LeadTagManager from '../components/LeadTagManager';
 
 export default function OutreachSettings({ initialTab = 'accounts' }) {
   const [activeTab, setActiveTab] = useState(() => (
@@ -313,6 +314,7 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
     { id: 'action-reviews', label: 'Action reviews' },
     { id: 'content-reviews', label: 'Content reviews' },
     { id: 'integrations', label: 'Integrations & Webhooks' },
+    { id: 'lead-tags', label: 'Lead tags' },
     { id: 'members', label: 'Members' },
     { id: 'billing', label: 'Billing' },
     { id: 'help', label: 'Help & Resources' },
@@ -372,6 +374,7 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
             {activeTab === 'action-reviews' && <OutreachActionReview />}
             {activeTab === 'content-reviews' && <OutreachContentReview />}
             {activeTab === 'integrations' && <OutreachIntegrations />}
+            {activeTab === 'lead-tags' && <LeadTagManager />}
 
             {/* ── TAB 2: MEMBERS ─────────────────────────────────────────── */}
             {activeTab === 'members' && (

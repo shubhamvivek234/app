@@ -29,7 +29,7 @@ from outreach.api.leads import (
     router,
 )
 from outreach.core.lead_importer import LeadImporter, normalize_linkedin_url, extract_vanity_name
-from tests.outreach_memory import Database
+from tests.outreach_memory import Database, Collection
 
 
 USER = {"user_id": "u1", "default_workspace_id": "ws1"}
@@ -113,7 +113,7 @@ async def test_export_writes_filtered_rows_and_escapes_spreadsheet_formula():
                 raise StopAsyncIteration
 
     query_seen = []
-    db = SimpleNamespace(outreach_leads=SimpleNamespace(find=lambda query: query_seen.append(query) or Cursor()))
+    db = SimpleNamespace(outreach_leads=SimpleNamespace(find=lambda query: query_seen.append(query) or Cursor()), outreach_lead_tags=Collection())
     response = await export_leads(search="Alice", current_user=USER, db=db)
     content = "".join([chunk async for chunk in response.body_iterator])
     assert "first_name,last_name,linkedin_url" in content
@@ -150,7 +150,7 @@ async def test_http_list_and_export_routes_share_filters():
 
     db = SimpleNamespace(outreach_leads=SimpleNamespace(
         find=lambda _query: Cursor(), count_documents=AsyncMock(return_value=1),
-    ))
+    ), outreach_lead_tags=Collection())
     app = FastAPI()
     app.include_router(router, prefix="/api/v1/outreach")
     app.dependency_overrides[get_current_user] = lambda: USER
@@ -415,6 +415,7 @@ async def test_lead_activity_and_notes():
     db = SimpleNamespace(
         outreach_leads=SimpleNamespace(
             find_one=AsyncMock(return_value=lead_doc),
+            find=Collection([lead_doc]).find,
         ),
         outreach_accounts=SimpleNamespace(
             find_one=AsyncMock(return_value={"id": "acc_1", "account_name": "Sarah Connor"}),

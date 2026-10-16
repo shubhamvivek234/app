@@ -43,6 +43,34 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
   const [hasEdits, setHasEdits] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [sourceCapabilities, setSourceCapabilities] = useState(null);
+  const [sourceCapabilityError, setSourceCapabilityError] = useState('');
+  const basicSource = sourceCapabilities?.sources?.find((source) => source?.type === 'basic');
+  const searchAvailable = basicSource?.collection_available === true && basicSource?.parser_supported === true;
+  const searchUnavailableReason = sourceCapabilityError || basicSource?.reason || 'Checking search availability…';
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const controller = new AbortController();
+    setSourceCapabilities(null); setSourceCapabilityError('');
+    const token = localStorage.getItem('token');
+    const loadCapabilities = async () => {
+      const response = await fetch('/api/v1/outreach/leads/import-sources', {
+        credentials: 'include', headers: token ? { Authorization: `Bearer ${token}` } : {}, signal: controller.signal,
+      });
+      const body = await response.json();
+      if (!response.ok || body?.contract_version !== 1 || !Array.isArray(body.sources)
+          || !body.sources.some((source) => source?.type === 'basic')
+          || body.sources.some((source) => !source || typeof source.type !== 'string'
+            || typeof source.collection_available !== 'boolean' || typeof source.parser_supported !== 'boolean' || typeof source.reason !== 'string')) {
+        throw new Error('Search availability could not be confirmed. CSV and public profile imports remain available.');
+      }
+      if (!controller.signal.aborted) setSourceCapabilities(body);
+    };
+    loadCapabilities().catch(() => {
+      if (!controller.signal.aborted) setSourceCapabilityError('Search availability could not be confirmed. CSV and public profile imports remain available.');
+    });
+    return () => controller.abort();
+  }, [isOpen, campaignId]);
   const [importResult, setImportResult] = useState(null);
   useEffect(() => {
     importGenerationRef.current += 1;
@@ -254,6 +282,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
   };
 
   const handleStartSearchCrawl = async () => {
+    if (!searchAvailable) { setError(searchUnavailableReason); return; }
     if (!campaignId) {
       setError('Select a campaign before importing contacts.');
       return;
@@ -375,6 +404,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
   };
 
   const handleExecuteImport = async () => {
+    if (sourceType === 'search' && !searchAvailable) { setError(searchUnavailableReason); return; }
     if (!campaignId) {
       setError('Select a campaign before importing contacts.');
       return;
@@ -602,14 +632,15 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                   </div>
                 </button>
 
-                {/* 3. LinkedIn Search & Sales Nav (ACTIVE) */}
+                {/* Search uses the same availability contract as API/workers. */}
                 <button
                   type="button"
+                  disabled={!searchAvailable}
                   onClick={() => { setSourceType('search'); setStep(2); }}
                   className="text-left p-4 rounded-xl border border-gray-200 hover:border-indigo-500 hover:bg-gray-50 transition-all group cursor-pointer relative"
                 >
                   <div className="absolute top-3 right-3 flex items-center gap-1 bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-xs">
-                    <Sparkles className="h-3 w-3" /> 1-Click Infusion
+                    <Info className="h-3 w-3" /> {searchAvailable ? 'Search import' : 'Unavailable'}
                   </div>
                   <div className="flex items-center gap-3.5">
                     <div className="p-2.5 rounded-xl bg-indigo-100 text-indigo-700 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
@@ -617,7 +648,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                     </div>
                     <div>
                       <h4 className="font-bold text-gray-900 text-sm">LinkedIn & Sales Nav Search</h4>
-                      <p className="text-xs text-gray-500 mt-0.5">Infuse up to 1,000 leads (2,500 Sales Nav) safely from any search URL</p>
+                      <p className="text-xs text-gray-500 mt-0.5">{searchAvailable ? 'Review supported search results before enrolling contacts' : searchUnavailableReason}</p>
                     </div>
                   </div>
                 </button>
@@ -838,6 +869,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
           {/* ── STEP 2: LinkedIn Search & Sales Nav ─────────────────────────────── */}
           {step === 2 && sourceType === 'search' && (
             <div className="space-y-4">
+              {!searchAvailable && <p role="status" className="rounded-xl bg-amber-50 p-3 text-xs text-amber-800">{searchUnavailableReason} Saved search records can be inspected; enrollment remains unavailable.</p>}
               {!activeJob ? (
                 <>
                   <div>
@@ -845,7 +877,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                       LinkedIn Search or Sales Navigator URL
                     </label>
                     <p className="text-xs text-gray-500 mb-2">
-                      Paste any LinkedIn People search or Sales Navigator Lead search URL:
+                      Only a supported source can collect contacts. Unsupported filters are rejected.
                     </p>
                     <input
                       type="url"
@@ -908,7 +940,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                         ))}
                       </div>
                       <span className="text-[10px] text-gray-400 mt-1 block">
-                        Max 1,000 for standard searches, 2,500 for Sales Navigator.
+                        Collection limits depend on the supported source contract.
                       </span>
                     </div>
                   </div>
@@ -916,7 +948,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                   <div className="rounded-xl bg-indigo-50/50 p-3.5 border border-indigo-100 space-y-1.5 text-xs">
                     <div className="flex items-center gap-2 text-indigo-900 font-semibold">
                       <Shield className="h-4 w-4 text-indigo-600 shrink-0" />
-                      <span>1-Click Safe Pacing & Lead Staging</span>
+                      <span>Search collection and enrollment are separate checks</span>
                     </div>
                     <p className="text-gray-600 text-[11px] leading-relaxed">
                       Searches are crawled one page at a time with adaptive delays. Prospects land in a <strong>Staged Review</strong> where you inspect deduplications, Do-Not-Contact skips, and cleaned names before enrolling them into your sequence.
@@ -934,7 +966,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                     <button
                       type="button"
                       onClick={handleStartSearchCrawl}
-                      disabled={crawlLoading || !searchUrl.trim() || !selectedSenderId}
+                      disabled={!searchAvailable || crawlLoading || !searchUrl.trim() || !selectedSenderId}
                       className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 shadow-sm disabled:opacity-50 cursor-pointer"
                     >
                       {crawlLoading ? (
@@ -1091,11 +1123,16 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
           {/* ── STEP 3: Preview Table & Deduplication Filter ─────────────────────── */}
           {step === 3 && !importResult && previewResult && (
             <div className="space-y-4">
+              {sourceType === 'search' && !searchAvailable && (
+                <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                  {searchUnavailableReason} Saved rows are unverified and cannot be enrolled.
+                </p>
+              )}
               {/* Summary Stats Grid */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
                 <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200">
                   <span className="text-xl font-bold text-emerald-700">{previewResult.valid_count}</span>
-                  <p className="text-[11px] font-semibold text-emerald-800">Valid to Enroll</p>
+                  <p className="text-[11px] font-semibold text-emerald-800">{sourceType === 'search' && !searchAvailable ? 'Saved for review' : 'Valid to Enroll'}</p>
                 </div>
                 <div className="p-3 rounded-xl bg-amber-50 border border-amber-200">
                   <span className="text-xl font-bold text-amber-700">
@@ -1172,7 +1209,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                           <div className="shrink-0 ml-2">
                             {row.status === 'valid' ? (
                               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 border border-emerald-200">
-                                <Check className="h-3 w-3" /> Valid
+                                <Check className="h-3 w-3" /> {sourceType === 'search' && !searchAvailable ? 'Unverified' : 'Valid'}
                               </span>
                             ) : (
                               <span
@@ -1229,7 +1266,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                 <button
                   type="button"
                   onClick={handleExecuteImport}
-                  disabled={loading || previewResult.valid_count === 0}
+                  disabled={loading || (sourceType === 'search' && !searchAvailable) || previewResult.valid_count === 0}
                   className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 shadow-sm disabled:opacity-50 cursor-pointer"
                 >
                   {loading ? (

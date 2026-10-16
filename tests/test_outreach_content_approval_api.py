@@ -113,7 +113,7 @@ async def test_cached_voice_review_serves_exact_audio_and_tracks_voice_changes(m
     from outreach.core.voice_studio import source_digest
     monkeypatch.setenv('ELEVENLABS_API_KEY', 'local-provider-key')
     await db.outreach_voices.insert_one({'id': 'v', 'workspace_id': 'w', 'status': 'active', 'revision': 1,
-        'elevenlabs_voice_id': 'real-voice', 'provider_source_digest': source_digest(),
+        'elevenlabs_voice_id': 'real-voice', 'assigned_account_ids': ['a'], 'provider_source_digest': source_digest(),
         'consent': {'version': 1, 'actor': 'human', 'asserted_at': datetime.now(timezone.utc), 'assertion_digest': 'test-consent'}})
     api = client(db)
     assert api.post("/content-approvals/prepare/c").json()["voice_pending"] == 1

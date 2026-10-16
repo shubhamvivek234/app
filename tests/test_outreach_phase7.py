@@ -17,6 +17,7 @@ def sandbox_linkedin_sessions(monkeypatch):
     monkeypatch.setenv("OUTREACH_MOCK_AUTH", "true")
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
+from tests.outreach_memory import Collection
 
 from outreach.core.crypto import encrypt_secret
 from outreach.engine.inbox_sync import InboxSynchronizer
@@ -108,13 +109,11 @@ async def test_inbox_api_list_and_thread_detail():
         ],
     }
 
-    mock_db.outreach_inbox_threads.find = lambda q: AsyncMock(
-        sort=lambda f, d: AsyncMock(to_list=AsyncMock(return_value=[sample_thread]))
-    )
+    mock_db.outreach_inbox_threads.find = Collection([sample_thread]).find
     mock_db.outreach_inbox_threads.find_one = AsyncMock(return_value=sample_thread)
     mock_db.outreach_inbox_threads.update_one = AsyncMock()
 
-    user = {"user_id": "ws_123"}
+    user = {"user_id": "ws_123", "default_workspace_id": "ws_123"}
 
     # Test list
     threads = await list_inbox_threads(
@@ -132,7 +131,8 @@ async def test_inbox_api_list_and_thread_detail():
     assert detail["id"] == "thr_999"
     assert detail["unread_count"] == 0
     mock_db.outreach_inbox_threads.update_one.assert_called_with(
-        {"id": "thr_999", "workspace_id": "ws_123"},
+        {"id": "thr_999", "workspace_id": "ws_123", "workspace_id.0": {"$exists": False},
+         "id.0": {"$exists": False}, "_id": {"$exists": False}},
         {"$set": {"unread_count": 0}},
     )
 

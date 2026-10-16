@@ -31,6 +31,10 @@ def matches(doc, query):
             if not any(matches(doc, branch) for branch in expected):
                 return False
             continue
+        if key == "$nor":
+            if any(matches(doc, branch) for branch in expected):
+                return False
+            continue
         if key == "$and":
             if not all(matches(doc, branch) for branch in expected):
                 return False
@@ -42,6 +46,15 @@ def matches(doc, query):
                     return False
                 continue
             for op, operand in expected.items():
+                if op == "$eq" and actual != operand:
+                    return False
+                if op == "$not" and matches({"field": actual}, {"field": operand}):
+                    return False
+                if op == "$type":
+                    accepted = {"string": str, "object": dict, "array": list}.get(operand)
+                    if accepted and not isinstance(actual, accepted) and not (
+                            isinstance(actual, list) and any(isinstance(item, accepted) for item in actual)):
+                        return False
                 if op == "$exists" and (actual is not None) != operand:
                     return False
                 if op == "$ne" and (actual == operand or isinstance(actual, list) and operand in actual):

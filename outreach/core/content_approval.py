@@ -12,8 +12,10 @@ from outreach.core.paid_access import _utc
 from outreach.core.sequence_versions import load_sequence
 from outreach.core.voice_artifact_custody import PreparedClip
 
+from outreach.core.sequence_contract import MAX_RENDER_CHARS
+
 POLICY_VERSION = 1
-POLICY = {"mode": "exact_human_review", "max_content_chars": 10000, "valid_seconds": 86400}
+POLICY = {"mode": "exact_human_review", "max_content_chars": MAX_RENDER_CHARS, "valid_seconds": 86400}
 POLICY_DIGEST = canonical_hash(POLICY)
 CONTENT_ACTIONS = {"connection_request", "send_message", "voice_note", "send_email", "comment", "inbox_reply"}
 

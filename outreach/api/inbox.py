@@ -15,9 +15,21 @@ from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from db.mongo import get_db
-from outreach.api.dependencies import get_outreach_user, require_outreach_permission
+from outreach.api.dependencies import get_outreach_user, require_outreach_permission, workspace_id as resolved_workspace_id
 from outreach.models import MessageSenderType
+from outreach.core.lead_tags import (
+    active_tag_map,
+    assign_tags,
+    create_tag as create_canonical_tag,
+    edit_tag,
+    hydrate_lead_tags,
+    hydrate_thread_tags,
+    validate_tag_id,
+    unique_resource,
+    captured_scope,
+)
 from utils.free_llm_router import free_llm
+from outreach.core.workspace_scope import workspace_scope
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +78,7 @@ async def list_inbox_threads(
     source: str | None = Query(None, description="Filter by source: 'outreach' (Unravler) or 'all'"),
     search: str | None = Query(None, description="Search prospect name or message snippet"),
     intent: str | None = Query(None, description="Filter by intent tag"),
+    tag_ids: str | None = Query(None, description="Comma-separated lead tag ids"),
     skip: int = 0,
     limit: int = 50,
     current_user: dict = Depends(get_outreach_user),
@@ -75,7 +88,7 @@ async def list_inbox_threads(
     Returns list of inbox threads matching media_1790103710555.png with Unravler/All source filtering.
     """
     user_id = current_user.get("user_id")
-    ws_id = current_user.get("default_workspace_id") or user_id
+    ws_id = resolved_workspace_id(current_user)
     if skip < 0 or not 1 <= limit <= 100:
         raise HTTPException(status_code=422, detail="Invalid inbox pagination")
 
@@ -83,8 +96,12 @@ async def list_inbox_threads(
     src = source if isinstance(source, str) else None
     srch = search.strip() if isinstance(search, str) and search.strip() else None
     intnt = intent if isinstance(intent, str) else None
+    if isinstance(tag_ids, str) and len(tag_ids) > 1500:
+        raise HTTPException(422, "Choose at most 50 tag filters")
+    requested_tags = [validate_tag_id(value.strip()) for value in (tag_ids if isinstance(tag_ids, str) else "").split(",") if value.strip()]
+    requested_tags = list(dict.fromkeys(requested_tags))
 
-    base_conditions: list[dict[str, Any]] = [{"workspace_id": ws_id}]
+    base_conditions: list[dict[str, Any]] = [workspace_scope(ws_id)]
     if os.getenv("OUTREACH_MOCK_AUTH", "false").lower() not in {"true", "1"}:
         base_conditions.append({"is_demo": {"$ne": True}})
 
@@ -93,6 +110,17 @@ async def list_inbox_threads(
 
     if intnt and intnt not in ("all", "All"):
         base_conditions.append({"intent_tag": intnt})
+
+    if requested_tags:
+        definitions = await active_tag_map(db, ws_id, requested_tags)
+        if len(definitions) != len(requested_tags):
+            raise HTTPException(status_code=404, detail="One or more tags were not found")
+        tagged_leads = await db.outreach_leads.find(
+            {**workspace_scope(ws_id), "tag_ids": {"$all": requested_tags}, "id.0": {"$exists": False}}, {"id": 1}
+        ).limit(5001).to_list(length=5001)
+        if len(tagged_leads) > 5000:
+            raise HTTPException(status_code=422, detail="This tag covers more than 5,000 leads. Use Leads to review this group.")
+        base_conditions.append({"lead_id": {"$in": [lead["id"] for lead in tagged_leads]}})
 
     if src == "outreach":
         base_conditions.append({
@@ -124,6 +152,8 @@ async def list_inbox_threads(
         doc.pop("_id", None)
         clean_threads.append(doc)
 
+    await hydrate_thread_tags(db, ws_id, clean_threads)
+
     return clean_threads
 
 
@@ -136,20 +166,16 @@ async def get_thread(
     """
     Returns full message history for a conversation thread and resets unread count.
     """
-    user_id = current_user.get("user_id")
-    ws_id = current_user.get("default_workspace_id") or user_id
-    thread = await db.outreach_inbox_threads.find_one({
-        "id": thread_id,
-        "workspace_id": ws_id,
-    })
+    ws_id = resolved_workspace_id(current_user)
+    thread = await unique_resource(db.outreach_inbox_threads, ws_id, thread_id)
     if not thread:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
 
-    # Reset unread
-    await db.outreach_inbox_threads.update_one({"id": thread_id, "workspace_id": ws_id}, {"$set": {"unread_count": 0}})
-
     doc = dict(thread)
     doc.pop("_id", None)
+    await hydrate_thread_tags(db, ws_id, [doc])
+    # Validate linked tag identities before consuming the unread indication.
+    await db.outreach_inbox_threads.update_one(captured_scope(ws_id, thread), {"$set": {"unread_count": 0}})
     doc["unread_count"] = 0
     return doc
 
@@ -516,7 +542,9 @@ class CreateTagRequest(BaseModel):
 
 
 class ToggleTagRequest(BaseModel):
-    tag_name: str = Field(..., min_length=1, max_length=60)
+    tag_id: str
+    operation: str = Field(..., pattern="^(add|remove)$")
+    revision: int = Field(..., ge=0, strict=True)
 
 
 # ── Reminders Endpoints ───────────────────────────────────────────────────
@@ -745,137 +773,57 @@ async def delete_snippet(
 
 # ── Tags Endpoints ────────────────────────────────────────────────────────
 
-DEFAULT_TAGS = [
-    {"name": "Wants to speak later", "color": "#a855f7"},
-    {"name": "Hot lead", "color": "#ef4444"},
-    {"name": "Potential Partner", "color": "#3b82f6"},
-    {"name": "Sequence 1", "color": "#ec4899"},
-    {"name": "Sequence 2", "color": "#06b6d4"},
-]
-
 @router.get("/tags/list")
 async def list_tags(
-    current_user: dict = Depends(get_outreach_user),
+    current_user: dict = require_outreach_permission("lead:read"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """Lists inbox tags with colored indicators. Seeds defaults if empty."""
-    user_id = current_user.get("user_id")
-    ws_id = current_user.get("default_workspace_id") or user_id
-
-    cursor = db.outreach_inbox_tags.find({
-        "workspace_id": ws_id,
-    }).sort("created_at", 1)
-
-    items = await _fetch_cursor_docs(cursor, length=100)
-    if not items:
-        import uuid
-        seeded = []
-        for def_t in DEFAULT_TAGS:
-            doc = {
-                "id": f"tag_{uuid.uuid4().hex[:12]}",
-                "user_id": user_id,
-                "workspace_id": ws_id,
-                **def_t,
-                "created_at": datetime.now(timezone.utc),
-            }
-            await db.outreach_inbox_tags.insert_one(doc)
-            doc.pop("_id", None)
-            seeded.append(doc)
-        return seeded
-
-    for it in items:
-        it.pop("_id", None)
-    return items
+    """Compatibility URL for the shared canonical lead-tag inventory."""
+    return list((await active_tag_map(db, resolved_workspace_id(current_user))).values())
 
 
 @router.post("/tags")
 async def create_tag(
     req: CreateTagRequest,
-    current_user: dict = require_outreach_permission('inbox:manage'),
+    current_user: dict = require_outreach_permission("lead:update"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """Creates a custom lead tag with color."""
-    user_id = current_user.get("user_id")
-    ws_id = current_user.get("default_workspace_id") or user_id
-    if not req.name.strip():
-        raise HTTPException(status_code=422, detail="Tag name cannot be blank")
-    existing = await db.outreach_inbox_tags.find_one({"workspace_id": ws_id, "name": req.name.strip()})
-    if existing:
-        raise HTTPException(status_code=409, detail="Tag already exists")
-
-    import uuid
-    doc = {
-        "id": f"tag_{uuid.uuid4().hex[:12]}",
-        "user_id": user_id,
-        "workspace_id": ws_id,
-        "name": req.name.strip(),
-        "color": req.color,
-        "created_at": datetime.now(timezone.utc),
-    }
-
-    await db.outreach_inbox_tags.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+    return await create_canonical_tag(db, resolved_workspace_id(current_user), current_user.get("user_id"), req.name, req.color)
 
 
 @router.delete("/tags/{tag_id}")
 async def delete_tag(
     tag_id: str,
-    current_user: dict = require_outreach_permission('inbox:manage'),
+    revision: int = Query(..., ge=1),
+    current_user: dict = require_outreach_permission("lead:update"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """Deletes an inbox tag."""
-    user_id = current_user.get("user_id")
-    ws_id = current_user.get("default_workspace_id") or user_id
-
-    tag = await db.outreach_inbox_tags.find_one({"id": tag_id, "workspace_id": ws_id})
-    if not tag:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tag not found")
-    res = await db.outreach_inbox_tags.delete_one({
-        "id": tag_id,
-        "workspace_id": ws_id,
-    })
-    if res.deleted_count == 0:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tag not found")
-    if hasattr(db.outreach_inbox_threads, "update_many"):
-        await db.outreach_inbox_threads.update_many(
-            {"workspace_id": ws_id, "tags": tag["name"]},
-            {"$pull": {"tags": tag["name"]}},
-        )
-    return {"status": "deleted", "tag_id": tag_id}
+    return await edit_tag(db, resolved_workspace_id(current_user), tag_id, revision, archive=True)
 
 
 @router.patch("/{thread_id}/tags")
 async def toggle_thread_tag(
     thread_id: str,
     req: ToggleTagRequest,
-    current_user: dict = require_outreach_permission('inbox:manage'),
+    current_user: dict = require_outreach_permission("lead:update"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """Toggles a tag on or off a thread."""
-    user_id = current_user.get("user_id")
-    ws_id = current_user.get("default_workspace_id") or user_id
+    """Change the linked lead atomically; a conversation label is never a lead tag."""
+    workspace = resolved_workspace_id(current_user)
+    from outreach.core.lead_tags import _commit
 
-    thread = await db.outreach_inbox_threads.find_one({
-        "id": thread_id,
-        "workspace_id": ws_id,
-    })
+    async def save(current):
+        thread = await unique_resource(current.outreach_inbox_threads, workspace, thread_id)
+        if not thread:
+            raise HTTPException(404, "Thread not found")
+        lead_id = thread.get("lead_id")
+        if not isinstance(lead_id, str) or not lead_id:
+            raise HTTPException(409, "This conversation is not linked to a CRM lead yet")
+        return await assign_tags(current, workspace, [lead_id], req.tag_id, req.operation, req.revision)
+
+    result = await _commit(db, workspace, save)
+    thread = await unique_resource(db.outreach_inbox_threads, workspace, thread_id)
     if not thread:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
-
-    existing_tags = thread.get("tags") or []
-    tag_name = req.tag_name.strip()
-    if not tag_name or not await db.outreach_inbox_tags.find_one({"workspace_id": ws_id, "name": tag_name}):
-        raise HTTPException(status_code=404, detail="Tag not found")
-
-    if tag_name in existing_tags:
-        new_tags = [t for t in existing_tags if t != tag_name]
-    else:
-        new_tags = existing_tags + [tag_name]
-
-    await db.outreach_inbox_threads.update_one(
-        {"id": thread_id, "workspace_id": ws_id},
-        {"$set": {"tags": new_tags}},
-    )
-
-    return {"status": "updated", "thread_id": thread_id, "tags": new_tags}
+        raise HTTPException(409, "Conversation changed; reload its tags")
+    await hydrate_thread_tags(db, workspace, [thread])
+    return {**result, "thread_id": thread_id, **{key: thread[key] for key in ("tag_ids", "tag_revision", "tags", "legacy_tags", "tags_editable")}}

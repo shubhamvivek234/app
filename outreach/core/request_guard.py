@@ -165,7 +165,7 @@ class RequestEnvelope:
     def __init__(self, db, workspace_id: str, sender_id: str, generation: str, source: str,
                  proxy_url: str, *, connection_job_id: str | None = None, authority_validator=None,
                  campaign_limits=None, operation_id: str | None = None, approval_binding: dict | None = None,
-                 transaction_validator=None, prepared_proxy=None) -> None:
+                 transaction_validator=None, prepared_proxy=None, connection_context: dict | None = None) -> None:
         self.db, self.workspace_id, self.sender_id = db, workspace_id, sender_id
         self.generation, self.source, self.proxy_url = generation, source, proxy_url
         self.connection_job_id = connection_job_id
@@ -174,6 +174,8 @@ class RequestEnvelope:
         self.transaction_validator = transaction_validator
         self.campaign_limits = campaign_limits or {}
         self.operation_id = operation_id
+        self.received_receipt = None
+        self.connection_context = dict(connection_context) if connection_context else None
         self.approval_binding = approval_binding
         from outreach.core.restore_epoch import policy
         self.epoch_policy = policy()
@@ -328,10 +330,42 @@ class RequestEnvelope:
                 raise SubmissionUncertain(response.status_code)
         return {}
 
+    async def record_connection_fact(self, recipient: str, *, kind: str, connected: bool | None = None) -> str:
+        """Attach a normalized fact to this exact original received request."""
+        from outreach.core.connection_evidence import recipient_key
+        receipt = self.received_receipt
+        if (not recipient_key(recipient) or kind not in {'invite_target', 'observed_connection'}
+                or connected is not None and type(connected) is not bool or not isinstance(receipt, dict)):
+            raise RequestDenied('connection_evidence_unavailable')
+        action, mutation, path = ('invite', True, '/voyager/api/growth/normInvitations') if kind == 'invite_target' else (
+            'read', False, '/voyager/api/relationships/connections')
+        if (receipt['action'] != action or receipt['mutation'] is not mutation
+                or receipt['endpoint_digest'] != canonical_hash(['POST' if mutation else 'GET', path])):
+            raise RequestDenied('connection_evidence_unavailable')
+        fact = {'version': 1, 'kind': kind, 'recipient_urn': recipient,
+                'connected': connected, 'observed_at': receipt['completed_at']}
+        async def save(current):
+            return await current.outreach_physical_requests.update_one({
+            '_id': receipt['_id'], 'workspace_id': self.workspace_id, 'sender_id': self.sender_id,
+            'credential_generation': self.generation, 'source': self.source,
+            'owner_token': receipt['owner_token'], 'status': 'response_received',
+            'action': action, 'mutation': mutation, 'completed_at': receipt['completed_at'],
+            'dispatch_authorization.mode': 'transaction', 'connection_fact': {'$exists': False}},
+                {'$set': {'connection_fact': fact}})
+        from outreach.core.suppression import mutate_suppression, SuppressionUnavailable
+        try:
+            saved = await mutate_suppression(self.db, self.workspace_id, save)
+        except SuppressionUnavailable as exc:
+            raise RequestDenied('connection_evidence_unavailable') from exc
+        if saved.matched_count != 1:
+            raise RequestDenied('connection_evidence_unavailable')
+        return receipt['_id']
+
     async def call(self, method: str, path: str, factory, *, action: str = "read", now: datetime | None = None,
                    side_effect: bool | None = None):
         """Run one lazy network operation after durable ownership and permission."""
         fixed_now = now
+        self.received_receipt = None
         clock = lambda: fixed_now or datetime.now(timezone.utc)
         parent = _PARENT.get()
         owner = parent.owner if parent else str(uuid.uuid4())
@@ -371,6 +405,7 @@ class RequestEnvelope:
                 "mutation": mutation, "owner_token": owner, "status": "preparing",
                 "endpoint_digest": canonical_hash([method.upper(), path]), "created_at": clock(),
                 "logical_operation_id": self.operation_id, "budget_reservation_id": reservation_id,
+                **({'connection_wait_context': dict(self.connection_context)} if self.connection_context else {}),
             }
             try:
                 await self.db.outreach_physical_requests.insert_one(audit)
@@ -426,11 +461,13 @@ class RequestEnvelope:
             if mutation and (response.status_code >= 500 or response.status_code in {408, 429}):
                 raise SubmissionUncertain(response.status_code)
             evidence = self.response_evidence(response, action, mutation)
+            completed_at = clock()
             recorded = await self.db.outreach_physical_requests.update_one({
                 "_id": request_id, "workspace_id": self.workspace_id, "owner_token": owner, "status": "in_flight"},
-                {"$set": {"status": "response_received", "http_status": response.status_code, "completed_at": clock(), **evidence}})
+                {"$set": {"status": "response_received", "http_status": response.status_code, "completed_at": completed_at, **evidence}})
             if getattr(recorded, "matched_count", 0) != 1:
                 raise RuntimeError("Physical response evidence changed")
+            self.received_receipt = {**audit, 'completed_at': completed_at}
             return response
         except BaseException:
             uncertain = bool(started and mutation)

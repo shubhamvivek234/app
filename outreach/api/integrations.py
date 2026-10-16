@@ -883,9 +883,12 @@ async def public_pause_lead(
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
+    from outreach.core.search_sources import SEARCH_PROVENANCE_QUERY, UNVERIFIED_LEAD, unverified_search_lead
+    if unverified_search_lead(lead):
+        raise HTTPException(409, UNVERIFIED_LEAD)
     now = datetime.now(timezone.utc)
-    await db.outreach_leads.update_one(
-        {"id": lead_id, "workspace_id": workspace_id},
+    changed = await db.outreach_leads.update_one(
+        {"id": lead_id, "workspace_id": workspace_id, "$nor": [SEARCH_PROVENANCE_QUERY]},
         {"$set": {
             "execution_state": LeadExecutionState.FAILED.value,
             "failure_reason": "Lead stopped via Public API request",
@@ -893,6 +896,8 @@ async def public_pause_lead(
             "updated_at": now,
         }},
     )
+    if not changed.matched_count:
+        raise HTTPException(409, "Contact source changed; refresh before pausing.")
 
     await record_outbox_event(
         db=db,

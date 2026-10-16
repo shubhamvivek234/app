@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Search,
   Download,
@@ -17,9 +17,14 @@ import {
   X,
   Check,
   ChevronDown,
+  Tag,
+  Ban,
 } from 'lucide-react';
 import ImportLeadsModal from '../components/ImportLeadsModal';
+import AudienceListsPanel from '../components/AudienceListsPanel';
 import LeadActivityDrawer from '../components/LeadActivityDrawer';
+import LeadTagManager from '../components/LeadTagManager';
+import LeadSelectionReview from '../components/LeadSelectionReview';
 
 const PIPELINE_STAGES = [
   { id: 'unassigned', label: 'Unassigned', dotColor: 'bg-gray-400', textColor: 'text-gray-600', countBadge: 'bg-gray-100 text-gray-700' },
@@ -72,11 +77,25 @@ export default function OutreachLeads({ onOpenWizard }) {
     email: true,
   });
   const [modalOpen, setModalOpen] = useState(false);
+  const [audiencesOpen, setAudiencesOpen] = useState(false);
   const [selectedList, setSelectedList] = useState('all');
   const [viewMode, setViewMode] = useState(() => {
     return localStorage.getItem('outreach_leads_view_mode') || 'kanban';
   });
   const [draggedLeadId, setDraggedLeadId] = useState(null);
+  const [tagDefinitions, setTagDefinitions] = useState([]);
+  const [tagLoadError, setTagLoadError] = useState('');
+  const [selectedTagFilter, setSelectedTagFilter] = useState('');
+  const [selectedLeadIds, setSelectedLeadIds] = useState([]);
+  const [bulkTagId, setBulkTagId] = useState('');
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [tagManagerOpen, setTagManagerOpen] = useState(false);
+  const [followUpSelection, setFollowUpSelection] = useState(null);
+  const leadRequest = useRef(0);
+  const refreshLeads = useRef(null);
+  const currentQuery = useRef('');
+  const queryKey = JSON.stringify([page, debouncedSearch, selectedState, selectedStage, selectedTagFilter, debouncedLocation, selectedList]);
+  currentQuery.current = queryKey;
 
   const handleSetViewMode = (mode) => {
     setViewMode(mode);
@@ -91,7 +110,7 @@ export default function OutreachLeads({ onOpenWizard }) {
     return () => clearTimeout(timer);
   }, [searchQuery, selectedLocation]);
 
-  useEffect(() => { setPage(0); }, [selectedList, selectedState, selectedStage, debouncedSearch, debouncedLocation]);
+  useEffect(() => { setPage(0); }, [selectedList, selectedState, selectedStage, selectedTagFilter, debouncedSearch, debouncedLocation]);
 
   const fetchCampaigns = async () => {
     try {
@@ -113,6 +132,23 @@ export default function OutreachLeads({ onOpenWizard }) {
 
   useEffect(() => { fetchCampaigns(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const fetchTags = async () => {
+    setTagLoadError('');
+    try {
+      const res = await fetch('/api/v1/outreach/leads/tags', { credentials: 'include', headers: authHeaders() });
+      if (!res.ok) throw new Error(await errorMessage(res, 'Could not load lead tags'));
+      const data = await res.json();
+      if (!Array.isArray(data)) throw new Error('Could not load lead tags');
+      setTagDefinitions(data);
+      setBulkTagId((current) => (data || []).some((tag) => tag.id === current) ? current : data?.[0]?.id || '');
+      setSelectedTagFilter((current) => current === '__untagged__' || (data || []).some((tag) => tag.id === current) ? current : '');
+    } catch (err) {
+      setTagLoadError(err.message || 'Could not load lead tags');
+    }
+  };
+
+  useEffect(() => { fetchTags(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const buildParams = () => {
     const params = new URLSearchParams();
     if (selectedList !== 'all') params.set('campaign_id', selectedList);
@@ -120,10 +156,15 @@ export default function OutreachLeads({ onOpenWizard }) {
     if (selectedState) params.set('execution_state', selectedState);
     if (selectedStage) params.set('pipeline_stage', selectedStage);
     if (debouncedLocation) params.set('location', debouncedLocation);
+    if (selectedTagFilter === '__untagged__') params.set('untagged', 'true');
+    else if (selectedTagFilter) params.set('tag_ids', selectedTagFilter);
     return params;
   };
 
   const fetchLeads = async (signal) => {
+    if (queryKey !== currentQuery.current || signal?.aborted) return;
+    const requestId = ++leadRequest.current;
+    const isCurrent = () => !signal?.aborted && requestId === leadRequest.current && queryKey === currentQuery.current;
     setLoading(true);
     try {
       const params = buildParams();
@@ -134,30 +175,56 @@ export default function OutreachLeads({ onOpenWizard }) {
       });
       if (!res.ok) throw new Error(await errorMessage(res, 'Could not load leads'));
       const data = await res.json();
+      if (!isCurrent()) return;
       if (page > 0 && !data.leads?.length && data.total <= page * PAGE_SIZE) {
         setPage(page - 1);
         return;
       }
       setLeads(data.leads || []);
+      setSelectedLeadIds([]);
       setTotal(data.total || 0);
       setError('');
     } catch (err) {
-      if (err.name !== 'AbortError') {
+      if (isCurrent() && err.name !== 'AbortError') {
         setLeads([]);
         setTotal(0);
         setError(err.message);
       }
     } finally {
-      if (!signal?.aborted) setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   };
+  refreshLeads.current = fetchLeads;
 
   useEffect(() => {
     const controller = new AbortController();
     fetchLeads(controller.signal);
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, debouncedSearch, selectedState, selectedStage, debouncedLocation, selectedList]);
+  }, [page, debouncedSearch, selectedState, selectedStage, selectedTagFilter, debouncedLocation, selectedList]);
+
+  const toggleSelected = (leadId) => {
+    setSelectedLeadIds((current) => current.includes(leadId)
+      ? current.filter((id) => id !== leadId) : [...current, leadId]);
+  };
+
+  const handleBulkTag = async (operation) => {
+    if (!bulkTagId || !selectedLeadIds.length) return;
+    setBulkBusy(true);
+    try {
+      const res = await fetch('/api/v1/outreach/leads/tags/bulk', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ lead_ids: selectedLeadIds, tag_id: bulkTagId, operation }),
+      });
+      if (!res.ok) throw new Error(await errorMessage(res, 'Could not update selected leads'));
+      await refreshLeads.current();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
 
   const openImport = () => {
     if (!importCampaignId) {
@@ -342,6 +409,7 @@ export default function OutreachLeads({ onOpenWizard }) {
           </div>
 
           <div className="flex items-center gap-2.5">
+            <button onClick={() => setAudiencesOpen(true)} className="rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700">Audience lists</button>
             {/* View Mode Switcher [ = | 00 ] */}
             <div className="flex items-center bg-gray-100/90 p-0.5 rounded-xl border border-gray-200/80 shadow-2xs">
               <button
@@ -456,6 +524,24 @@ export default function OutreachLeads({ onOpenWizard }) {
             />
           </div>
 
+          <select
+            aria-label="Filter leads by tag"
+            value={selectedTagFilter}
+            onChange={(event) => setSelectedTagFilter(event.target.value)}
+            className="rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-medium text-gray-700 shadow-2xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+          >
+            <option value="">All tags</option>
+            <option value="__untagged__">Untagged</option>
+            {tagDefinitions.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
+          </select>
+
+          <button
+            onClick={() => setTagManagerOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 shadow-2xs"
+          >
+            <Tag className="h-3.5 w-3.5 text-gray-400" /> Manage tags
+          </button>
+
           {/* Columns Visibility Picker matching Prosp Columns */}
           <div className="relative">
             <button
@@ -526,10 +612,29 @@ export default function OutreachLeads({ onOpenWizard }) {
           </button>
         </div>
 
+        {tagLoadError && (
+          <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
+            <p>{tagLoadError}</p><button onClick={fetchTags} className="mt-2 font-semibold">Retry loading lead tags</button>
+          </div>
+        )}
         {error && (
           <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700 flex justify-between gap-3">
             <span>{error}</span>
             <button onClick={() => setError('')} aria-label="Dismiss error"><X className="h-4 w-4" /></button>
+          </div>
+        )}
+
+        {selectedLeadIds.length > 0 && (
+          <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-xs">
+            <strong className="text-indigo-900">{selectedLeadIds.length} selected</strong>
+            <select aria-label="Bulk tag" value={bulkTagId} onChange={(event) => setBulkTagId(event.target.value)} className="rounded-lg border border-indigo-200 bg-white px-2 py-1.5">
+              {!tagDefinitions.length && <option value="">Create a tag first</option>}
+              {tagDefinitions.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
+            </select>
+            <button disabled={bulkBusy || !bulkTagId} onClick={() => handleBulkTag('add')} className="rounded-lg bg-indigo-600 px-3 py-1.5 font-semibold text-white disabled:opacity-50">Add tag</button>
+            <button disabled={bulkBusy || !bulkTagId} onClick={() => handleBulkTag('remove')} className="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 font-semibold text-indigo-700 disabled:opacity-50">Remove tag</button>
+            <button disabled={bulkBusy} onClick={() => setFollowUpSelection([...selectedLeadIds])} className="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 font-semibold text-indigo-700">Review follow-up draft</button>
+            <button onClick={() => setSelectedLeadIds([])} className="ml-auto text-indigo-700 underline">Clear</button>
           </div>
         )}
 
@@ -592,6 +697,10 @@ export default function OutreachLeads({ onOpenWizard }) {
                           onClick={() => setSelectedLead(lead)}
                           className="bg-white rounded-xl border border-gray-200/90 p-3.5 shadow-2xs hover:shadow-md hover:border-indigo-300 transition-all cursor-pointer group relative"
                         >
+                          <label className="mb-2 flex items-center gap-1.5 text-[10px] font-medium text-gray-500" onClick={(event) => event.stopPropagation()}>
+                            <input aria-label={`Select ${fullName}`} type="checkbox" checked={selectedLeadIds.includes(lead.id)} onChange={() => toggleSelected(lead.id)} className="rounded border-gray-300 text-indigo-600" />
+                            Select
+                          </label>
                           {/* Card Top: Avatar, Name, LinkedIn badge */}
                           <div className="flex items-start gap-2.5">
                             {lead.avatar_url ? (
@@ -611,6 +720,7 @@ export default function OutreachLeads({ onOpenWizard }) {
                                 <span className="text-xs font-bold text-gray-900 truncate">
                                   {fullName}
                                 </span>
+                                {lead.do_not_contact && <Ban className="h-3.5 w-3.5 text-red-600" aria-label="Do-Not-Contact" />}
                                 {lead.linkedin_url && (
                                   <a
                                     href={lead.linkedin_url}
@@ -642,6 +752,14 @@ export default function OutreachLeads({ onOpenWizard }) {
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
+
+                          {!!lead.tags?.length && (
+                            <div className="mt-2 flex flex-wrap gap-1">
+                              {lead.tags.map((tag) => (
+                                <span key={tag.id} className="rounded-full border px-1.5 py-0.5 text-[9px] font-semibold" style={{ color: tag.color, borderColor: `${tag.color}55`, backgroundColor: `${tag.color}12` }}>{tag.name}</span>
+                              ))}
+                            </div>
+                          )}
 
                           {/* Card Attributes: Company, Location/Country, Phone */}
                           <div className="mt-3 pt-2.5 border-t border-gray-100 space-y-1.5 text-[11px] text-gray-600">
@@ -716,7 +834,11 @@ export default function OutreachLeads({ onOpenWizard }) {
             <table className="w-full text-left text-xs">
               <thead className="border-b border-gray-200 bg-gray-50/70 text-gray-500 uppercase font-semibold tracking-wider text-[10px]">
                 <tr>
+                  <th className="py-3 px-4">
+                    <input aria-label="Select all leads on this page" type="checkbox" checked={displayedLeads.length > 0 && displayedLeads.every((lead) => selectedLeadIds.includes(lead.id))} onChange={(event) => setSelectedLeadIds(event.target.checked ? displayedLeads.map((lead) => lead.id) : [])} className="rounded border-gray-300 text-indigo-600" />
+                  </th>
                   <th className="py-3 px-4">Contact</th>
+                  <th className="py-3 px-4">Tags</th>
                   {visibleColumns.pipelineStage && <th className="py-3 px-4">Pipeline Stage</th>}
                   {visibleColumns.executionState && <th className="py-3 px-4">Execution Status</th>}
                   {visibleColumns.company && <th className="py-3 px-4">Company</th>}
@@ -739,6 +861,9 @@ export default function OutreachLeads({ onOpenWizard }) {
                       onClick={() => setSelectedLead(lead)}
                       className="hover:bg-gray-50/60 transition-colors cursor-pointer"
                     >
+                      <td className="py-3 px-4" onClick={(event) => event.stopPropagation()}>
+                        <input aria-label={`Select ${fullName}`} type="checkbox" checked={selectedLeadIds.includes(lead.id)} onChange={() => toggleSelected(lead.id)} className="rounded border-gray-300 text-indigo-600" />
+                      </td>
                       <td className="py-3 px-4 font-semibold text-gray-900">
                         <div className="flex items-center gap-2">
                           <div className="w-6 h-6 rounded-full bg-indigo-50 border border-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-[9px] shrink-0">
@@ -752,8 +877,15 @@ export default function OutreachLeads({ onOpenWizard }) {
                             className="hover:text-indigo-600 hover:underline flex items-center gap-1"
                           >
                             <span>{fullName}</span>
+                            {lead.do_not_contact && <Ban className="h-3.5 w-3.5 text-red-600" aria-label="Do-Not-Contact" />}
                             <ExternalLink className="w-3 h-3 text-gray-400" />
                           </a>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="flex max-w-48 flex-wrap gap-1">
+                          {(lead.tags || []).map((tag) => <span key={tag.id} className="rounded-full border px-1.5 py-0.5 text-[9px] font-semibold" style={{ color: tag.color, borderColor: `${tag.color}55`, backgroundColor: `${tag.color}12` }}>{tag.name}</span>)}
+                          {!lead.tags?.length && <span className="text-gray-400">—</span>}
                         </div>
                       </td>
                       {visibleColumns.pipelineStage && (
@@ -823,6 +955,9 @@ export default function OutreachLeads({ onOpenWizard }) {
         )}
       </div>
 
+      {audiencesOpen && <AudienceListsPanel campaigns={campaigns} initialCampaignId={selectedList === 'all' ? importCampaignId : selectedList}
+        selectedLeadIds={selectedLeadIds} onClose={() => setAudiencesOpen(false)} onChanged={() => { fetchLeads(); fetchCampaigns(); }} />}
+
       {/* Import Modal */}
       <ImportLeadsModal
         isOpen={modalOpen}
@@ -844,6 +979,19 @@ export default function OutreachLeads({ onOpenWizard }) {
         onLeadUpdated={() => fetchLeads()}
         onDeleteLead={(id) => handleDeleteLead(id)}
       />
+
+      {tagManagerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setTagManagerOpen(false)}>
+          <div className="max-h-[85vh] w-full max-w-xl overflow-y-auto" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-2 flex justify-end"><button aria-label="Close tag manager" onClick={() => setTagManagerOpen(false)} className="rounded-full bg-white p-2 text-gray-600 shadow"><X className="h-4 w-4" /></button></div>
+            <LeadTagManager onChanged={() => { fetchTags(); fetchLeads(); }} />
+          </div>
+        </div>
+      )}
+      {followUpSelection && <LeadSelectionReview leadIds={followUpSelection} onClose={() => setFollowUpSelection(null)} onCreated={(result) => {
+        setFollowUpSelection(null); setSelectedLeadIds([]); fetchCampaigns();
+        onOpenWizard?.(result.campaign_id, 1, result.name);
+      }} />}
     </div>
   );
 }

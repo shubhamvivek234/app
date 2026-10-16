@@ -89,6 +89,8 @@ class ExecutionOutbox:
         if not isinstance(current, dict):
             return False
         attempt = ActionAttempt(sender_id=current["sender_id"], owner_token=owner, possible_submission_at=now).model_dump()
+        if current.get('action_kind') == 'connection_request':
+            attempt['invite_contract_version'] = 1
         changed = await self.db.outreach_intents.update_one(
             {"_id": intent_id, "workspace_id": workspace_id, "status": "claimed", "claim_token": owner,
              "claim_expires_at": {"$gt": now}, "attempt": None,
@@ -112,6 +114,7 @@ class ExecutionOutbox:
     async def finish(self, workspace_id: str, intent_id: str, owner: str, outcome: str, *,
                      provider_message_id: str | None = None, provider_thread_id: str | None = None,
                      provider_result_status: str | None = None,
+                     provider_recipient_urn: str | None = None, provider_request_id: str | None = None,
                      now: datetime | None = None) -> bool:
         if outcome not in {"provider_accepted", "request_observed", "unknown_outcome", "failed"}:
             raise ValueError("Invalid execution outcome")
@@ -122,7 +125,11 @@ class ExecutionOutbox:
             {"$set": {"status": status, "attempt.outcome": outcome, "attempt.completed_at": now,
                       "attempt.provider_message_id": provider_message_id,
                       "attempt.provider_thread_id": provider_thread_id,
-                      "attempt.provider_result_status": provider_result_status, "updated_at": now}},
+                      "attempt.provider_result_status": provider_result_status,
+                      **({'attempt.provider_recipient_urn': provider_recipient_urn,
+                          'attempt.provider_request_id': provider_request_id,
+                          'attempt.invite_contract_version': 1} if provider_recipient_urn and provider_request_id else {}),
+                      "updated_at": now}},
         )
         return changed.matched_count == 1
 

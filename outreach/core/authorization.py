@@ -30,6 +30,9 @@ def dispatch_block_reason(lead: dict, campaign: dict, account: dict, sequence: d
     workspace = expected.get("workspace_id")
     if not workspace or any(doc.get("workspace_id") != workspace for doc in (lead, campaign, account, sequence)):
         return "scope_changed"
+    from outreach.core.search_sources import unverified_search_lead
+    if unverified_search_lead(lead):
+        return "search_source_review_required"
     if campaign.get("id") != expected.get("campaign_id") or lead.get("campaign_id") != campaign.get("id"):
         return "scope_changed"
     if sequence.get("campaign_id") != campaign.get("id") or sequence.get("is_deleted"):

@@ -172,6 +172,7 @@ async def check_compound_suppression(
     db: AsyncIOMotorDatabase,
     collection_name: str = "outreach_do_not_contact",
     extra_filter: dict[str, Any] | None = None,
+    max_matches: int | None = None,
 ) -> dict[int, dict[str, str]]:
     """
     Evaluates candidates against a target collection (e.g. outreach_do_not_contact, outreach_leads)
@@ -213,6 +214,17 @@ async def check_compound_suppression(
                 raw_url=candidate.get("linkedin_url") or candidate.get("raw_url"), email=candidate.get("email"),
                 member_urn=candidate.get("member_urn") or candidate.get("linkedin_urn"),
                 sales_lead_urn=candidate.get("sales_lead_urn"), vanity_name=candidate.get("vanity_name")))
+            candidate_owners.append(idx)
+
+    # A discovered explicit handle can differ from the handle extracted from
+    # the current URL. Keep both aliases rather than letting URL precedence
+    # discard an identity used by a later DNC or reply stop.
+    for idx, candidate in enumerate(candidates):
+        if isinstance(candidate, dict) and isinstance(candidate.get("vanity_name"), str) and candidate["vanity_name"].strip():
+            candidate_ids.append(build_lead_identifiers(vanity_name=candidate["vanity_name"]))
+            candidate_owners.append(idx)
+        if isinstance(candidate, dict) and isinstance(candidate.get("linkedin_urn"), str) and candidate["linkedin_urn"].strip():
+            candidate_ids.append(build_lead_identifiers(member_urn=candidate["linkedin_urn"]))
             candidate_owners.append(idx)
 
     all_urls: set[str] = set()
@@ -274,7 +286,13 @@ async def check_compound_suppression(
         doc = await doc_or_coro if hasattr(doc_or_coro, "__await__") else doc_or_coro
         matched_docs = [doc] if doc else []
     else:
-        matched_docs = await _fetch_cursor_docs(collection.find(query), length=None)
+        if max_matches is None:
+            matched_docs = await _fetch_cursor_docs(collection.find(query), length=None)
+        else:
+            projection = {key: 1 for key in ("identifiers", "linkedin_url", "vanity_name", "member_urn", "linkedin_urn", "sales_lead_urn", "email", "reason")}
+            matched_docs = await _fetch_cursor_docs(collection.find(query, projection).limit(max_matches + 1), length=max_matches + 1)
+            if len(matched_docs) > max_matches:
+                raise HTTPException(503, "Contact exclusion history exceeds this review's bound; no import was confirmed")
     if not matched_docs:
         return {}
 
@@ -654,6 +672,7 @@ class LeadImporter:
         skip_already_contacted: bool = True,
         skip_do_not_contact: bool = True,
         require_name: bool = False,
+        _match_limit: int | None = None,
     ) -> dict[str, Any]:
         """
         Validates lead intake preview against deduplication, DNC, and field requirements.
@@ -683,6 +702,7 @@ class LeadImporter:
             db=db,
             collection_name="outreach_leads",
             extra_filter={"campaign_id": campaign_id},
+            max_matches=_match_limit,
         )
 
         # 2. Fetch cross-campaign contacted leads if enabled (compound)
@@ -694,6 +714,7 @@ class LeadImporter:
                 db=db,
                 collection_name="outreach_leads",
                 extra_filter={"last_action_at": {"$ne": None}},
+                max_matches=_match_limit,
             )
 
         # 3. Fetch Do-Not-Contact records (compound)
@@ -704,7 +725,12 @@ class LeadImporter:
                 candidates=leads,
                 db=db,
                 collection_name="outreach_do_not_contact",
+                max_matches=_match_limit,
             )
+
+        email_matches = await check_compound_suppression(
+            workspace_id=workspace_id, candidates=leads, db=db, collection_name="outreach_email_suppressions",
+            max_matches=_match_limit) if _match_limit is not None else {}
 
         # 4. Fetch Withdrawn Invites within 21-day reinvite block window (compound)
         now_dt = datetime.now(timezone.utc)
@@ -714,6 +740,7 @@ class LeadImporter:
             db=db,
             collection_name="outreach_withdrawn_invites",
             extra_filter={"reinvite_blocked_until": {"$gt": now_dt}},
+            max_matches=_match_limit,
         )
 
         rows: list[dict[str, Any]] = []
@@ -772,6 +799,10 @@ class LeadImporter:
                 rejection_code = "do_not_contact"
                 match_info = dnc_matches[idx - 1]
                 error_reason = f"Lead is on the Do-Not-Contact exclusion list ({match_info.get('reason', 'Manual exclusion')})"
+            elif (idx - 1) in email_matches:
+                status = "rejected"
+                rejection_code = "email_suppressed"
+                error_reason = "Email is on the workspace suppression list"
             elif (idx - 1) in withdrawn_matches:
                 status = "rejected"
                 rejection_code = "withdrawn_cooldown"
@@ -803,7 +834,7 @@ class LeadImporter:
         valid_count = sum(1 for r in rows if r["status"] == "valid")
         duplicate_count = sum(1 for r in rows if r["rejection_code"] in {"duplicate_batch", "duplicate_campaign"})
         contacted_count = sum(1 for r in rows if r["rejection_code"] == "duplicate_contacted")
-        dnc_count = sum(1 for r in rows if r["rejection_code"] == "do_not_contact")
+        dnc_count = sum(1 for r in rows if r["rejection_code"] in {"do_not_contact", "email_suppressed"})
         withdrawn_count = sum(1 for r in rows if r["rejection_code"] == "withdrawn_cooldown")
         invalid_count = sum(1 for r in rows if r["rejection_code"] in {"invalid_url", "missing_name"})
 
@@ -834,6 +865,8 @@ class LeadImporter:
         *,
         _ordered: bool = False,
         _staged_rows: list[dict[str, Any]] | None = None,
+        _record_decisions: bool = False,
+        _match_limit: int | None = None,
     ) -> dict[str, Any]:
         """
         Deduplicates and bulk-inserts parsed leads into MongoDB for the given campaign.
@@ -846,13 +879,15 @@ class LeadImporter:
             async def admit(current):
                 return await LeadImporter.ingest_leads(leads, campaign_id, workspace_id, current,
                     skip_already_contacted, skip_do_not_contact, None, source, source_metadata,
-                    require_name, include_rejections, _ordered=True, _staged_rows=_staged_rows)
+                    require_name, include_rejections, _ordered=True, _staged_rows=_staged_rows, _record_decisions=_record_decisions, _match_limit=_match_limit)
             try:
                 return await mutate_suppression(db, workspace_id, admit)
             except SuppressionUnavailable:
                 raise HTTPException(503, "Could not confirm this import. Reload campaign contacts before retrying.") from None
 
         # Caller snapshots are advisory only. Admission uses the transaction's current parent.
+        from outreach.core.search_sources import ensure_intake_provenance
+        await ensure_intake_provenance(db, workspace_id, leads, source)
         campaign = await db.outreach_campaigns.find_one({
             "id": campaign_id, **workspace_scope(workspace_id), "is_deleted": {"$ne": True}})
         if not isinstance(campaign, dict):
@@ -874,7 +909,9 @@ class LeadImporter:
             raise HTTPException(409, "Campaign changed. Reload before importing contacts.")
 
         if not leads:
-            res = {"imported_count": 0, "skipped_count": 0, "duplicates_count": 0, "total_submitted": 0}
+            res = {"imported_count": 0, "skipped_count": 0, "duplicates_count": 0, "total_submitted": 0, "lead_ids": []}
+            if _record_decisions:
+                res["row_results"] = []
             if include_rejections:
                 res["rejections"] = []
             return res
@@ -906,6 +943,7 @@ class LeadImporter:
                     raise HTTPException(409, "Campaign sender changed before importing contacts.")
         assigned_offset = 0
         root_node_id = None
+        root_due = None
         if active_senders:
             count_res = db.outreach_leads.count_documents({
                 "campaign_id": campaign_id,
@@ -917,12 +955,28 @@ class LeadImporter:
             assigned_offset = count_res if isinstance(count_res, (int, float)) else 0
             from outreach.core.sequence_versions import load_sequence
             sequence = await load_sequence(db, workspace_id, campaign_id, campaign=campaign)
-            root_ids = (sequence or {}).get("compiled_dag", {}).get("root_node_ids", [])
-            root_node_id = root_ids[0] if root_ids else None
-            revision, version = campaign.get("authorization_revision"), (sequence or {}).get("version")
-            if (not isinstance(root_node_id, str) or not root_node_id or len(root_ids) != 1
-                    or type(revision) is not int or revision < 1 or type(version) is not int or version < 1):
-                raise HTTPException(409, "Campaign sequence authorization needs review before importing contacts.")
+            from outreach.core.sequence_preview import validate_pinned_sequence, successor_fields
+            from outreach.core.sequence_contract import DAGValidationError
+            try:
+                inspected = validate_pinned_sequence(sequence)
+                root_ids = inspected['root_node_ids']
+                root_node_id = root_ids[0]
+                revision, version = campaign.get("authorization_revision"), sequence.get("version")
+                if type(revision) is not int or revision < 1 or type(version) is not int or version < 1:
+                    raise DAGValidationError('Campaign sequence authorization needs review.')
+                root_base = datetime.now(timezone.utc)
+                warmup = campaign.get('warmup_until')
+                if warmup is not None:
+                    if not isinstance(warmup, datetime):
+                        raise DAGValidationError('Campaign warm-up timing needs review.')
+                    if warmup.tzinfo is None:
+                        warmup = warmup.replace(tzinfo=timezone.utc)
+                    root_base = max(root_base, warmup)
+                root_due = successor_fields(inspected, root_node_id, root_base)['next_action_due_at']
+            except DAGValidationError:
+                raise HTTPException(409, 'Review and save the campaign sequence before importing active contacts') from None
+
+
 
         # 1. Fetch existing leads in this campaign for deduplication (compound)
         campaign_dupes = await check_compound_suppression(
@@ -931,6 +985,7 @@ class LeadImporter:
             db=db,
             collection_name="outreach_leads",
             extra_filter={"campaign_id": campaign_id, **({"id": {"$nin": [row["id"] for row in _staged_rows]}} if _staged_rows else {})},
+            max_matches=_match_limit,
         )
 
         # 2. Fetch cross-campaign contacted leads if enabled (compound)
@@ -942,6 +997,7 @@ class LeadImporter:
                 db=db,
                 collection_name="outreach_leads",
                 extra_filter={"last_action_at": {"$ne": None}},
+                max_matches=_match_limit,
             )
 
         # 3. Fetch Do-Not-Contact records (mandatory compound check)
@@ -950,9 +1006,10 @@ class LeadImporter:
             candidates=leads,
             db=db,
             collection_name="outreach_do_not_contact",
+            max_matches=_match_limit,
         )
         email_matches = await check_compound_suppression(
-            workspace_id=workspace_id, candidates=leads, db=db, collection_name="outreach_email_suppressions")
+            workspace_id=workspace_id, candidates=leads, db=db, collection_name="outreach_email_suppressions", max_matches=_match_limit)
 
         # 4. Fetch Withdrawn Invites within 21-day reinvite block window (mandatory compound check)
         now_dt = datetime.now(timezone.utc)
@@ -962,6 +1019,7 @@ class LeadImporter:
             db=db,
             collection_name="outreach_withdrawn_invites",
             extra_filter={"reinvite_blocked_until": {"$gt": now_dt}},
+            max_matches=_match_limit,
         )
 
         to_insert: list[dict[str, Any]] = []
@@ -969,6 +1027,12 @@ class LeadImporter:
         rejections: list[dict[str, Any]] = []
         duplicates_count = 0
         skipped_count = 0
+
+        decisions: list[dict[str, Any]] = []
+        def reject(record: dict[str, Any]) -> None:
+            rejections.append(record)
+            if _record_decisions:
+                decisions.append({"row_number": idx + 1, "status": "excluded", "rejection_code": record["rejection_code"]})
 
         for idx, lead in enumerate(leads):
             raw_url = lead.get("raw_url") or lead.get("linkedin_url") or ""
@@ -993,7 +1057,7 @@ class LeadImporter:
 
             if not url:
                 skipped_count += 1
-                rejections.append({
+                reject({
                     "linkedin_url": raw_url,
                     "first_name": first_name,
                     "rejection_code": "invalid_url",
@@ -1003,7 +1067,7 @@ class LeadImporter:
 
             if require_name and not (cleaned_first or first_name):
                 skipped_count += 1
-                rejections.append({
+                reject({
                     "linkedin_url": url,
                     "first_name": "",
                     "rejection_code": "missing_name",
@@ -1014,7 +1078,7 @@ class LeadImporter:
             # Deduplicate within batch
             if cand_keys and (cand_keys & seen_batch_keys):
                 duplicates_count += 1
-                rejections.append({
+                reject({
                     "linkedin_url": url,
                     "first_name": first_name,
                     "rejection_code": "duplicate_batch",
@@ -1026,7 +1090,7 @@ class LeadImporter:
             if idx in campaign_dupes:
                 duplicates_count += 1
                 match_info = campaign_dupes[idx]
-                rejections.append({
+                reject({
                     "linkedin_url": url,
                     "first_name": first_name,
                     "rejection_code": "duplicate_campaign",
@@ -1038,7 +1102,7 @@ class LeadImporter:
             if skip_already_contacted and idx in cross_campaign_dupes:
                 skipped_count += 1
                 match_info = cross_campaign_dupes[idx]
-                rejections.append({
+                reject({
                     "linkedin_url": url,
                     "first_name": first_name,
                     "rejection_code": "duplicate_contacted",
@@ -1050,7 +1114,7 @@ class LeadImporter:
             if idx in dnc_matches:
                 skipped_count += 1
                 match_info = dnc_matches[idx]
-                rejections.append({
+                reject({
                     "linkedin_url": url,
                     "first_name": first_name,
                     "rejection_code": "do_not_contact",
@@ -1061,14 +1125,14 @@ class LeadImporter:
             # Check Withdrawn Invites cooldown (mandatory)
             if idx in email_matches:
                 skipped_count += 1
-                rejections.append({"linkedin_url": url, "first_name": first_name,
+                reject({"linkedin_url": url, "first_name": first_name,
                     "rejection_code": "email_suppressed", "reason": "Email is on the workspace suppression list"})
                 continue
 
             if idx in withdrawn_matches:
                 skipped_count += 1
                 match_info = withdrawn_matches[idx]
-                rejections.append({
+                reject({
                     "linkedin_url": url,
                     "first_name": first_name,
                     "rejection_code": "withdrawn_cooldown",
@@ -1090,6 +1154,7 @@ class LeadImporter:
                 enrollment_id=generate_uuid(),
                 assigned_account_id=assigned_account_id,
                 current_node_id=root_node_id,
+                next_action_due_at=root_due,
                 linkedin_url=url,
                 linkedin_urn=ident.member_urn or lead.get("linkedin_urn"),
                 identifiers=ident,
@@ -1121,6 +1186,8 @@ class LeadImporter:
                     lead_doc.pop("authorized_revision", None)
                     lead_doc.pop("sequence_version", None)
             to_insert.append(lead_doc)
+            if _record_decisions:
+                decisions.append({"row_number": idx + 1, "status": "imported", "lead_id": lead_doc["id"]})
 
         if to_insert:
             if _staged_rows is None:
@@ -1156,6 +1223,8 @@ class LeadImporter:
             "total_submitted": len(leads),
             "lead_ids": [document["id"] for document in to_insert],
         }
+        if _record_decisions:
+            res["row_results"] = decisions
         if include_rejections:
             res["rejections"] = rejections
         return res

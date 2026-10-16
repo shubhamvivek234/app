@@ -25,6 +25,7 @@ describe('Outreach Leads CRM', () => {
       if (url === '/api/v1/outreach/campaigns') {
         return Promise.resolve(response([{ id: 'camp-1', name: 'Growth', leads_count: 75 }]));
       }
+      if (url === '/api/v1/outreach/leads/tags') return Promise.resolve(response([]));
       if (url.startsWith('/api/v1/outreach/leads?')) {
         const params = new URL(url, 'http://localhost').searchParams;
         const skip = Number(params.get('skip') || 0);

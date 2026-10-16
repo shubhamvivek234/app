@@ -402,7 +402,8 @@ export const PREBUILT_TEMPLATES = [
 const LIVE_SEQUENCE_TYPES = new Set(['visit_profile', 'connection_request', 'send_message', 'like_last_post', 'voice_note', 'if_connected']);
 export const isLaunchableTemplate = (template) => Boolean(
   template && Array.isArray(template.nodes) && template.nodes.length > 0
-  && template.nodes.every((node) => LIVE_SEQUENCE_TYPES.has(node.type))
+  && (!template.compatibility || template.compatibility.contract_version === 1 && template.compatibility.valid === true)
+  && template.nodes.every((node) => node && LIVE_SEQUENCE_TYPES.has(node.type))
 );
 
 export default function OutreachCampaigns({
@@ -545,7 +546,7 @@ export default function OutreachCampaigns({
   };
 
   const handleUseTemplate = async (tpl) => {
-    const fullTpl =
+    const fullTpl = Array.isArray(tpl.nodes) && Array.isArray(tpl.edges) ? tpl :
       PREBUILT_TEMPLATES.find(
         (p) => p.id === tpl.id || (tpl.id === 'tpl_inmail_engage' && p.id === 'tpl_multitouch_inmail') || p.name === tpl.name
       ) || tpl;
@@ -873,7 +874,9 @@ export default function OutreachCampaigns({
                     )}
                   </td>
                   <td className="py-4 px-5 text-gray-500">{Array.isArray(tpl.nodes) ? tpl.nodes.length : '—'}</td>
-                  <td className="py-4 px-5 text-gray-500">{isLaunchableTemplate(tpl) ? 'Ready to configure' : 'Preview only'}</td>
+                  <td className="py-4 px-5 text-gray-500">{isLaunchableTemplate(tpl) ? 'Ready to configure' : 'Graph needs review'}
+                    {tpl.compatibility?.valid === false && <p className="max-w-sm text-xs">{tpl.compatibility.error || tpl.compatibility.issues?.find((issue) => issue.severity === 'error')?.message || 'Open the sequence editor and correct this template.'}</p>}
+                  </td>
                   <td className="py-4 px-5 text-right">
                     <div className="flex items-center justify-end gap-2">
                       {tpl.is_custom && (

@@ -34,6 +34,7 @@ async def test_unreferenced_inbound_pauses_without_counting_a_reply():
         "message_id": "<outbound@example.com>",
     })
     db.outreach_leads.update_one = AsyncMock(return_value=MagicMock(modified_count=1))
+    db.outreach_leads.update_many = AsyncMock()
     db.outreach_campaigns.update_one = AsyncMock()
     mailbox = {"workspace_id": "ws", "sender_account_id": "sender", "email": "sender@example.com"}
     message = {"id": "provider-id", "from": "lead@example.com"}
@@ -64,6 +65,7 @@ async def test_message_reference_confirms_reply_without_claiming_opt_out():
         "message_id": "<outbound@example.com>",
     })
     db.outreach_leads.update_one = AsyncMock(return_value=MagicMock(modified_count=1))
+    db.outreach_leads.update_many = AsyncMock()
     db.outreach_campaigns.update_one = AsyncMock()
     mailbox = {"workspace_id": "ws", "sender_account_id": "sender", "email": "sender@example.com"}
     message = {"id": "provider-id", "from": "lead@example.com", "in_reply_to": "<outbound@example.com>"}
@@ -93,6 +95,7 @@ async def test_alias_reply_matches_original_message_reference_before_sender_addr
         "recipient": "lead@example.com", "message_id": "<outbound@example.com>",
     })
     db.outreach_leads.update_one = AsyncMock(return_value=MagicMock(modified_count=1))
+    db.outreach_leads.update_many = AsyncMock()
     db.outreach_campaigns.update_one = AsyncMock()
     mailbox = {"workspace_id": "ws", "sender_account_id": "sender", "email": "sender@example.com"}
     message = {"id": "alias-message", "from": "alias@example.net", "in_reply_to": "<outbound@example.com>"}
@@ -230,6 +233,7 @@ async def test_bounce_stops_and_suppresses_only_matching_post_send_lead():
         "recipient": "lead@example.com", "message_id": "<outbound@example.com>",
     })
     db.outreach_leads.update_one = AsyncMock(return_value=MagicMock(modified_count=1))
+    db.outreach_leads.update_many = AsyncMock()
     mailbox = {"workspace_id": "ws", "sender_account_id": "sender", "email": "sender@example.com"}
     with patch("outreach.core.mailbox_sync.suppress_email", new_callable=AsyncMock) as suppress:
         result = await _mark_inbound(db, mailbox, {

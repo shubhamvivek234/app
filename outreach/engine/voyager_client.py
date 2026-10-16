@@ -19,29 +19,11 @@ VOYAGER_BASE_URL = "https://www.linkedin.com/voyager/api"
 
 
 def parse_linkedin_search_url(url: str) -> dict[str, Any]:
-    """
-    Parses a LinkedIn People Search or Sales Navigator search URL into search_type and query parameters.
-    """
-    clean_url = url.strip()
-    parsed = urlparse(clean_url)
-    is_sales_nav = "/sales/" in parsed.path or "sales.linkedin.com" in parsed.netloc
-    is_valid = bool(clean_url) and (
-        "linkedin.com" in parsed.netloc or not parsed.netloc
-    ) and (
-        is_sales_nav or "/search/" in parsed.path or "keywords" in parsed.query or "query" in parsed.query
-    )
-    qs = parse_qs(parsed.query)
-    flat_params = {k: v[0] if len(v) == 1 else v for k, v in qs.items()}
-    keywords = flat_params.get("keywords") or flat_params.get("keyword") or ""
-
-    return {
-        "is_valid": is_valid,
-        "is_sales_nav": is_sales_nav,
-        "search_type": "sales_nav" if is_sales_nav else "basic",
-        "keywords": keywords,
-        "raw_query_params": flat_params,
-        "clean_url": clean_url,
-    }
+    from outreach.core.search_sources import SearchSourceError, parse_search_source
+    try:
+        return parse_search_source(url)
+    except SearchSourceError as exc:
+        return {"is_valid": False, "error_code": exc.code, "error": str(exc)}
 
 
 class VoyagerRestrictionError(RuntimeError):
@@ -249,6 +231,31 @@ class VoyagerClient:
             logger.warning("Voyager connection status uncertain (%s)", type(exc).__name__)
             return None
 
+    async def observe_original_connection(self, recipient_urn: str) -> dict[str, Any]:
+        """Observe only the immutable recipient recorded by the original invite.
+
+        Never resolve a current vanity URL or manufacture mock acceptance.
+        """
+        from outreach.core.connection_evidence import recipient_key, parse_connection_page
+        unknown = {'connected': None, 'request_id': None}
+        if self.is_mock or not recipient_key(recipient_urn) or not self.request_envelope:
+            return unknown
+        try:
+            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=12.0) as client:
+                response = await self._request(client, 'GET',
+                    f'{VOYAGER_BASE_URL}/relationships/connections?count=1000', headers=self._get_headers())
+            if response.status_code != 200 or len(response.content) > 1_000_000:
+                return unknown
+            connected = parse_connection_page(response.json(), recipient_urn)
+            receipt = await self.request_envelope.record_connection_fact(recipient_urn,
+                kind='observed_connection', connected=connected)
+            return {'connected': connected, 'request_id': receipt}
+        except RequestDenied:
+            raise
+        except Exception as exc:
+            logger.warning('Original connection observation unavailable (%s)', type(exc).__name__)
+            return unknown
+
     async def fetch_profile_info(self, vanity_name: str) -> dict[str, Any]:
         """
         Fetches real profile data (name, headline, avatar, URN) from LinkedIn Voyager.
@@ -363,6 +370,9 @@ class VoyagerClient:
         self.request_envelope.assert_content("invite", profile_urn, {"body": custom_note})
 
         resolved_urn = await self._resolve_profile_urn(profile_urn)
+        from outreach.core.connection_evidence import recipient_key
+        if not recipient_key(resolved_urn):
+            raise RequestDenied('original_recipient_identity_unavailable')
         if not resolved_urn:
             return {"status": "failed", "error": "Could not resolve this LinkedIn profile to a verified member ID."}
 
@@ -375,6 +385,15 @@ class VoyagerClient:
             async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15.0) as client:
                 resp = await self._request(client, "POST", url, headers=self._get_headers(), json=payload)
                 if resp.status_code in (200, 201):
+                    from outreach.core.connection_evidence import recipient_key
+                    body = resp.json()
+                    if not isinstance(body, dict) or any(key in body for key in ('error', 'errors')):
+                        return {'status': 'failed', 'http_status': resp.status_code}
+                    if (recipient_key(resolved_urn) and isinstance(body, dict)
+                            and not any(key in body for key in ('error', 'errors'))
+                            and isinstance(self.request_envelope.received_receipt, dict)):
+                        receipt = await self.request_envelope.record_connection_fact(resolved_urn, kind='invite_target')
+                        return {'status': 'invite_sent', 'provider_recipient_urn': resolved_urn, 'provider_request_id': receipt}
                     return {"status": "invite_sent"}
                 return {"status": "failed", "status_code": resp.status_code, "text": resp.text[:200]}
         except RequestDenied:
@@ -740,144 +759,33 @@ class VoyagerClient:
         count: int = 10,
     ) -> dict[str, Any]:
         """
-        Executes a paginated People Search or Sales Navigator search request through the sender's dedicated proxy.
-        Extracts normalized entities and returns (entities, total_results, stop_reason, user_error_message).
+        Internal bounded keyword-only transport contract; public collection stays unavailable.
+        Extracts candidate entities without establishing source fidelity or completeness.
         """
         from outreach.models import SearchImportStopReason
         from outreach.core.lead_importer import normalize_linkedin_url, extract_vanity_name, extract_member_urn
 
-        parsed_info = parse_linkedin_search_url(search_url)
-        is_sales_nav = parsed_info["is_sales_nav"]
+        from outreach.core.search_sources import SearchSourceError, parse_search_source, validate_search_page
+        parsed_info = parse_search_source(search_url)
+        if self.is_mock or os.getenv("OUTREACH_MOCK_AUTH", "false").lower() in {"true", "1"}:
+            raise SearchSourceError("mock_search_unavailable", "Test search data cannot be collected as customer contacts.")
+        if type(start) is not int or not 0 <= start < 1000 or type(count) is not int or not 1 <= count <= 10:
+            raise SearchSourceError("invalid_search_page", "Unsupported search page bounds.")
         keywords = parsed_info["keywords"]
-
-        # Mock / Test Mode: Deterministic test data generator for unit and integration testing
-        is_canary = any(c in search_url.lower() for c in ("canary", "empty", "checkpoint", "rate_limit", "session_expired", "commercial_limit", "short", "unresolvable"))
-        if self.is_mock or os.getenv("OUTREACH_MOCK_AUTH", "false").lower() in {"true", "1"} or is_canary:
-            if "empty" in keywords.lower() or "empty_canary" in search_url.lower():
-                return {
-                    "entities": [],
-                    "total_results": 0,
-                    "stop_reason": SearchImportStopReason.SEARCH_EXHAUSTED,
-                    "user_error_message": "No matching leads found for this search URL.",
-                    "status_code": 200,
-                }
-            if "commercial_limit" in keywords.lower() or "commercial_limit_canary" in search_url.lower():
-                return {
-                    "entities": [],
-                    "total_results": 0,
-                    "stop_reason": SearchImportStopReason.COMMERCIAL_USE_LIMIT,
-                    "user_error_message": "Monthly LinkedIn commercial search limit reached on this account. Upgrade to Sales Navigator or resume next month.",
-                    "status_code": 200,
-                }
-            if "rate_limit" in keywords.lower() or "rate_limit_canary" in search_url.lower():
-                return {
-                    "entities": [],
-                    "total_results": 0,
-                    "stop_reason": SearchImportStopReason.RATE_LIMITED,
-                    "user_error_message": "LinkedIn rate limit reached. Pausing search import.",
-                    "status_code": 429,
-                }
-            if "checkpoint" in keywords.lower() or "checkpoint_canary" in search_url.lower():
-                return {
-                    "entities": [],
-                    "total_results": 0,
-                    "stop_reason": SearchImportStopReason.CHECKPOINT,
-                    "user_error_message": "LinkedIn security checkpoint detected. Automation paused for your safety.",
-                    "status_code": 403,
-                }
-            if "session_expired" in keywords.lower() or "session_expired_canary" in search_url.lower():
-                return {
-                    "entities": [],
-                    "total_results": 0,
-                    "stop_reason": SearchImportStopReason.SESSION_EXPIRED,
-                    "user_error_message": "LinkedIn session cookie expired. Reconnect the sender in Settings.",
-                    "status_code": 401,
-                }
-
-            # Generate mock search results
-            total_mock = 50 if ("short_canary" in keywords.lower() or "short" in search_url.lower()) else 1000
-            if start >= total_mock:
-                return {
-                    "entities": [],
-                    "total_results": total_mock,
-                    "stop_reason": SearchImportStopReason.SEARCH_EXHAUSTED,
-                    "user_error_message": None,
-                    "status_code": 200,
-                }
-
-            page_len = min(count, total_mock - start)
-            entities = []
-            for i in range(page_len):
-                idx = start + i + 1
-                if ("unresolvable_canary" in keywords.lower() or "unresolvable" in search_url.lower()) and i == 0:
-                    entities.append({
-                        "raw_name": "LinkedIn Member",
-                        "first_name": "LinkedIn",
-                        "last_name": "Member",
-                        "job_title": "Out of Network Member",
-                        "company_name": "",
-                        "location": "",
-                        "headline": "LinkedIn Member",
-                        "profile_url": "",
-                        "vanity_name": None,
-                        "member_urn": None,
-                        "sales_lead_urn": None,
-                        "is_unresolvable": True,
-                    })
-                    continue
-
-                lead_name = f"Alex Morgan {idx}" if not is_sales_nav else f"Sales Lead {idx}"
-                vanity = f"alex-morgan-{idx}" if not is_sales_nav else f"sales-lead-{idx}"
-                member_urn = f"urn:li:member:{200000 + idx}"
-                sales_urn = f"urn:li:fs_salesProfile:(ACwAA{idx:06d},NAME_SEARCH)" if is_sales_nav else None
-
-                entities.append({
-                    "raw_name": lead_name,
-                    "first_name": lead_name.split()[0],
-                    "last_name": lead_name.split()[-1],
-                    "job_title": "Director of Growth" if idx % 2 == 0 else "VP of Engineering",
-                    "company_name": "Tech Corp" if idx % 3 == 0 else "Innovate Labs",
-                    "location": "San Francisco, CA",
-                    "headline": f"{'Director of Growth' if idx % 2 == 0 else 'VP of Engineering'} at {'Tech Corp' if idx % 3 == 0 else 'Innovate Labs'}",
-                    "profile_url": f"https://www.linkedin.com/in/{vanity}",
-                    "vanity_name": vanity,
-                    "member_urn": member_urn,
-                    "sales_lead_urn": sales_urn,
-                    "is_unresolvable": False,
-                })
-
-            return {
-                "entities": entities,
-                "total_results": total_mock,
-                "stop_reason": None,
-                "user_error_message": None,
-                "status_code": 200,
-            }
-
-        # Live Network Voyager Execution via Sender's Dedicated ISP Proxy
-        endpoint = (
-            f"{VOYAGER_BASE_URL}/sales/search/people"
-            if is_sales_nav
-            else f"{VOYAGER_BASE_URL}/search/blended"
-        )
-        params: dict[str, Any] = {
-            "start": start,
-            "count": count,
-            "origin": "FACETED_SEARCH",
-            "q": "all",
-        }
-        if keywords:
-            params["query"] = f"(keywords:{keywords},flagshipSearchIntent:SEARCH_SRP)"
+        is_sales_nav = False
+        endpoint = f"{VOYAGER_BASE_URL}/search/blended"
+        params = {"start": start, "count": count, "origin": "FACETED_SEARCH", "q": "all",
+                  "query": f"(keywords:{keywords},flagshipSearchIntent:SEARCH_SRP)"}
 
         headers = self._get_headers()
         try:
-            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=20.0) as client:
+            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=20.0, follow_redirects=False) as client:
                 resp = await self._request(client, "GET", endpoint, headers=headers, params=params)
 
                 if resp.status_code == 429:
                     return {
                         "entities": [],
-                        "total_results": 0,
+                        "total_results": None,
                         "stop_reason": SearchImportStopReason.RATE_LIMITED,
                         "user_error_message": "LinkedIn rate limit reached. Pausing search import.",
                         "status_code": 429,
@@ -885,7 +793,7 @@ class VoyagerClient:
                 if resp.status_code in (401,):
                     return {
                         "entities": [],
-                        "total_results": 0,
+                        "total_results": None,
                         "stop_reason": SearchImportStopReason.SESSION_EXPIRED,
                         "user_error_message": "LinkedIn session cookie expired. Reconnect the sender in Settings.",
                         "status_code": 401,
@@ -893,7 +801,7 @@ class VoyagerClient:
                 if resp.status_code in (403, 999):
                     return {
                         "entities": [],
-                        "total_results": 0,
+                        "total_results": None,
                         "stop_reason": SearchImportStopReason.CHECKPOINT,
                         "user_error_message": "LinkedIn security checkpoint detected. Automation paused for your safety.",
                         "status_code": resp.status_code,
@@ -901,30 +809,29 @@ class VoyagerClient:
                 if resp.status_code != 200:
                     return {
                         "entities": [],
-                        "total_results": 0,
+                        "total_results": None,
                         "stop_reason": SearchImportStopReason.CANCELLED,
                         "user_error_message": f"LinkedIn returned HTTP {resp.status_code}",
                         "status_code": resp.status_code,
                     }
 
-                data = resp.json()
+                try:
+                    data = resp.json()
+                except ValueError:
+                    raise SearchSourceError("search_response_unverified", "Search response could not be verified.") from None
 
                 # Check for Commercial Use Limit warning in payload
                 text_content = resp.text.lower()
                 if "commercial use limit" in text_content or "commercialuselimit" in text_content:
                     return {
                         "entities": [],
-                        "total_results": 0,
+                        "total_results": None,
                         "stop_reason": SearchImportStopReason.COMMERCIAL_USE_LIMIT,
                         "user_error_message": "Monthly LinkedIn commercial search limit reached on this account. Upgrade to Sales Navigator or resume next month.",
                         "status_code": 200,
                     }
 
-                total_results = (
-                    data.get("metadata", {}).get("totalResultCount")
-                    or data.get("paging", {}).get("total")
-                    or 1000
-                )
+                total_results = validate_search_page(data, start=start)
 
                 elements = data.get("elements", [])
                 entities = []
@@ -972,7 +879,7 @@ class VoyagerClient:
 
                 return {
                     "entities": entities,
-                    "total_results": int(total_results),
+                    "total_results": total_results,
                     "stop_reason": None,
                     "user_error_message": None,
                     "status_code": 200,
@@ -981,7 +888,7 @@ class VoyagerClient:
             logger.error("Voyager search request error: %s", type(exc).__name__)
             return {
                 "entities": [],
-                "total_results": 0,
+                "total_results": None,
                 "stop_reason": SearchImportStopReason.PROXY_UNHEALTHY,
                 "user_error_message": "Proxy connection dropped during search crawl.",
                 "status_code": 502,

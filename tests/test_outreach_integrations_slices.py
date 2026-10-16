@@ -284,6 +284,7 @@ async def test_mailbox_sync_emits_lead_replied_and_creates_inbox_thread():
         "message_id": "<sent-123@unravler.io>",
         "recipient": "prospect@example.com",
     })
+    mock_db.outreach_leads.update_many = AsyncMock()
     mock_db.outreach_leads.update_one = AsyncMock(return_value=MagicMock(modified_count=1))
     mock_db.outreach_leads.find_one = AsyncMock(return_value={
         "id": "lead_email_1",

@@ -70,6 +70,7 @@ describe('LeadActivityDrawer', () => {
     root = createRoot(container);
     localStorage.clear();
     global.fetch = jest.fn((url, options) => {
+      if (url === '/api/v1/outreach/leads/tags') return Promise.resolve(response([]));
       if (url.includes('/activity')) {
         return Promise.resolve(response(mockLeadData));
       }
@@ -81,6 +82,22 @@ describe('LeadActivityDrawer', () => {
       }
       return Promise.resolve(response({}));
     });
+  });
+
+  it('hides the previous lead controls while another lead is loading', async () => {
+    let resolveSecond;
+    const second = new Promise((resolve) => { resolveSecond = resolve; });
+    const original = global.fetch.getMockImplementation();
+    global.fetch.mockImplementation((url, options) => url.includes('/lead_other/activity') ? second : original(url, options));
+    await act(async () => root.render(<LeadActivityDrawer leadId="lead_123" isOpen onClose={() => {}} />));
+    expect(container.textContent).toContain('John Doe');
+    await act(async () => root.render(<LeadActivityDrawer leadId="lead_other" isOpen onClose={() => {}} />));
+    expect(container.textContent).not.toContain('John Doe');
+    expect(container.textContent).not.toContain('Add to Do-Not-Contact');
+    expect(container.querySelector('[aria-label="Add lead tag"]')).toBeNull();
+    expect(global.fetch.mock.calls.some(([url]) => url.includes('/lead_other/do-not-contact'))).toBe(false);
+    await act(async () => resolveSecond(response({ ...mockLeadData, lead: { ...mockLeadData.lead, id: 'lead_other', first_name: 'Sam', last_name: 'Other' } })));
+    expect(container.textContent).toContain('Sam Other');
   });
 
   afterEach(async () => {

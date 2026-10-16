@@ -29,6 +29,8 @@ async def test_sequence_condition_denial_defers_instead_of_failing(monkeypatch):
     db = execution_db()
     db.outreach_sequences.docs[0]["compiled_dag"]["nodes"]["n"]["type"] = "if_connected"
     db.outreach_sequences.docs[0]["compiled_dag"]["nodes"]["n"]["branches"] = {"positive": "end"}
+    db.outreach_sequences.docs[0]["compiled_dag"]["nodes"]["end"] = {
+        "id": "end", "type": "visit_profile", "delay_hours": 0, "config": {}, "branches": {}, "next_default": None}
     client.check_connection_status_strict = AsyncMock(side_effect=RequestDenied("sender_busy", 5))
     result = await executor.SequenceExecutor.execute_lead_step("l", db, workspace_id="w")
     assert result["status"] == "request_deferred"

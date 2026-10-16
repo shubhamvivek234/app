@@ -3,17 +3,19 @@ Phase 4: Sequences API router.
 Supports sequence graph validation, compiling, saving, and template retrieval.
 """
 import logging
-from typing import Any
+from typing import Any, Literal
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, StrictBool
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from db.mongo import get_db
 from outreach.api.dependencies import get_outreach_user, require_outreach_permission
 from outreach.core.dag_compiler import DAGCompiler, DAGValidationError
 from outreach.core.sequence_versions import load_sequence, publish_sequence
-from outreach.models import OutreachSequence, SequenceNode, SequenceEdge
+from outreach.core.sequence_contract import bounded_json, visual_graph
+from outreach.core.sequence_preview import analyze_sequence, same_execution_graph, simulate_sequence
+from outreach.core.authorization import canonical_hash
 
 logger = logging.getLogger(__name__)
 
@@ -42,72 +44,51 @@ def _campaign_filter(campaign_id: str, current_user: dict) -> dict[str, Any]:
 
 
 class ValidateSequenceRequest(BaseModel):
-    nodes: list[dict[str, Any]]
-    edges: list[dict[str, Any]]
+    model_config = ConfigDict(extra="forbid")
+    nodes: list[dict[str, Any]] = Field(min_length=1, max_length=100)
+    edges: list[dict[str, Any]] = Field(max_length=200)
+    tree: list[dict[str, Any]] | None = Field(default=None, max_length=100)
 
 
-class SaveSequenceRequest(BaseModel):
-    campaign_id: str
-    nodes: list[dict[str, Any]]
-    edges: list[dict[str, Any]]
-    tree: list[dict[str, Any]] | None = None
+class SaveSequenceRequest(ValidateSequenceRequest):
+    campaign_id: str = Field(min_length=1, max_length=200)
 
 
-class SaveTemplateRequest(BaseModel):
-    name: str
-    description: str | None = ""
-    nodes: list[dict[str, Any]]
-    edges: list[dict[str, Any]]
-    tree: list[dict[str, Any]] | None = None
+class SaveTemplateRequest(ValidateSequenceRequest):
+    name: str = Field(min_length=1, max_length=100)
+    description: str | None = Field(default="", max_length=1000)
+
+
+class PreviewSequenceRequest(ValidateSequenceRequest):
+    request_scope: str = Field(pattern=r"^[0-9a-f]{64}$")
+    request_id: str = Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+    sample: dict[str, Any] = Field(default_factory=dict, max_length=50)
+    condition_values: dict[str, Any] = Field(default_factory=dict, max_length=9)
+    observations: dict[str, Literal['yes', 'no', 'unknown', 'deadline_no', 'deadline_unknown']] = Field(default_factory=dict, max_length=100)
+    initial_connected: Literal['yes', 'no', 'unknown'] = 'unknown'
+    initial_email_available: Literal['yes', 'no', 'unknown'] = 'unknown'
+    assume_action_completion: StrictBool = False
 
 
 def _compile_visual_tree(tree: list[dict[str, Any]]) -> dict[str, Any]:
-    """Compile the editor's visible tree so it cannot diverge from saved execution nodes."""
-    nodes: list[dict[str, Any]] = []
-    edges: list[dict[str, Any]] = []
-
-    def visit(steps: list[dict[str, Any]], parent_id: str | None = None, branch_label: str | None = None) -> None:
-        if not isinstance(steps, list):
-            raise DAGValidationError("Sequence tree contains invalid steps")
-        previous_id = parent_id
-        for index, step in enumerate(steps):
-            if not isinstance(step, dict) or not step.get("id") or not step.get("type"):
-                raise DAGValidationError("Every visible sequence step needs an ID and type")
-            delay_hours = round(float(step.get("delay_days", 0)) * 24) if "delay_days" in step else round(float(step.get("delay_hours", 0)))
-            nodes.append({
-                "id": step["id"], "type": step["type"], "delay_hours": delay_hours,
-                "config": step.get("config") or {},
-            })
-            if previous_id:
-                edges.append({
-                    "source": previous_id, "target": step["id"],
-                    "label": branch_label if index == 0 and branch_label else "",
-                })
-            previous_id = step["id"]
-            branches = step.get("branches") or {}
-            for side in ("left", "right"):
-                branch = branches.get(side) or {}
-                if branch.get("steps"):
-                    visit(branch["steps"], step["id"], branch.get("condition"))
-            if step.get("steps"):
-                visit(step["steps"], step["id"])
-
-    try:
-        visit(tree)
-    except (TypeError, ValueError) as exc:
-        raise DAGValidationError("Sequence tree contains an invalid delay") from exc
+    nodes, edges = visual_graph(tree)
     return DAGCompiler.validate_and_compile(nodes, edges)
 
 
-def _same_execution_graph(visible: dict[str, Any], saved: dict[str, Any]) -> bool:
-    if visible.get("root_node_ids") != saved.get("root_node_ids"):
-        return False
-    visible_nodes = visible.get("nodes", {})
-    saved_nodes = saved.get("nodes", {})
-    if visible_nodes.keys() != saved_nodes.keys():
-        return False
-    fields = ("type", "delay_hours", "config", "next_default", "branches")
-    return all(all(visible_nodes[node_id].get(field) == saved_nodes[node_id].get(field) for field in fields) for node_id in visible_nodes)
+_same_execution_graph = same_execution_graph
+
+
+def _authoring_graph(req: ValidateSequenceRequest) -> tuple[dict, dict]:
+    bounded_json(req.model_dump())
+    compiled = DAGCompiler.validate_and_compile(req.nodes, req.edges)
+    if req.tree is not None and not same_execution_graph(_compile_visual_tree(req.tree), compiled):
+        raise DAGValidationError("Visible sequence does not match its execution steps. Save the editor again.")
+    return compiled, analyze_sequence(compiled)
+
+
+def _require_executable_analysis(analysis: dict) -> None:
+    if not analysis['valid']:
+        raise DAGValidationError(next(item['message'] for item in analysis['issues'] if item['severity'] == 'error'))
 
 
 @router.get("/templates")
@@ -130,7 +111,16 @@ async def get_sequence_templates(
         except Exception as exc:
             logger.warning(f"Could not load custom templates from db: {exc}")
 
-    return templates
+    inspected = []
+    for template in templates:
+        try:
+            _, compatibility = _authoring_graph(ValidateSequenceRequest(
+                nodes=template.get('nodes'), edges=template.get('edges'), tree=template.get('tree')))
+        except (ValueError, TypeError, AttributeError):
+            compatibility = {'contract_version': 1, 'valid': False, 'issues': [],
+                'error': 'Saved template structure needs review.', 'execution_authorized': False}
+        inspected.append({**template, 'compatibility': compatibility})
+    return inspected
 
 
 @router.post("/templates")
@@ -141,9 +131,8 @@ async def save_custom_template(
 ):
     """Saves an outreach sequence graph as a reusable custom template."""
     try:
-        compiled_dag = DAGCompiler.validate_and_compile(req.nodes, req.edges)
-        if req.tree is not None and not _same_execution_graph(_compile_visual_tree(req.tree), compiled_dag):
-            raise DAGValidationError("Visible sequence does not match its execution steps. Save the editor again.")
+        compiled_dag, analysis = _authoring_graph(req)
+        _require_executable_analysis(analysis)
     except DAGValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -166,6 +155,7 @@ async def save_custom_template(
         "edges": req.edges,
         "tree": req.tree,
         "compiled_dag": compiled_dag,
+        "compiler_contract_version": 1,
         "created_at": datetime.now(timezone.utc),
     }
     await db.outreach_templates.insert_one(doc)
@@ -197,10 +187,37 @@ async def validate_sequence(req: ValidateSequenceRequest):
     Detects cycles, invalid branching, or disconnected nodes.
     """
     try:
-        compiled = DAGCompiler.validate_and_compile(req.nodes, req.edges)
-        return {"valid": True, "compiled": compiled}
+        compiled, analysis = _authoring_graph(req)
+        return {**analysis, "compiled": compiled}
     except DAGValidationError as exc:
-        return {"valid": False, "error": str(exc)}
+        return {"valid": False, "contract_version": 1, "execution_authorized": False, "error": str(exc)}
+
+
+def preview_scope(user: dict) -> str:
+    return canonical_hash(['sequence-preview-v1', _workspace_id(user), _user_id(user)])
+
+
+@router.get("/preview-context")
+async def preview_context(current_user: dict = require_outreach_permission('sequence:update')):
+    return {"contract_version": 1, "request_scope": preview_scope(current_user)}
+
+
+@router.post("/preview")
+async def preview_sequence(req: PreviewSequenceRequest,
+        current_user: dict = require_outreach_permission('sequence:update')):
+    """Pure supplied-data simulation after resolved role/workspace admission."""
+    if req.request_scope != preview_scope(current_user):
+        raise HTTPException(403, 'Preview account or workspace changed; reopen the sequence review.')
+    try:
+        compiled, _ = _authoring_graph(req)
+        report = simulate_sequence(compiled, sample=req.sample, observations=req.observations, condition_values=req.condition_values,
+            initial_connected=req.initial_connected, initial_email_available=req.initial_email_available,
+            assume_action_completion=req.assume_action_completion)
+        return {**report, "request_id": req.request_id, "request_scope": req.request_scope,
+            "input_digest": canonical_hash(req.model_dump()), "graph_digest": canonical_hash(compiled),
+            "provider_outcomes_verified": False, "execution_authorized": False}
+    except DAGValidationError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.get("/{campaign_id}")
@@ -226,6 +243,16 @@ async def get_campaign_sequence(
             "is_default": True,
         }
 
+    try:
+        if not isinstance(seq_doc.get('tree'), list) or not seq_doc['tree']:
+            raise DAGValidationError('Saved sequence has no faithful visual tree; review its original graph before editing.')
+        candidate, _ = _authoring_graph(ValidateSequenceRequest(
+            nodes=seq_doc.get('nodes'), edges=seq_doc.get('edges'), tree=seq_doc['tree']))
+        if 'compiled_dag' in seq_doc and not same_execution_graph(candidate, seq_doc['compiled_dag']):
+            raise DAGValidationError('Saved source and execution graph differ; review the original revision before editing.')
+    except (ValueError, TypeError, AttributeError) as exc:
+        return {'campaign_id': campaign_id, 'nodes': [], 'edges': [], 'tree': None,
+                'editor_error': str(exc) if isinstance(exc, DAGValidationError) else 'Saved sequence structure needs review before editing.'}
     seq_doc.pop("_id", None)
     return seq_doc
 
@@ -246,9 +273,8 @@ async def save_campaign_sequence(
         raise HTTPException(status_code=409, detail="Pause the campaign before editing its sequence")
 
     try:
-        compiled_dag = DAGCompiler.validate_and_compile(req.nodes, req.edges)
-        if req.tree is not None and not _same_execution_graph(_compile_visual_tree(req.tree), compiled_dag):
-            raise DAGValidationError("Visible sequence does not match its execution steps. Save the editor again.")
+        compiled_dag, analysis = _authoring_graph(req)
+        _require_executable_analysis(analysis)
     except DAGValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -259,6 +285,7 @@ async def save_campaign_sequence(
         "nodes": req.nodes,
         "edges": req.edges,
         "compiled_dag": compiled_dag,
+        "compiler_contract_version": 1,
         "updated_at": datetime.now(timezone.utc),
     }
     if req.tree is not None:

@@ -81,6 +81,9 @@ class ProviderEnvelope(RequestEnvelope):
                 not _utc(resource.get('token_expires_at')) or _utc(resource['token_expires_at']) <= now):
             raise RequestDenied('mailbox_token_expired')
         lead = await self.db.outreach_leads.find_one({"workspace_id": self.workspace_id, "id": self.lead_id, "assigned_account_id": self.sender_id})
+        from outreach.core.search_sources import unverified_search_lead
+        if lead and unverified_search_lead(lead):
+            raise RequestDenied("search_source_review_required")
         if not lead or lead.get("has_replied") or lead.get("do_not_contact") or lead.get("is_suppressed"):
             raise RequestDenied("lead_suppressed")
         if self.source == "email_send" and not await is_lead_email_available(self.db, self.workspace_id, lead):

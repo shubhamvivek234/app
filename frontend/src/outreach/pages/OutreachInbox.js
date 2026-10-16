@@ -125,6 +125,8 @@ export default function OutreachInbox() {
 
   const [tagsOpen, setTagsOpen] = useState(false);
   const [tagsList, setTagsList] = useState([]);
+  const [tagFilter, setTagFilter] = useState('');
+  const [updatingTags, setUpdatingTags] = useState(false);
   const [newTagName, setNewTagName] = useState('');
   const [newTagColor, setNewTagColor] = useState('#3b82f6');
   const [showCreateTag, setShowCreateTag] = useState(false);
@@ -167,6 +169,7 @@ export default function OutreachInbox() {
       if (searchQuery.trim()) {
         url += `&search=${encodeURIComponent(searchQuery.trim())}`;
       }
+      if (tagFilter) url += `&tag_ids=${encodeURIComponent(tagFilter)}`;
       const res = await inboxFetch(url, {
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
@@ -426,31 +429,38 @@ export default function OutreachInbox() {
     }
   };
 
-  const handleToggleTag = async (tagName) => {
-    if (!selectedThread) return;
+  const handleToggleTag = async (tag) => {
+    if (!selectedThread || updatingTags) return;
+    const thread = selectedThread;
+    const key = threadKey(thread);
+    setUpdatingTags(true);
     try {
       const token = localStorage.getItem('token');
-      const res = await inboxFetch(`/api/v1/outreach/inbox/${selectedThread.id}/tags`, {
+      const res = await inboxFetch(`/api/v1/outreach/inbox/${thread.id}/tags`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
         },
-        body: JSON.stringify({ tag_name: tagName }),
+        body: JSON.stringify({ tag_id: tag.id, operation: (thread.tag_ids || []).includes(tag.id) ? 'remove' : 'add', revision: thread.tag_revision || 0 }),
       });
       if (res.ok) {
         const data = await res.json();
-        setSelectedThread((prev) => ({ ...prev, tags: data.tags }));
+        const updated = { tags: data.tags, tag_ids: data.tag_ids, tag_revision: data.tag_revision };
+        setSelectedThread((prev) => threadKey(prev) === key ? { ...prev, ...updated } : prev);
         setThreads((prev) =>
-          prev.map((t) => (t.id === selectedThread.id ? { ...t, tags: data.tags } : t))
+          prev.map((t) => (threadKey(t) === key ? { ...t, ...updated } : t))
         );
         toast.success('Tags updated');
       } else {
-        toast.error('Failed to update tag');
+        const failure = await res.json().catch(() => ({}));
+        toast.error(failure.detail || 'Failed to update tag');
       }
     } catch (err) {
       console.error('Failed to toggle tag:', err);
       toast.error('Failed to update tag');
+    } finally {
+      setUpdatingTags(false);
     }
   };
 
@@ -489,7 +499,7 @@ export default function OutreachInbox() {
     const timer = setTimeout(() => fetchThreads(), searchQuery ? 250 : 0);
     return () => { clearTimeout(timer); threadsRequestId.current += 1; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedAccountId, filterSource, searchQuery]);
+  }, [selectedAccountId, filterSource, searchQuery, tagFilter]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -754,6 +764,10 @@ export default function OutreachInbox() {
           </div>
 
           {/* Accounts Selector Dropdown Button matching media_1790103710555.png */}
+          <select aria-label="Filter conversations by lead tag" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)} className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700">
+            <option value="">All lead tags</option>
+            {tagsList.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
+          </select>
           <div className="relative">
             <button
               type="button"
@@ -983,11 +997,10 @@ export default function OutreachInbox() {
                       {selectedThread.lead_headline || selectedThread.lead_title || 'LinkedIn Prospect'}
                     </p>
                     {/* Active Lead Tags */}
-                    {(selectedThread.tags || []).map((tName) => {
-                      const tagDef = tagsList.find((t) => t.name === tName);
+                    {(selectedThread.tags || []).map((tagDef) => {
                       return (
                         <span
-                          key={tName}
+                          key={tagDef.id}
                           className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full text-[9px] font-bold border shadow-2xs"
                           style={{
                             backgroundColor: `${tagDef?.color || '#6366f1'}15`,
@@ -996,10 +1009,11 @@ export default function OutreachInbox() {
                           }}
                         >
                           <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: tagDef?.color || '#6366f1' }} />
-                          {tName}
+                          {tagDef.name}
                         </span>
                       );
                     })}
+                    {(selectedThread.legacy_tags || []).map((name) => <span key={`legacy:${name}`} title="Older conversation label; import from Settings → Lead tags to share with CRM" className="rounded-full border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[9px] text-gray-600">{name} · legacy</span>)}
                   </div>
                 </div>
               </div>
@@ -1494,7 +1508,7 @@ export default function OutreachInbox() {
                   <Tag className="w-4 h-4" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-gray-900 text-sm">Thread Tags</h3>
+                  <h3 className="font-bold text-gray-900 text-sm">Lead Tags</h3>
                   <p className="text-[11px] text-gray-400">Classify lead stage & interest</p>
                 </div>
               </div>
@@ -1507,9 +1521,10 @@ export default function OutreachInbox() {
             </div>
 
             {/* Tag Items */}
+            {selectedThread && selectedThread.tags_editable === false && <p className="text-xs text-amber-700">This conversation needs a linked CRM lead before tags can be assigned. Older conversation labels are preserved.</p>}
             <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
               {tagsList.map((tag) => {
-                const isChecked = (selectedThread?.tags || []).includes(tag.name);
+                const isChecked = (selectedThread?.tag_ids || []).includes(tag.id);
                 return (
                   <label
                     key={tag.id || tag.name}
@@ -1522,7 +1537,8 @@ export default function OutreachInbox() {
                     <input
                       type="checkbox"
                       checked={isChecked}
-                      onChange={() => handleToggleTag(tag.name)}
+                      disabled={updatingTags || selectedThread?.tags_editable === false || !selectedThread}
+                      onChange={() => handleToggleTag(tag)}
                       className="rounded border-gray-300 text-[#5145cd] focus:ring-[#5145cd]"
                     />
                   </label>

@@ -11,6 +11,10 @@ describe('Search cancellation confirmation and recovery', () => {
     job = { id: 'job', campaign_id: 'campaign', status: 'crawling', target_count: 100 };
     cancel = async () => response({ detail: 'Cancellation rejected' }, 403);
     global.fetch = jest.fn(async (url) => {
+      // Synthetic enabled contract isolates historical batching/cancel mechanics.
+      // Product-disabled collection is covered separately by the source tests.
+      if (url.endsWith('/import-sources')) return response({ contract_version: 1,
+        sources: [{ type: 'basic', parser_supported: true, collection_available: true, reason: '' }] });
       if (url.endsWith('/cancel')) return cancel();
       if (url.endsWith('/import-jobs/job')) return response(job);
       return response([]);

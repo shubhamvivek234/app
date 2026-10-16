@@ -124,6 +124,12 @@ class MockDatabase:
 def set_mock_env(monkeypatch):
     monkeypatch.setenv("OUTREACH_MOCK_AUTH", "true")
     monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", "true")
+    # Retain isolated historical crawler mechanics without production fixtures
+    # or implying public collection is enabled. Native closure tests use no stub.
+    from tests.outreach_search_fixtures import fixture_parser, fixture_search
+    monkeypatch.setattr("outreach.core.search_sources.require_search_collection", fixture_parser)
+    monkeypatch.setattr("outreach.api.leads.require_search_collection", fixture_parser)
+    monkeypatch.setattr("outreach.engine.voyager_client.LinkedInVoyagerClient.search_people_entities", fixture_search)
 
 
 @pytest.fixture
@@ -515,7 +521,7 @@ async def test_commercial_use_limit_handling(mock_db):
 
 @pytest.mark.asyncio
 async def test_staged_leads_review_and_commit_flow(mock_db):
-    """Scenario 9: Staged leads can be queried for review, edited, and committed to queued campaign leads."""
+    """Scenario 9: Saved search rows remain inspectable but unverified promotion denies."""
     from tests.outreach_memory import Database, Collection
     copied = Database()
     for name, collection in vars(mock_db).items():
@@ -568,28 +574,13 @@ async def test_staged_leads_review_and_commit_flow(mock_db):
         selected_lead_ids=["staged-1", "staged-2"],
         name_overrides={"staged-1": "Robert"},
     )
-    commit_resp = await commit_staged_leads(
-        job_id=job_id,
-        req=commit_req,
-        current_user={"user_id": "u-1", "workspace_id": "ws-1"},
-        db=mock_db,
-    )
-    assert commit_resp["status"] == "committed"
-    assert commit_resp["enrolled_count"] == 2
-
-    # Verify leads updated in DB
-    lead1 = await mock_db.outreach_leads.find_one({"id": "staged-1"})
-    assert lead1["first_name"] == "Robert"
-    assert lead1["execution_state"] == "queued"
-    assert lead1["staged_at"] is None
-
-    lead2 = await mock_db.outreach_leads.find_one({"id": "staged-2"})
-    assert lead2["execution_state"] == "queued"
-    assert lead2["staged_at"] is None
-
-    # Campaign leads_count updated
-    camp = await mock_db.outreach_campaigns.find_one({"id": "camp-1"})
-    assert camp["leads_count"] == 2
+    before = [dict(row) for row in mock_db.outreach_leads.docs]
+    with pytest.raises(HTTPException) as failure:
+        await commit_staged_leads(job_id=job_id, req=commit_req,
+            current_user={"user_id": "u-1", "workspace_id": "ws-1"}, db=mock_db)
+    assert failure.value.status_code == 409
+    assert mock_db.outreach_leads.docs == before
+    assert (await mock_db.outreach_campaigns.find_one({"id": "camp-1"}))["leads_count"] == 0
 
 
 @pytest.mark.asyncio

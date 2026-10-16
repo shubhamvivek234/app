@@ -15,6 +15,8 @@ from outreach.core.execution_outbox import ExecutionOutbox
 from outreach.core.inbox_freshness import credential_generation
 from outreach.core.sequence_versions import load_sequence
 from outreach.core.sequence_capabilities import sequence_dispatch_enabled
+from outreach.core.sequence_preview import validate_pinned_sequence
+from outreach.core.sequence_contract import DAGValidationError
 
 logger = logging.getLogger(__name__)
 _CONTEXT = ContextVar("sequence_dispatch_job", default=None)
@@ -30,13 +32,23 @@ FAILED = {"no_account_assigned", "account_unavailable", "sequence_not_configured
 
 def lead_stamp(lead: dict, campaign: dict, sequence: dict, account: dict) -> dict:
     roots = (sequence.get("compiled_dag") or {}).get("root_node_ids") or []
-    return {"campaign_id": lead["campaign_id"], "lead_id": lead["id"], "sender_id": lead.get("assigned_account_id"),
+    stamp = {"campaign_id": lead["campaign_id"], "lead_id": lead["id"], "sender_id": lead.get("assigned_account_id"),
         "enrollment_id": lead.get("enrollment_id") or "legacy:" + lead["id"], "node_id": lead.get("current_node_id") or (roots[0] if roots else None),
         "lead_node_id": lead.get("current_node_id"), "sequence_version": lead.get("sequence_version"),
         "sequence_digest": canonical_hash(sequence.get("compiled_dag")), "authorization_revision": lead.get("authorized_revision"),
         "campaign_revision": campaign.get("authorization_revision"), "credential_generation": credential_generation(account),
         "execution_state": lead.get("execution_state"), "waiting_for_reply_at": lead.get("waiting_for_reply_at"),
         "next_action_due_at": lead.get("next_action_due_at")}
+    if lead.get('connection_wait_required') or lead.get('connection_wait_id'):
+        from outreach.core.connection_waits import native
+        stamp.update({'connection_wait_id': lead.get('connection_wait_id'),
+            'connection_wait_revision': lead.get('connection_wait_revision'), 'lead_native_digest': native(lead)})
+    node = (sequence.get('compiled_dag') or {}).get('nodes', {}).get(stamp['node_id'], {})
+    if node.get('type') == 'has_data_in_column':
+        from outreach.core.connection_waits import native
+        stamp.update({'field_condition_contract_version': 1,
+            'condition_native_ids': [native(row) for row in (lead, campaign, sequence, account)]})
+    return stamp
 
 
 async def prepare_due(db: AsyncIOMotorDatabase, *, limit: int = 50, now: datetime | None = None) -> dict:
@@ -54,6 +66,10 @@ async def prepare_due(db: AsyncIOMotorDatabase, *, limit: int = 50, now: datetim
         sequence = await load_sequence(db, ws, cid, campaign=campaign)
         if not sequence or campaign.get("pause_reasons") or campaign.get("sequence_edit_pending"):
             continue
+        try:
+            validate_pinned_sequence(sequence)
+        except DAGValidationError:
+            continue
         query = {"workspace_id": ws, "campaign_id": cid, "execution_state": {"$in": ["queued", "waiting_delay", "replied"]}, "$and": [
             {"$or": [{"next_action_due_at": None}, {"next_action_due_at": {"$lte": now}}]},
             {"$or": [{"execution_state": {"$ne": "replied"}}, {"waiting_for_reply_at": {"$exists": True}}]},
@@ -64,15 +80,8 @@ async def prepare_due(db: AsyncIOMotorDatabase, *, limit: int = 50, now: datetim
             account = await db.outreach_accounts.find_one({"workspace_id": ws, "id": lead.get("assigned_account_id"), "is_deleted": {"$ne": True}})
             if not account:
                 continue
-            roots = (sequence.get("compiled_dag") or {}).get("root_node_ids") or []
-            if not lead.get("current_node_id") and roots:
-                changed = await db.outreach_leads.update_one({"workspace_id": ws, "id": lead["id"],
-                    "current_node_id": None, "execution_state": lead.get("execution_state"),
-                    "authorized_revision": lead.get("authorized_revision"), "execution_claim_token": {"$exists": False}},
-                    {"$set": {"current_node_id": roots[0]}})
-                if not changed.matched_count:
-                    continue
-                lead = {**lead, "current_node_id": roots[0]}
+            if not isinstance(lead.get('current_node_id'), str) or not lead['current_node_id']:
+                continue  # Launch/intake initialize roots with their actual due time.
             stamp = lead_stamp(lead, campaign, sequence, account)
             if (not stamp["node_id"] or stamp["authorization_revision"] != stamp["campaign_revision"]
                     or stamp["sequence_version"] != sequence.get("version", 1)):
@@ -81,6 +90,10 @@ async def prepare_due(db: AsyncIOMotorDatabase, *, limit: int = 50, now: datetim
             if not node:
                 continue
             key = canonical_hash([ws, stamp])
+            if node.get('type') == 'has_data_in_column':
+                from outreach.core.sequence_conditions import field_job_bound
+                if not field_job_bound({'workspace_id': ws, '_id': key, 'stamp': stamp}):
+                    continue
             intent_id = None
             if node.get("type") in EFFECT_ACTIONS:
                 intent = await ExecutionOutbox(db).ensure(workspace_id=ws, campaign_id=cid, lead_id=lead["id"], sender_id=account["id"],
@@ -121,6 +134,12 @@ async def publish_due(db: AsyncIOMotorDatabase, publish: Callable, *, limit: int
 async def validate_job(db: AsyncIOMotorDatabase, job: dict, owner: str | None = None, *, require_lead_owner: bool = False,
                        authorize_submission: bool = False, submission_owner: str | None = None) -> str | None:
     ws, stamp = job["workspace_id"], job["stamp"]
+    if not isinstance(stamp, dict) or not isinstance(stamp.get('node_id'), str):
+        return 'stale_job'
+    if 'field_condition_contract_version' in stamp or 'condition_native_ids' in stamp:
+        from outreach.core.sequence_conditions import field_job_bound
+        if not field_job_bound(job):
+            return 'stale_job'
     if owner:
         current = await db.outreach_sequence_jobs.find_one({"workspace_id": ws, "_id": job["_id"], "owner": owner,
             "status": "processing", "claim_expires_at": {"$gt": datetime.now(timezone.utc)}})
@@ -130,6 +149,11 @@ async def validate_job(db: AsyncIOMotorDatabase, job: dict, owner: str | None = 
     campaign = await db.outreach_campaigns.find_one({"workspace_id": ws, "id": stamp["campaign_id"], "status": "active", "is_deleted": {"$ne": True}})
     account = await db.outreach_accounts.find_one({"workspace_id": ws, "id": stamp["sender_id"], "is_deleted": {"$ne": True}})
     sequence = await load_sequence(db, ws, stamp["campaign_id"], campaign=campaign) if campaign else None
+    node = ((sequence or {}).get('compiled_dag') or {}).get('nodes', {}).get(stamp.get('node_id'), {})
+    if node.get('type') == 'has_data_in_column' or 'field_condition_contract_version' in stamp:
+        from outreach.core.sequence_conditions import field_job_bound
+        if not field_job_bound(job):
+            return 'stale_job'
     if (not lead or not campaign or not account or not sequence or lead_stamp(lead, campaign, sequence, account) != stamp
             or require_lead_owner and lead.get("execution_claim_token") != owner):
         return "stale_job"
@@ -166,6 +190,16 @@ def dispatch_intent_id() -> str | None:
     return value[1].get("intent_id") if value else None
 
 
+def dispatch_job_id() -> str | None:
+    value = _CONTEXT.get()
+    return value[1].get('_id') if value else None
+
+
+def condition_dispatch_context():
+    """Only the durable claimed job may choose a stored-field branch."""
+    return _CONTEXT.get()
+
+
 @contextmanager
 def dispatch_context(db: AsyncIOMotorDatabase, job: dict, owner: str):
     token = _CONTEXT.set((db, job, owner))
@@ -184,6 +218,10 @@ async def execute_job(db: AsyncIOMotorDatabase, workspace_id: str, job_id: str, 
         {"status": "queued"}, {"status": "processing", "claim_expires_at": {"$lte": now}},
     ]}, {"$set": {"status": "processing", "owner": owner, "claim_expires_at": now + timedelta(seconds=LEASE_SECONDS)}})
     if not changed.matched_count:
+        from outreach.core.sequence_conditions import saved_result
+        recovered = saved_result(await db.outreach_sequence_jobs.find_one(scope))
+        if recovered:
+            return {**recovered, 'recovered': True}
         return {"status": "already_claimed"}
     job = await db.outreach_sequence_jobs.find_one({**scope, "owner": owner})
     reason = await validate_job(db, job, owner)
@@ -199,7 +237,7 @@ async def execute_job(db: AsyncIOMotorDatabase, workspace_id: str, job_id: str, 
     claimed = await db.outreach_leads.update_one({**lead_scope, "$or": [
         {"execution_claimed_at": {"$exists": False}}, {"execution_claimed_at": {"$lte": now - timedelta(seconds=LEASE_SECONDS)}},
     ]}, {"$set": {"execution_claimed_at": now, "execution_claim_token": owner}})
-    owned = {**scope, "owner": owner}
+    owned = {**scope, "owner": owner, "status": "processing", "stamp": job['stamp']}
     if not claimed.matched_count:
         await db.outreach_sequence_jobs.update_one(owned, {"$set": {"status": "queued", "next_due_at": now + timedelta(seconds=30)}})
         return {"status": "lead_busy"}
@@ -221,7 +259,8 @@ async def execute_job(db: AsyncIOMotorDatabase, workspace_id: str, job_id: str, 
             await db.outreach_sequence_jobs.update_one(owned, {"$set": {"status": "deferred", "next_due_at": due, "result_status": status}})
         else:
             if status in FAILED:
-                await db.outreach_leads.update_one(projection, {"$set": {"execution_state": "failed", "failure_reason": result.get("reason") or status}})
+                from outreach.core.search_sources import SEARCH_PROVENANCE_QUERY
+                await db.outreach_leads.update_one({**projection, "$nor": [SEARCH_PROVENANCE_QUERY]}, {"$set": {"execution_state": "failed", "failure_reason": result.get("reason") or status}})
             terminal = "held_outcome" if status in {"action_uncertain", "uncertain"} else "completed"
             await db.outreach_sequence_jobs.update_one(owned, {"$set": {"status": terminal, "result_status": status, "completed_at": now}})
         return result

@@ -252,8 +252,11 @@ async def _persist_inbound(db, mailbox: dict, provider_id: str, recipient: str,
                              and message["thread_id"] == op["provider_thread_id"])
     attribution = "message_reference" if matched_by_id else "provider_thread" if matched_by_thread else "sender_address_and_time"
     now = datetime.now(timezone.utc)
+    from outreach.core.search_sources import retain_search_source_hold
     if kind == "bounce":
         await suppress_email(db, workspace_id=workspace_id, email=recipient, reason="bounce", lead_id=op.get("lead_id"))
+        await retain_search_source_hold(db, workspace_id,
+            {"workspace_id": workspace_id, "id": op["lead_id"], "email_bounced_at": {"$exists": False}})
         changed = await db.outreach_leads.update_one(
             {"workspace_id": workspace_id, "id": op["lead_id"], "email_bounced_at": {"$exists": False}},
             {"$set": {"email_bounced_at": received_at, "execution_state": LeadExecutionState.BOUNCED,
@@ -268,6 +271,8 @@ async def _persist_inbound(db, mailbox: dict, provider_id: str, recipient: str,
                              reason="recipient_replied" if confirmed else "possible_reply_review",
                              lead_id=op.get("lead_id"))
         if confirmed:
+            await retain_search_source_hold(db, workspace_id,
+                {"workspace_id": workspace_id, "id": op["lead_id"], "has_replied": {"$ne": True}})
             changed = await db.outreach_leads.update_one(
                 {"workspace_id": workspace_id, "id": op["lead_id"], "has_replied": {"$ne": True}},
                 {"$set": {"has_replied": True, "replied_at": received_at,
@@ -377,6 +382,8 @@ async def _persist_inbound(db, mailbox: dict, provider_id: str, recipient: str,
                     },
                 )
         else:
+            await retain_search_source_hold(db, workspace_id,
+                {"workspace_id": workspace_id, "id": op["lead_id"], "has_replied": {"$ne": True}})
             await db.outreach_leads.update_one(
                 {"workspace_id": workspace_id, "id": op["lead_id"], "has_replied": {"$ne": True}},
                 {"$set": {"execution_state": LeadExecutionState.WAITING_TRIGGER,

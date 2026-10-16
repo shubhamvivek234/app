@@ -16,6 +16,7 @@ from outreach.core.dag_compiler import DAGCompiler, DAGValidationError, contains
 from outreach.core.paid_access import _utc, get_active_entitlement, sender_is_ready
 from outreach.core.proxy_custody import proxy_digest, proxy_record, _context as proxy_context
 from outreach.core.sequence_capabilities import sequence_capability_map
+from outreach.core.sequence_preview import analyze_sequence, same_execution_graph
 from outreach.core.sequence_versions import load_sequence
 from outreach.core.workspace_scope import workspace_scope
 from outreach.models import DailyLimits
@@ -112,22 +113,20 @@ async def _assess(db: Any, workspace: str, campaign: dict, warmup_reader: Any,
     capabilities = sequence_capability_map()
     if seq and seq.get('workspace_id') == workspace and seq.get('campaign_id') == cid and not seq.get('is_deleted') and isinstance(nodes, list) and 0 < len(nodes) <= 100 and isinstance(edges, list) and len(edges) <= 200:
         try:
-            if contains_ai_prompt_token(nodes):
-                sequence_reason = 'Sequence contains unresolved AI prompt tokens (preview only)'
-            elif any(not isinstance(node, dict) or not capabilities.get(node.get('type'), {}).get('supported') for node in nodes):
-                sequence_reason = 'Sequence contains steps not supported by the campaign runner'
-            elif any(node.get('type') == 'send_email' and not all(isinstance((node.get('config') or {}).get(key), str) and node['config'][key].strip() for key in ('subject', 'body')) for node in nodes):
-                sequence_reason = 'Email steps need a nonempty subject and body.'
+            candidate = DAGCompiler.validate_and_compile(nodes, edges)
+            analysis = analyze_sequence(candidate)
+            if not analysis['valid']:
+                sequence_reason = next(item['message'] for item in analysis['issues'] if item['severity'] == 'error')
+            elif 'compiled_dag' in seq and not same_execution_graph(seq['compiled_dag'], candidate):
+                sequence_reason = 'Saved sequence and execution graph differ; review and save a new revision'
             else:
-                compiled = DAGCompiler.validate_and_compile(nodes, edges)
-                if not compiled.get('root_node_ids'):
-                    compiled = None
+                compiled = candidate
         except (ValueError, TypeError, KeyError, DAGValidationError):
             sequence_reason = 'Sequence DAG structure is invalid'
     check('sequence', 'Sequence Capabilities & DAG', compiled is not None,
           f'Sequence compiled successfully ({len(nodes) if isinstance(nodes, list) else 0} steps)', sequence_reason, 400)
-    types = {node.get('type') for node in nodes if isinstance(node, dict)} if isinstance(nodes, list) else set()
-    needs_linkedin = not types or any(capabilities.get(kind, {}).get('channel') != 'email' for kind in types)
+    types = {node['type'] for node in compiled['nodes'].values()} if compiled else set()
+    needs_linkedin = not types or any(capabilities.get(kind, {}).get('channel') == 'linkedin' for kind in types)
     needs_mailbox = 'send_email' in types
     check('policy', 'Execution Features', bool(compiled and all(capabilities.get(kind, {}).get('live_enabled') for kind in types)),
           'Required sequence features are enabled', 'One or more sequence features are not enabled for live execution', 403)
@@ -214,6 +213,11 @@ async def _assess(db: Any, workspace: str, campaign: dict, warmup_reader: Any,
     check('mailboxes', 'Email Mailbox Readiness', mailbox_ok, 'Stored mailbox state meets the launch check' if needs_mailbox else 'Not required (no email steps in sequence)', mailbox_reason, 400)
     count = await db.outreach_leads.count_documents({**campaign_scope, 'execution_state': {'$ne': 'staged'}})
     check('leads', 'Enrolled Prospects', type(count) is int and count > 0, f'{count} prospect(s) enrolled in campaign', 'Enroll at least one prospect before launching', 400)
+    from outreach.core.search_sources import SEARCH_PROVENANCE_QUERY, UNVERIFIED_LEAD
+    source_hold = await db.outreach_leads.find_one({**campaign_scope,
+        'execution_state': {'$ne': 'staged'}, **SEARCH_PROVENANCE_QUERY})
+    check('lead_sources', 'Prospect Source Review', not source_hold,
+          'No retained unverified search provenance found', UNVERIFIED_LEAD, 409)
     check('schedule', 'Working Schedule Window', OutboundRateLimiter.has_valid_working_window(campaign.get('schedule')),
           'A valid working-hours window is configured; execution waits for that window', 'Configure a valid working-hours schedule window', 400)
     try:

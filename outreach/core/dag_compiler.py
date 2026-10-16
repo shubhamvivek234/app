@@ -2,26 +2,10 @@
 Phase 4: DAG Sequence Compiler & Graph Topology Validator.
 Validates sequence graphs, detects cycles/orphans, and compiles React Flow JSON into an execution tree.
 """
+import re
 from typing import Any
-from outreach.models import SequenceNode, SequenceEdge, SequenceNodeType
-
-
-class DAGValidationError(Exception):
-    pass
-
-
-_BOOLEAN_CONDITIONS = {
-    SequenceNodeType.IF_CONNECTED.value,
-    SequenceNodeType.IF_EMAIL_AVAILABLE.value,
-    SequenceNodeType.IF_OPENED_MESSAGE.value,
-    SequenceNodeType.OPEN_PROFILE_CHECK.value,
-    SequenceNodeType.HAS_DATA_IN_COLUMN.value,
-}
-_POSITIVE_LABELS = {"accepted", "replied", "connected", "true", "yes", "positive", "email available"}
-_NEGATIVE_LABELS = {
-    "not accepted", "not accepted yet", "no reply", "not connected", "rejected",
-    "declined", "unresponsive", "false", "no", "negative", "email unavailable",
-}
+from outreach.models import SequenceNodeType
+from outreach.core.sequence_contract import DAGValidationError, graph_envelope, branch_kind, MAX_RENDER_CHARS
 
 
 def interpolate_template(template_str: str, lead: dict[str, Any]) -> str:
@@ -31,6 +15,8 @@ def interpolate_template(template_str: str, lead: dict[str, Any]) -> str:
     company = lead.get("company_name") or "your company"
     title = lead.get("job_title") or ""
     custom_variables = lead.get("custom_variables") or {}
+    if not isinstance(custom_variables, dict):
+        raise DAGValidationError("Message variables need review.")
     built_in_variables = {
         "first_name": first_name,
         "last_name": last_name,
@@ -40,16 +26,25 @@ def interpolate_template(template_str: str, lead: dict[str, Any]) -> str:
         "job_title": title,
         "industry": lead.get("industry") or custom_variables.get("industry") or "",
         "location_raw": lead.get("location_raw") or lead.get("location") or "",
+        "location": lead.get("location_raw") or lead.get("location") or "",
     }
 
-    text = template_str
-    for key, value in built_in_variables.items():
-        text = text.replace(f"{{{{{key}}}}}", str(value))
-
-    for k, v in custom_variables.items():
-        text = text.replace(f"{{{{{k}}}}}", str(v))
-
-    return text
+    if not isinstance(template_str, str) or not isinstance(custom_variables, dict):
+        raise DAGValidationError("Message template and variables need review.")
+    values = {**custom_variables, **built_in_variables}
+    parts, total, cursor = [], 0, 0
+    # Resolve once. Values cannot recursively introduce more substitutions.
+    for match in re.finditer(r"\{\{([A-Za-z_][A-Za-z0-9_]{0,99})\}\}", template_str):
+        prefix = template_str[cursor:match.start()]
+        replacement = str(values[match.group(1)]) if match.group(1) in values else match.group()
+        total += len(prefix) + len(replacement)
+        if total > MAX_RENDER_CHARS:
+            raise DAGValidationError("Rendered message exceeds the 10,000-character review bound.")
+        parts.extend((prefix, replacement)); cursor = match.end()
+    suffix = template_str[cursor:]
+    if total + len(suffix) > MAX_RENDER_CHARS:
+        raise DAGValidationError("Rendered message exceeds the 10,000-character review bound.")
+    return ''.join((*parts, suffix))
 
 
 def contains_ai_prompt_token(value: Any) -> bool:
@@ -74,19 +69,12 @@ class DAGCompiler:
         """
         Validates graph structure and produces an indexed adjacency execution lookup.
         """
-        if not nodes:
-            raise DAGValidationError("Sequence must contain at least one step.")
-
-        if any(not isinstance(node, dict) or not node.get("id") or not node.get("type") for node in nodes):
-            raise DAGValidationError("Every sequence step must have an ID and a type.")
-
+        graph_envelope(nodes, edges)
         for node in nodes:
             try:
                 SequenceNodeType(node["type"])
-                if int(node.get("delay_hours", 0)) < 0:
-                    raise ValueError("negative delay")
-            except (ValueError, TypeError):
-                raise DAGValidationError(f"Invalid step type or delay for node: {node.get('id')}")
+            except ValueError:
+                raise DAGValidationError(f"Invalid step type for node: {node['id']}") from None
 
         node_map = {n["id"]: n for n in nodes}
         if len(node_map) != len(nodes):
@@ -155,29 +143,24 @@ class DAGCompiler:
                 "branches": {},
             }
 
-            # Map branching vs sequential flow
             branch_targets: set[str] = set()
             for edge in edges_from:
-                label = (edge.get("sourceHandle") or edge.get("label") or "").strip().lower()
-                target_id = edge["target"]
-
-                if label in _POSITIVE_LABELS:
-                    if "positive" in branch_targets:
-                        raise DAGValidationError(f"Step {n_id} has more than one positive branch.")
-                    branch_targets.add("positive")
-                    compiled_node["branches"]["positive"] = target_id
-                elif label in _NEGATIVE_LABELS:
-                    if "negative" in branch_targets:
-                        raise DAGValidationError(f"Step {n_id} has more than one negative branch.")
-                    branch_targets.add("negative")
-                    compiled_node["branches"]["negative"] = target_id
+                label = edge.get("label")
+                handle = edge.get("sourceHandle")
+                label_kind = branch_kind(node_type, label) if label not in (None, '') else None
+                handle_kind = branch_kind(node_type, handle) if handle not in (None, '') else None
+                if label_kind and handle_kind and label_kind != handle_kind:
+                    raise DAGValidationError(f"Step {n_id} has conflicting display and handle branch labels.")
+                selected = handle_kind or label_kind or branch_kind(node_type, None)
+                if selected in branch_targets:
+                    raise DAGValidationError(f"Step {n_id} has more than one {selected} next step.")
+                branch_targets.add(selected)
+                if selected == "default":
+                    compiled_node["next_default"] = edge["target"]
                 else:
-                    if node_type in _BOOLEAN_CONDITIONS:
-                        raise DAGValidationError(f"Condition step {n_id} requires explicit Yes/No branch labels.")
-                    if "default" in branch_targets:
-                        raise DAGValidationError(f"Step {n_id} has more than one default next step.")
-                    branch_targets.add("default")
-                    compiled_node["next_default"] = target_id
+                    compiled_node["branches"][selected] = edge["target"]
+            if "default" in branch_targets and len(branch_targets) > 1:
+                raise DAGValidationError(f"Step {n_id} mixes default and conditional successors.")
 
             compiled["nodes"][n_id] = compiled_node
 

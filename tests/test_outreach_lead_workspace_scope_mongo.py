@@ -166,12 +166,12 @@ async def test_actual_import_updates_only_current_workspace_children(admission_d
     async with client_for(real_db) as client:
         cancelled = await client.post("/leads/import-jobs/job/cancel")
         committed = await client.post("/leads/import-jobs/job/commit", json={"name_overrides": {"staged": "Edited"}})
-    assert cancelled.status_code == committed.status_code == 200
+    assert cancelled.status_code == 200 and committed.status_code == 409
     assert (await real_db.outreach_import_jobs.find_one({"id": "job", "workspace_id": FOREIGN}))["status"] == "queued"
     foreign = await real_db.outreach_leads.find_one({"id": "staged", "workspace_id": FOREIGN})
     current = await real_db.outreach_leads.find_one({"id": "staged", "workspace_id": WORKSPACE})
     assert foreign["first_name"] == "Original" and foreign["execution_state"] == "staged"
-    assert current["first_name"] == "Edited" and current["execution_state"] == "queued"
+    assert current["first_name"] == "Original" and current["execution_state"] == "staged"
     assert (await real_db.outreach_campaigns.find_one({"id": "campaign", "workspace_id": FOREIGN}))["leads_count"] == 10
 
 

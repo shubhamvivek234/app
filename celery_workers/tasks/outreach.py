@@ -902,7 +902,7 @@ async def _crawl_page(job_id: str, cursor: int = 0, lease_token: str = "", db=No
     from outreach.engine.voyager_client import LinkedInVoyagerClient
     from outreach.models import LeadExecutionState, SearchImportJobStatus, SearchImportStopReason
 
-    db = db or await _inbox_db()
+    db = db if db is not None else await _inbox_db()
 
     page_owner = str(uuid.uuid4())
     claim_now = datetime.now(timezone.utc)
@@ -937,6 +937,19 @@ async def _crawl_page(job_id: str, cursor: int = 0, lease_token: str = "", db=No
     workspace_id = job.get("workspace_id")
     campaign_id = job.get("campaign_id")
     sender_id = job.get("sender_account_id")
+
+    from outreach.core.search_sources import SearchSourceError, require_search_collection
+    try:
+        require_search_collection(job.get("search_url", ""))
+    except SearchSourceError:
+        stopped_at = datetime.now(timezone.utc)
+        changed = await db.outreach_import_jobs.update_one(job_scope, {"$set": {
+            "status": SearchImportJobStatus.STOPPED.value,
+            "stop_reason": SearchImportStopReason.SOURCE_REVIEW_REQUIRED.value,
+            "user_error_message": "This search source needs verification. Saved records are retained for review; use CSV or public profile URLs.",
+            "completed_at": stopped_at, "updated_at": stopped_at}})
+        return {"status": "stopped" if changed.matched_count else "job_changed",
+                "reason": SearchImportStopReason.SOURCE_REVIEW_REQUIRED.value}
 
     # 2. Entitlement check
     if not await get_active_entitlement(db, workspace_id):

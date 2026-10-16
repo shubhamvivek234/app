@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends
 from outreach.core.proxy_manager import JITProxyManager
 from outreach.api.accounts import router as accounts_router
 from outreach.api.leads import router as leads_router
+from outreach.api.lead_lists import router as lead_lists_router
 from outreach.api.sequences import router as sequences_router
 from outreach.api.campaigns import router as campaigns_router
 from outreach.api.voice import router as voice_router
@@ -31,7 +32,7 @@ async def _open_workspace(current_user: dict = Depends(get_outreach_user)) -> No
     return None
 
 
-for child in (accounts_router, leads_router, sequences_router, campaigns_router,
+for child in (accounts_router, leads_router, lead_lists_router, sequences_router, campaigns_router,
         voice_router, inbox_router, billing_router, engage_router, styles_router,
         swipe_router, prompts_router, analytics_router,
         action_reconciliation_router, content_approvals_router):

@@ -27,9 +27,25 @@ from outreach.core.lead_importer import (
     check_compound_suppression,
 )
 from outreach.core.name_cleaner import clean_first_name
+from outreach.core.search_sources import (
+    SearchSourceError, require_search_collection, search_source_capabilities,
+    unverified_search_lead, UNVERIFIED_LEAD,
+)
 from outreach.core.paid_access import get_active_entitlement
-from outreach.engine.voyager_client import parse_linkedin_search_url
 from outreach.models import LeadExecutionState, SearchImportJob, SearchImportJobStatus, SearchImportStopReason
+from outreach.core.lead_tags import (
+    active_tag_map,
+    assign_tags,
+    create_tag as create_canonical_tag,
+    edit_tag,
+    hydrate_lead_tags,
+    migrate_legacy_tags,
+    validate_tag_id,
+    stored_ids,
+    stored_revision,
+    unique_resource,
+    captured_scope,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +143,10 @@ class DoNotContactRequest(BaseModel):
     reason: str | None = None
 
 
+class BlockLeadRequest(BaseModel):
+    reason: str = Field(default="Manual exclusion from lead profile", min_length=1, max_length=500)
+
+
 class LeadFinderPreviewRequest(BaseModel):
     title: str | None = None
     industry: str | None = None
@@ -158,7 +178,79 @@ class UpdateLeadStageRequest(BaseModel):
     pipeline_stage: str = Field(..., description="'unassigned' | 'in_campaign' | 'contacted' | 'replied' | 'call_booked'")
 
 
+class CreateLeadTagRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    color: str = Field(default="#6366f1", pattern=r"^#[0-9a-fA-F]{6}$")
+
+
+class UpdateLeadTagRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    color: str = Field(..., pattern=r"^#[0-9a-fA-F]{6}$")
+    revision: int = Field(..., ge=1, strict=True)
+
+
+class LeadTagMutationRequest(BaseModel):
+    tag_id: str
+    operation: str = Field(..., pattern=r"^(add|remove)$")
+    revision: int = Field(..., ge=0, strict=True)
+
+
+class BulkLeadTagMutationRequest(BaseModel):
+    lead_ids: list[str] = Field(..., min_length=1, max_length=200)
+    tag_id: str
+    operation: str = Field(..., pattern=r"^(add|remove)$")
+
+
+class LeadSelectionRequest(BaseModel):
+    lead_ids: list[str] = Field(..., min_length=1, max_length=200)
+    allow_contacted: bool = Field(default=False, strict=True)
+
+
+class LeadSelectionDraftRequest(LeadSelectionRequest):
+    name: str = Field(..., min_length=1, max_length=100)
+    request_id: uuid.UUID
+    review_digest: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+    request_scope: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+
+
 # ── Endpoints ──────────────────────────────────────────────────────────────
+
+def _selection_request_scope(current_user: dict) -> str:
+    from outreach.core.authorization import canonical_hash
+    return canonical_hash(["lead_selection", _workspace_id(current_user), _user_id(current_user)])
+
+
+@router.get("/selection/context")
+async def lead_selection_context(current_user: dict = _lead_permission("lead:read")):
+    """Recover an unresolved request even when its source leads no longer exist."""
+    return {"request_scope": _selection_request_scope(current_user)}
+
+@router.post("/selection/preview")
+async def preview_lead_selection(
+    req: LeadSelectionRequest,
+    current_user: dict = _lead_permission("lead:read"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    from outreach.core.lead_selection import selection_preview
+    result = await selection_preview(db, _workspace_id(current_user), req.lead_ids, req.allow_contacted)
+    return {**result, "request_scope": _selection_request_scope(current_user)}
+
+
+@router.post("/selection/draft")
+async def create_lead_selection_draft(
+    req: LeadSelectionDraftRequest,
+    current_user: dict = _lead_permission("lead:create"),
+    campaign_user: dict = _lead_permission("campaign:create"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    from outreach.core.lead_selection import create_selection_draft
+    workspace = _workspace_id(current_user)
+    if _workspace_id(campaign_user) != workspace or _user_id(campaign_user) != _user_id(current_user):
+        raise HTTPException(403, "Campaign and lead permissions must use the same workspace")
+    if req.request_scope != _selection_request_scope(current_user):
+        raise HTTPException(403, "Workspace or account changed. Return to the original workspace to confirm this draft request.")
+    return await create_selection_draft(db, workspace, _user_id(current_user), req.lead_ids,
+        req.allow_contacted, req.name, str(req.request_id), req.review_digest)
 
 @router.post("/preview")
 async def preview_leads_intake(
@@ -382,6 +474,11 @@ async def import_leads_staged(
     return result
 
 
+@router.get("/import-sources")
+async def get_import_sources(current_user: dict = _lead_permission("lead:read")):
+    return search_source_capabilities()
+
+
 @router.post("/import-search")
 async def import_search_url(
     req: ImportSearchRequest,
@@ -394,6 +491,12 @@ async def import_search_url(
     """
     await _require_campaign(req.campaign_id, current_user, db)
     workspace_id = _workspace_id(current_user)
+    if req.search_type not in {"basic", "sales_nav"}:
+        raise HTTPException(422, "Unsupported search source")
+    try:
+        parsed_search = require_search_collection(req.search_url)
+    except SearchSourceError as exc:
+        raise HTTPException(501 if exc.code == "search_source_review_required" else 422, str(exc)) from None
 
     # 1. Active paid subscription & seat check
     if not await get_active_entitlement(db, workspace_id):
@@ -426,13 +529,7 @@ async def import_search_url(
         )
 
     # 3. URL parsing & classification
-    clean_url = req.search_url.strip()
-    parsed_search = parse_linkedin_search_url(clean_url)
-    if not parsed_search.get("is_valid"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Must be a valid LinkedIn People search or Sales Navigator Lead search URL.",
-        )
+    clean_url = parsed_search["clean_url"]
 
     # 4. Sales Nav seat check for sales_nav URLs
     search_type = parsed_search["search_type"]
@@ -590,6 +687,10 @@ async def commit_staged_leads(
     if not initial_job:
         raise HTTPException(404, "Import job not found")
     await _require_campaign(initial_job["campaign_id"], current_user, db)
+    try:
+        require_search_collection(initial_job.get("search_url", ""))
+    except SearchSourceError:
+        raise HTTPException(409, UNVERIFIED_LEAD) from None
 
     async def promote(current):
         job = await current.outreach_import_jobs.find_one({"id": job_id, **workspace_scope(workspace_id)})
@@ -627,6 +728,8 @@ async def _lead_query(
     location: str | None,
     current_user: dict,
     db: AsyncIOMotorDatabase,
+    tag_ids: str | None = None,
+    untagged: bool = False,
 ) -> dict[str, Any]:
     workspace_id = _workspace_id(current_user)
 
@@ -656,6 +759,21 @@ async def _lead_query(
             {"country_code": {"$regex": escaped_location, "$options": "i"}},
         ]})
 
+    if tag_ids and len(tag_ids) > 1500:
+        raise HTTPException(422, "Choose at most 50 tag filters")
+    requested_tags = [validate_tag_id(value.strip()) for value in (tag_ids or "").split(",") if value.strip()]
+    requested_tags = list(dict.fromkeys(requested_tags))
+    if requested_tags and untagged:
+        raise HTTPException(status_code=422, detail="Choose tags or untagged, not both")
+    if requested_tags:
+        definitions = await active_tag_map(db, workspace_id, requested_tags)
+        if len(definitions) != len(requested_tags):
+            raise HTTPException(status_code=404, detail="One or more tags were not found")
+        clauses.append({"tag_ids": {"$all": requested_tags}})
+    elif untagged:
+        active_ids = list(await active_tag_map(db, workspace_id))
+        clauses.append({"tag_ids": {"$nin": active_ids}})
+
     return {"$and": clauses} if len(clauses) > 1 else clauses[0]
 
 
@@ -666,13 +784,15 @@ async def list_leads(
     pipeline_stage: str | None = None,
     search: str | None = None,
     location: str | None = None,
+    tag_ids: str | None = None,
+    untagged: bool = False,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     current_user: dict = _lead_permission("lead:read"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Returns filterable, paginated leads for the active workspace."""
-    query = await _lead_query(campaign_id, execution_state, pipeline_stage, search, location, current_user, db)
+    query = await _lead_query(campaign_id, execution_state, pipeline_stage, search, location, current_user, db, tag_ids, untagged)
 
     total = await db.outreach_leads.count_documents(query)
     cursor = db.outreach_leads.find(query).sort([("created_at", -1), ("id", -1)]).skip(skip).limit(limit)
@@ -680,6 +800,10 @@ async def list_leads(
 
     for l in leads:
         l.pop("_id", None)
+    await hydrate_lead_tags(db, _workspace_id(current_user), leads)
+    exclusions = await check_compound_suppression(_workspace_id(current_user), leads, db)
+    for index, lead in enumerate(leads):
+        lead["do_not_contact"] = bool(lead.get("do_not_contact")) or index in exclusions
 
     return {
         "leads": leads,
@@ -692,7 +816,7 @@ async def list_leads(
 EXPORT_COLUMNS = (
     "first_name", "last_name", "linkedin_url", "company_name", "job_title",
     "location", "email", "phone", "campaign_id", "pipeline_stage",
-    "execution_state", "created_at", "last_action_taken", "last_action_at", "custom_variables",
+    "execution_state", "tags", "created_at", "last_action_taken", "last_action_at", "custom_variables",
 )
 
 
@@ -712,11 +836,15 @@ async def export_leads(
     pipeline_stage: str | None = None,
     search: str | None = None,
     location: str | None = None,
+    tag_ids: str | None = None,
+    untagged: bool = False,
     current_user: dict = _lead_permission("lead:read"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Export every matching workspace lead, independent of the current UI page."""
-    query = await _lead_query(campaign_id, execution_state, pipeline_stage, search, location, current_user, db)
+    workspace_id = _workspace_id(current_user)
+    query = await _lead_query(campaign_id, execution_state, pipeline_stage, search, location, current_user, db, tag_ids, untagged)
+    definitions = await active_tag_map(db, workspace_id, include_archived=True)
 
     async def rows():
         buffer = io.StringIO()
@@ -727,6 +855,14 @@ async def export_leads(
         buffer.truncate(0)
         cursor = db.outreach_leads.find(query).sort([("created_at", -1), ("id", -1)])
         async for lead in cursor:
+            try:
+                ids = stored_ids(lead)
+                stored_revision(lead)
+                if any(identifier not in definitions for identifier in ids):
+                    raise HTTPException(409, "Unknown tag assignment")
+                lead["tags"] = "; ".join(definitions[identifier]["name"] for identifier in ids if not definitions[identifier]["archived"])
+            except HTTPException:
+                lead["tags"] = "Unavailable: tag assignments require review"
             writer.writerow([_safe_csv_cell(lead.get(field)) for field in EXPORT_COLUMNS])
             yield buffer.getvalue()
             buffer.seek(0)
@@ -735,6 +871,79 @@ async def export_leads(
     return StreamingResponse(rows(), media_type="text/csv; charset=utf-8", headers={
         "Content-Disposition": 'attachment; filename="outreach-leads.csv"',
     })
+
+
+@router.get("/tags")
+async def list_lead_tags(
+    current_user: dict = _lead_permission("lead:read"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    definitions = await active_tag_map(db, _workspace_id(current_user))
+    return list(definitions.values())
+
+
+@router.post("/tags/import-legacy")
+async def import_legacy_lead_tags(
+    after_id: str = Query(default="", max_length=200),
+    current_user: dict = _lead_permission("lead:update"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    return await migrate_legacy_tags(db, _workspace_id(current_user), _user_id(current_user), after_id)
+
+
+@router.post("/tags", status_code=status.HTTP_201_CREATED)
+async def create_lead_tag(
+    req: CreateLeadTagRequest,
+    current_user: dict = _lead_permission("lead:update"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    return await create_canonical_tag(db, _workspace_id(current_user), _user_id(current_user), req.name, req.color)
+
+
+@router.patch("/tags/{tag_id}")
+async def update_lead_tag(
+    tag_id: str,
+    req: UpdateLeadTagRequest,
+    current_user: dict = _lead_permission("lead:update"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    return await edit_tag(db, _workspace_id(current_user), tag_id, req.revision, req.name, req.color)
+
+
+@router.delete("/tags/{tag_id}")
+async def archive_lead_tag(
+    tag_id: str,
+    revision: int = Query(..., ge=1),
+    current_user: dict = _lead_permission("lead:update"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    return await edit_tag(db, _workspace_id(current_user), tag_id, revision, archive=True)
+
+
+@router.patch("/{lead_id}/tags")
+async def mutate_lead_tag(
+    lead_id: str,
+    req: LeadTagMutationRequest,
+    current_user: dict = _lead_permission("lead:update"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    workspace = _workspace_id(current_user)
+    result = await assign_tags(db, workspace, [lead_id], req.tag_id, req.operation, req.revision)
+    lead = await unique_resource(db.outreach_leads, workspace, lead_id)
+    if not lead:
+        raise HTTPException(409, "Lead changed; reload its tags")
+    lead.pop("_id", None)
+    await hydrate_lead_tags(db, workspace, [lead])
+    return {**result, "lead": {key: lead[key] for key in ("id", "tag_ids", "tag_revision", "tags", "archived_tags")}}
+
+
+@router.post("/tags/bulk")
+async def bulk_mutate_lead_tags(
+    req: BulkLeadTagMutationRequest,
+    current_user: dict = _lead_permission("lead:update"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    return await assign_tags(db, _workspace_id(current_user), req.lead_ids, req.tag_id, req.operation)
 
 
 @router.delete("/{lead_id}")
@@ -841,6 +1050,53 @@ async def list_do_not_contact(
     for d in dnc_list:
         d.pop("_id", None)
     return dnc_list
+
+
+@router.post("/{lead_id}/do-not-contact")
+async def block_lead(
+    lead_id: str,
+    req: BlockLeadRequest,
+    current_user: dict = _lead_permission("lead:update"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Exclude the stored current and original aliases in one ordered transaction."""
+    from outreach.core.lead_tags import _commit
+    workspace = _workspace_id(current_user)
+
+    async def save(current):
+        lead = await unique_resource(current.outreach_leads, workspace, lead_id)
+        if not lead:
+            raise HTTPException(404, "Lead not found")
+        original = lead.get("identifiers") if isinstance(lead.get("identifiers"), dict) else {}
+        aliases = [
+            ("linkedin_url", lead.get("linkedin_url")), ("email", lead.get("email")),
+            ("member_urn", lead.get("member_urn")), ("member_urn", lead.get("linkedin_urn")),
+            ("sales_lead_urn", lead.get("sales_lead_urn")), ("vanity_name", lead.get("vanity_name")),
+            ("linkedin_url", original.get("normalized_url")), ("email", original.get("email")),
+            ("member_urn", original.get("member_urn")), ("sales_lead_urn", original.get("sales_lead_urn")),
+            ("vanity_name", original.get("vanity_name")),
+        ]
+        saved = 0
+        for field, value in aliases:
+            if not isinstance(value, str) or not value.strip():
+                continue
+            # Normalize each alias independently. URL-derived handles and current
+            # member_urn precedence must not erase another reviewed identity.
+            normalized = build_lead_identifiers(**{("raw_url" if field == "linkedin_url" else field): value})
+            if not any(normalized.model_dump().values()):
+                continue
+            await add_do_not_contact(DoNotContactRequest(**{field: value}, reason=req.reason),
+                                     current_user=current_user, db=current)
+            saved += 1
+        if not saved:
+            raise HTTPException(422, "This lead has no contact identifiers to exclude")
+        changed = await current.outreach_leads.update_one(captured_scope(workspace, lead), {"$set": {
+            "do_not_contact": True, "do_not_contact_at": datetime.now(timezone.utc)}})
+        if changed.matched_count != 1:
+            raise HTTPException(409, "Lead changed; reload before excluding it")
+        return {"status": "excluded", "lead_id": lead_id}
+
+    return await _commit(db, workspace, save)
 
 
 # ── Lead Finder & Post Engagers ────────────────────────────────────────────
@@ -953,8 +1209,7 @@ async def get_lead_activity(
     Combines action outcomes, inbound replies, notes, state changes, and current sequence position.
     """
     workspace_id = _workspace_id(current_user)
-    lead_filter = _lead_filter(lead_id, current_user)
-    lead = await db.outreach_leads.find_one(lead_filter)
+    lead = await unique_resource(db.outreach_leads, workspace_id, lead_id)
     if not lead:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
     lead.pop("_id", None)
@@ -1079,6 +1334,8 @@ async def get_lead_activity(
         return 0.0
 
     activities.sort(key=_ts_key, reverse=True)
+    await hydrate_lead_tags(db, workspace_id, [lead])
+    exclusions = await check_compound_suppression(workspace_id, [lead], db)
 
     total_activities = len(activities)
     paged_activities = activities[skip : skip + limit]
@@ -1108,6 +1365,11 @@ async def get_lead_activity(
             "pause_reason": lead.get("pause_reason"),
             "source": lead.get("source", "csv"),
             "created_at": lead.get("created_at"),
+            "tag_ids": lead["tag_ids"],
+            "tag_revision": lead["tag_revision"],
+            "tags": lead["tags"],
+            "archived_tags": lead["archived_tags"],
+            "do_not_contact": bool(lead.get("do_not_contact")) or 0 in exclusions,
         },
         "total_activities": total_activities,
         "activities": paged_activities,
@@ -1160,12 +1422,20 @@ async def pause_lead(
     lead = await db.outreach_leads.find_one(lead_filter)
     if not lead:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+    state = lead.get("execution_state")
+    if state == "staged" or state is not None and not isinstance(state, str):
+        raise HTTPException(409, "Staged contacts must remain in source review; they cannot be paused into enrollment.")
 
     pause_reason = req.reason or "Manually paused by operator"
-    await db.outreach_leads.update_one(
-        lead_filter,
+    state_match = ({"$eq": state, "$type": "string"} if isinstance(state, str) else
+                   {"$type": "null", "$exists": True} if "execution_state" in lead else {"$exists": False})
+    changed = await db.outreach_leads.update_one(
+        {**lead_filter, "execution_state": state_match, "execution_state.0": {"$exists": False},
+         **({"_id": lead["_id"]} if "_id" in lead else {})},
         {"$set": {"execution_state": "paused", "pause_reason": pause_reason, "updated_at": datetime.now(timezone.utc)}}
     )
+    if not changed.matched_count:
+        raise HTTPException(409, "Contact state changed; refresh before pausing.")
 
     if hasattr(db, "outreach_tasks") and hasattr(db.outreach_tasks, "update_many"):
         await db.outreach_tasks.update_many(
@@ -1195,6 +1465,8 @@ async def resume_lead(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
 
     # 1. Suppression check: Do-Not-Contact list (compound)
+    if unverified_search_lead(lead):
+        raise HTTPException(409, UNVERIFIED_LEAD)
     if hasattr(db, "outreach_do_not_contact"):
         suppressed = await check_compound_suppression(
             workspace_id=workspace_id,
@@ -1238,8 +1510,9 @@ async def resume_lead(
             )
 
     # 4. Safe resume
-    await db.outreach_leads.update_one(
-        lead_filter,
+    from outreach.core.search_sources import SEARCH_PROVENANCE_QUERY
+    changed = await db.outreach_leads.update_one(
+        {**lead_filter, "$nor": [SEARCH_PROVENANCE_QUERY]},
         {
             "$set": {
                 "execution_state": "queued",
@@ -1249,5 +1522,7 @@ async def resume_lead(
             }
         },
     )
+    if not changed.matched_count:
+        raise HTTPException(409, "Contact source changed; refresh before resuming.")
 
     return {"status": "resumed", "lead_id": lead_id, "execution_state": "queued"}

@@ -177,7 +177,7 @@ export default function OutreachApp({ initialTab = 'home' }) {
           {activeTab === 'analytics' && <OutreachAnalytics />}
           {activeTab === 'engage' && <OutreachEngage />}
           {activeTab === 'leads' && (
-            <OutreachLeads onOpenWizard={() => handleOpenWizard('new', 1)} />
+            <OutreachLeads onOpenWizard={(id, step, name) => handleOpenWizard(id || 'new', step || 1, name || '')} />
           )}
           {activeTab === 'inbox' && <OutreachInbox />}
           {activeTab === 'voice' && <OutreachVoice />}

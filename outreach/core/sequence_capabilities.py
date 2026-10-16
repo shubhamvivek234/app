@@ -42,22 +42,23 @@ def sequence_capabilities() -> list[dict[str, object]]:
     for node_type in SequenceNodeType:
         type_name = node_type.value
         email = type_name in _EMAIL_SUPPORTED
-        supported = type_name in _LINKEDIN_SUPPORTED or email
+        data = type_name == SequenceNodeType.HAS_DATA_IN_COLUMN.value
+        supported = type_name in _LINKEDIN_SUPPORTED or email or data
         feature_enabled = True
         if type_name == SequenceNodeType.FIND_EMAIL.value:
             feature_enabled = _enabled("OUTREACH_HUNTER_ENABLED")
         elif type_name == SequenceNodeType.SEND_EMAIL.value:
             feature_enabled = _enabled("OUTREACH_EMAIL_SEND_ENABLED") and _enabled("OUTREACH_EMAIL_SYNC_ENABLED")
-        elif type_name == SequenceNodeType.IF_EMAIL_AVAILABLE.value:
+        elif type_name == SequenceNodeType.IF_EMAIL_AVAILABLE.value or data:
             feature_enabled = sequence_dispatch_enabled()
-        live_enabled = supported and feature_enabled and (email or linkedin_live)
+        live_enabled = supported and feature_enabled and (email or data or linkedin_live)
         reason = ""
         if not supported:
             reason = "This step has no verified campaign runner yet."
-        elif not email and not linkedin_live:
+        elif not email and not data and not linkedin_live:
             reason = "Live outreach is disabled for this deployment."
         elif not feature_enabled:
-            reason = "This email capability is not enabled for this deployment."
+            reason = "This sequence capability is not enabled for this deployment."
         catalog.append({
             "type": type_name,
             "supported": supported,
@@ -65,7 +66,7 @@ def sequence_capabilities() -> list[dict[str, object]]:
             "live_enabled": live_enabled,
             "reason": reason,
             "release_state": "implemented" if supported else "unavailable",
-            "channel": "email" if email else "linkedin",
+            "channel": "data" if data else "email" if email else "linkedin",
             "kind": "condition" if type_name in _CONDITIONS else "action",
         })
     return catalog

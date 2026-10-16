@@ -83,6 +83,9 @@ class ActionAttempt(BaseModel):
     provider_message_id: str | None = None
     provider_thread_id: str | None = None
     provider_result_status: str | None = None
+    provider_recipient_urn: str | None = None
+    provider_request_id: str | None = None
+    invite_contract_version: int | None = None
     completed_at: datetime | None = None
 
 
@@ -353,6 +356,8 @@ class LeadIdentifiers(BaseModel):
 
 
 class OutreachLead(BaseModel):
+    tag_ids: list[str] = Field(default_factory=list, max_length=50)
+    tag_revision: int = Field(default=0, ge=0)
     model_config = ConfigDict(extra="ignore")
 
     id: str = Field(default_factory=generate_uuid)
@@ -697,6 +702,7 @@ class SearchImportJobStatus(str, Enum):
 
 
 class SearchImportStopReason(str, Enum):
+    SOURCE_REVIEW_REQUIRED = "search_source_review_required"
     COMPLETED = "completed"
     CHECKPOINT = "checkpoint"
     RATE_LIMITED = "rate_limited"

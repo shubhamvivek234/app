@@ -239,6 +239,7 @@ async def resolve_uncertain_action(
             if not current_op or current_op.get("status") != expected or (current_op.get("resolution") or {}).get("decision") != request.decision:
                 raise HTTPException(status_code=409, detail="Email operation changed during review")
 
+    from outreach.core.search_sources import SEARCH_PROVENANCE_QUERY
     if lead.get("execution_state") == LeadExecutionState.WAITING_TRIGGER:
         if request.decision == "confirmed_sent":
             lead_changes = {"execution_state": LeadExecutionState.QUEUED,
@@ -251,7 +252,8 @@ async def resolve_uncertain_action(
             lead_changes["authorized_revision"] = campaign["authorization_revision"]
         updated = await db.outreach_leads.update_one(
             {"workspace_id": workspace_id, "id": task.get("lead_id"),
-             "campaign_id": task.get("campaign_id"), "execution_state": LeadExecutionState.WAITING_TRIGGER},
+             "campaign_id": task.get("campaign_id"), "execution_state": LeadExecutionState.WAITING_TRIGGER,
+             "$nor": [SEARCH_PROVENANCE_QUERY]},
             {"$set": lead_changes, **({"$unset": {"failure_reason": ""}} if request.decision == "confirmed_sent" else {})},
         )
         if not getattr(updated, "matched_count", 0):

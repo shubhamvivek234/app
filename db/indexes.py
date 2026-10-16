@@ -202,6 +202,34 @@ async def ensure_voice_artifact_migration_indexes(db) -> None:
         partialFilterExpression={'kind': 'voice_studio_input_stop'})
 
 
+async def ensure_lead_list_indexes(db) -> None:
+    """Required audience identities; conflicts need drained repair, never deletion."""
+    await db.outreach_lead_lists.create_index([("workspace_id", 1), ("id", 1)], unique=True)
+    await db.outreach_lead_lists.create_index([("workspace_id", 1), ("campaign_id", 1), ("name_normalized", 1)], unique=True)
+    await db.outreach_lead_list_imports.create_index([("workspace_id", 1), ("actor_id", 1), ("request_id", 1)], unique=True)
+    await db.outreach_lead_list_members.create_index([("workspace_id", 1), ("list_id", 1), ("lead_id", 1)], unique=True)
+    await db.outreach_lead_list_members.create_index([("workspace_id", 1), ("campaign_id", 1), ("list_id", 1), ("id", 1)])
+    await db.outreach_leads.create_index([("workspace_id", 1), ("id", 1)])
+    await db.outreach_leads.create_index([("workspace_id", 1), ("campaign_id", 1), ("id", 1)])
+
+
+async def ensure_connection_wait_indexes(db) -> None:
+    """Original invite scope identities retain conflicts; no TTL or adoption."""
+    await db.outreach_connection_waits.create_index([('workspace_id', 1), ('invite_intent_id', 1), ('invite_attempt_id', 1)], unique=True)
+    await db.outreach_connection_waits.create_index([('workspace_id', 1), ('lead_id', 1), ('status', 1)])
+    await db.outreach_sequence_jobs.create_index([('workspace_id', 1), ('stamp.connection_wait_id', 1), ('status', 1)])
+    await db.outreach_physical_requests.create_index([('workspace_id', 1), ('connection_wait_context.scope_id', 1),
+        ('connection_wait_context.scope_revision', 1), ('connection_wait_context.node_id', 1), ('connection_fact.connected', 1)])
+
+
+async def ensure_lead_tag_indexes(db) -> None:
+    """Required identities must fail startup if the tag cutover is inconsistent."""
+    await db.outreach_lead_tags.create_index([("workspace_id", 1), ("id", 1)], unique=True)
+    await db.outreach_lead_tags.create_index([("workspace_id", 1), ("name_normalized", 1)], unique=True)
+    await db.outreach_leads.create_index([("workspace_id", 1), ("tag_ids", 1), ("created_at", -1)])
+    await db.outreach_inbox_threads.create_index([("workspace_id", 1), ("lead_id", 1)])
+
+
 async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
     if client is None:
         client = await get_client()
@@ -393,6 +421,9 @@ async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
     await _safe_create_index(db.outreach_sequence_versions, [("workspace_id", 1), ("campaign_id", 1), ("version", -1)])
     await _safe_create_index(db.outreach_tasks, [("workspace_id", 1), ("campaign_id", 1), ("task_type", 1), ("status", 1), ("updated_at", -1)])
     await _safe_create_index(db.outreach_leads, [("workspace_id", 1), ("campaign_id", 1), ("pipeline_stage", 1)])
+    await ensure_lead_tag_indexes(db)
+    await ensure_lead_list_indexes(db)
+    await ensure_connection_wait_indexes(db)
     await _safe_create_index(db.outreach_leads, [("workspace_id", 1), ("campaign_id", 1), ("accepted_at", -1)])
     await _safe_create_index(db.outreach_leads, [("workspace_id", 1), ("campaign_id", 1), ("replied_at", -1)])
     await _safe_create_index(db.outreach_leads, [("campaign_id", 1), ("current_node_id", 1)])

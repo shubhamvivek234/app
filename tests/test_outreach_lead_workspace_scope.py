@@ -272,7 +272,7 @@ async def test_cancel_and_staged_commit_do_not_write_id_collisions_in_another_wo
     async with client_for(db) as client:
         cancelled = await client.post("/leads/import-jobs/job/cancel")
         committed = await client.post("/leads/import-jobs/job/commit", json={"name_overrides": {"staged": "Edited"}})
-    assert cancelled.status_code == committed.status_code == 200
+    assert cancelled.status_code == 200 and committed.status_code == 409
     foreign_job = await db.outreach_import_jobs.find_one({"id": "job", "workspace_id": FOREIGN})
     foreign_lead = await db.outreach_leads.find_one({"id": "staged", "workspace_id": FOREIGN})
     foreign_campaign = await db.outreach_campaigns.find_one({"id": "campaign", "workspace_id": FOREIGN})
@@ -281,8 +281,8 @@ async def test_cancel_and_staged_commit_do_not_write_id_collisions_in_another_wo
     assert foreign_lead["execution_state"] == "staged"
     assert foreign_campaign["leads_count"] == 10
     current_lead = await db.outreach_leads.find_one({"id": "staged", "workspace_id": WORKSPACE})
-    assert current_lead["first_name"] == "Edited"
-    assert current_lead["execution_state"] == "queued"
+    assert current_lead["first_name"] == "Original"
+    assert current_lead["execution_state"] == "staged"
 
 
 async def test_staged_commit_requires_current_workspace_campaign_before_any_write():

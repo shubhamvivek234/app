@@ -65,10 +65,11 @@ async def recover_intent(db: AsyncIOMotorDatabase, intent: dict, *, now: datetim
                 return "busy"
         elif task.get("status") not in {"completed", "accepted", "skipped"}:
             return "human_review"
+        from outreach.core.search_sources import SEARCH_PROVENANCE_QUERY
         await db.outreach_leads.update_one(
             {"id": intent["lead_id"], "workspace_id": workspace_id, "campaign_id": intent["campaign_id"],
              "current_node_id": intent["node_id"], "authorized_revision": intent["authorization_revision"],
-             "execution_state": "waiting_trigger", "has_replied": {"$ne": True}},
+             "execution_state": "waiting_trigger", "has_replied": {"$ne": True}, "$nor": [SEARCH_PROVENANCE_QUERY]},
             {"$set": {"execution_state": "queued", "next_action_due_at": now}},
         )
         from outreach.core.sender_execution import SenderExecution

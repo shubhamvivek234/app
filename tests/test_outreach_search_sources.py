@@ -1,0 +1,140 @@
+"""Customer input cannot select fixtures or broaden an unsupported audience."""
+from unittest.mock import AsyncMock
+
+import httpx
+import pytest
+
+from outreach.core.search_sources import SearchSourceError, parse_search_source, search_source_capabilities
+from outreach.engine.voyager_client import VoyagerClient
+from outreach.models import OutreachLead
+from outreach.core.search_sources import unverified_search_lead
+
+URL = "https://www.linkedin.com/search/results/people/?keywords=Chief%20Officer"
+
+
+@pytest.mark.parametrize("url", [
+    "http://www.linkedin.com/search/results/people/?keywords=CEO",
+    "https://linkedin.com.attacker.invalid/search/results/people/?keywords=CEO",
+    "https://www.linkedin.com@attacker.invalid/search/results/people/?keywords=CEO",
+    "https://name:password@www.linkedin.com/search/results/people/?keywords=CEO",
+    "https://www.linkedin.com:443/search/results/people/?keywords=CEO",
+    "/search/results/people/?keywords=CEO", "https://www.linkedin.com./search/results/people/?keywords=CEO",
+    "https://www.linkedin.com/search/results/companies/?keywords=CEO",
+    "https://www.linkedin.com/%73earch/results/people/?keywords=CEO",
+    URL + "#fragment", URL + "&keywords=Other", URL + "&geoUrn=123", URL + "&network=F",
+    URL + "&page=2", URL + "&unknown=", URL + "&query=CEO",
+    "https://www.linkedin.com/sales/search/people?query=(filters:List())",
+    "https://www.linkedin.com/talent/search?keywords=CEO",
+    "https://www.linkedin.com/search/results/people/?keywords=%GG",
+    "https://www.linkedin.com/search/results/people/?keywords=%FF",
+    "https://www.linkedin.com/search/results/people/?keywords=%28CEO%29",
+    "https://www.linkedin.com/search/results/people/?keywords=CEO%3AFounder",
+    "https://www.linkedin.com/search/results/people/?keywords=CEO%2CFounder",
+    "https://www.linkedin.com/search/results/people/?keywords=CEO%5CFounder",
+    "https://www.linkedin.com/search/results/people/?keywords=%2528CEO%2529",
+    "https://www.linkedin.com/search/results/people/?keywords=", URL + "\n&origin=FACETED_SEARCH",
+])
+def test_rejects_ambiguous_or_unsupported_search_input(url):
+    with pytest.raises(SearchSourceError):
+        parse_search_source(url)
+
+
+def test_keyword_contract_preserves_meaning_and_drops_only_supported_tracking():
+    parsed = parse_search_source(URL + "&origin=FACETED_SEARCH")
+    assert parsed["keywords"] == "Chief Officer" and parsed["search_type"] == "basic"
+    assert parsed["clean_url"] == URL
+
+
+def test_normal_modeled_manual_contact_is_not_a_search_hold():
+    lead = OutreachLead(workspace_id="w", campaign_id="c", linkedin_url="https://linkedin.com/in/person").model_dump()
+    assert lead["import_job_id"] is None and lead["staged_at"] is None
+    assert not unverified_search_lead(lead)
+
+
+@pytest.mark.parametrize("live,mock", [("false", "false"), ("true", "false"), ("true", "true")])
+def test_source_catalog_never_claims_unverified_collection_available(monkeypatch, live, mock):
+    monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", live)
+    monkeypatch.setenv("OUTREACH_MOCK_AUTH", mock)
+    catalog = search_source_capabilities()
+    assert catalog["contract_version"] == 1
+    assert all(row["collection_available"] is False and row["reason"] for row in catalog["sources"])
+
+
+def client(monkeypatch, payload):
+    monkeypatch.setenv("OUTREACH_MOCK_AUTH", "false")
+    adapter = VoyagerClient(li_at="fixture-real-session", jsession_id="ajax:fixture", proxy_url="http://127.0.0.1:9")
+    adapter._request = AsyncMock(return_value=httpx.Response(200, json=payload))
+    return adapter
+
+
+@pytest.mark.parametrize("keyword", ["short", "empty", "canary", "checkpoint", "rate_limit", "session_expired", "commercial_limit", "unresolvable"])
+@pytest.mark.asyncio
+async def test_nonmock_keywords_use_the_actual_transport_path(monkeypatch, keyword):
+    adapter = client(monkeypatch, {"elements": [{"title": {"text": "Observed Person"},
+        "navigationUrl": "https://www.linkedin.com/in/observed-person"}], "paging": {"total": 1}})
+    result = await adapter.search_people_entities(URL.replace("Chief%20Officer", keyword))
+    adapter._request.assert_awaited_once()
+    assert result["entities"][0]["raw_name"] == "Observed Person"
+    assert result["total_results"] == 1
+
+
+@pytest.mark.parametrize("payload", [{}, [], {"elements": {}}, {"elements": []}, {"elements": [None]},
+    {"elements": [], "paging": {"total": "100"}}, {"elements": [], "paging": {"total": True}},
+    {"elements": [], "paging": {"total": -1}}, {"elements": [], "paging": {"total": 10}},
+    {"elements": [], "paging": {"total": 0}, "metadata": {"totalResultCount": 2}},
+    {"elements": [{"title": {"text": ""}, "name": 123}], "paging": {"total": 1}},
+    {"elements": [], "paging": {"total": 0}, "errors": [{"message": "Denied"}]},
+    {"elements": [], "paging": {"total": 0}, "error": {"message": "Denied"}},
+    {"elements": [], "paging": {"total": 0}, "status": 403},
+    {"elements": [], "paging": {"total": 0}, "statusCode": 500},
+    {"elements": [], "paging": {"total": 0}, "status": "200"},
+    {"elements": [], "paging": {"total": 0}, "status": True}])
+@pytest.mark.asyncio
+async def test_unknown_or_contradictory_schema_is_not_empty_success(monkeypatch, payload):
+    adapter = client(monkeypatch, payload)
+    with pytest.raises(SearchSourceError):
+        await adapter.search_people_entities(URL)
+
+
+@pytest.mark.asyncio
+async def test_missing_total_stays_unknown_and_zero_is_not_replaced(monkeypatch):
+    adapter = client(monkeypatch, {"elements": [{"name": "Observed Person", "navigationUrl": "https://www.linkedin.com/in/person"}]})
+    assert (await adapter.search_people_entities(URL))["total_results"] is None
+    adapter._request.return_value = httpx.Response(200, json={"elements": [], "paging": {"total": 0}})
+    assert (await adapter.search_people_entities(URL))["total_results"] == 0
+
+
+@pytest.mark.asyncio
+async def test_mock_adapter_has_no_production_fixture_generator(monkeypatch):
+    monkeypatch.setenv("OUTREACH_MOCK_AUTH", "true")
+    adapter = VoyagerClient(li_at="mock_session")
+    adapter._request = AsyncMock()
+    with pytest.raises(SearchSourceError):
+        await adapter.search_people_entities(URL)
+    adapter._request.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unsupported_filter_denies_before_transport(monkeypatch):
+    adapter = client(monkeypatch, {})
+    with pytest.raises(SearchSourceError):
+        await adapter.search_people_entities(URL + "&geoUrn=123")
+    adapter._request.assert_not_awaited()
+
+
+@pytest.mark.parametrize("status", [301, 302, 401, 403, 429, 500])
+@pytest.mark.asyncio
+async def test_failed_or_redirected_responses_do_not_report_zero(monkeypatch, status):
+    adapter = client(monkeypatch, {})
+    adapter._request.return_value = httpx.Response(status, json={})
+    result = await adapter.search_people_entities(URL)
+    assert result["total_results"] is None and result["stop_reason"]
+
+
+@pytest.mark.parametrize("start,count", [(True, 1), (-1, 1), (1000, 1), (0, False), (0, 0), (0, 11)])
+@pytest.mark.asyncio
+async def test_invalid_bounds_deny_before_transport(monkeypatch, start, count):
+    adapter = client(monkeypatch, {})
+    with pytest.raises(SearchSourceError):
+        await adapter.search_people_entities(URL, start=start, count=count)
+    adapter._request.assert_not_awaited()

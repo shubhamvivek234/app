@@ -61,16 +61,17 @@ jobs:
           curl --fail --silent --show-error https://pgp.mongodb.com/server-8.0.asc | sudo gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg
           echo "deb [ arch=amd64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/8.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list
           sudo apt-get update
-          sudo apt-get install -y mongodb-org-server
+          sudo apt-get install -y mongodb-org-server redis-server
           python -m pip install -r requirements.txt
       - name: Verify native tenant and stream contracts without skipped checks
         env:
           OUTREACH_TEST_LOCAL_MONGO: "1"
+          OUTREACH_TEST_CONNECTION_BROKER: "1"
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
           OUTREACH_LIVE_ACTIONS_ENABLED: "false"
         run: |
-          python -m pytest -p pytest_asyncio.plugin -o asyncio_mode=auto -q --junitxml=test-results/outreach-native.xml tests/test_outreach_lead_workspace_scope_mongo.py tests/test_outreach_authorized_context_mongo.py tests/test_outreach_stream_access_mongo.py tests/test_outreach_billing_and_integration_responses_mongo.py tests/test_outreach_style_save_mongo.py tests/test_outreach_lead_admission_mongo.py tests/test_outreach_warmup_admission_mongo.py tests/test_outreach_campaign_deletion_mongo.py tests/test_outreach_engage_projection_mongo.py tests/test_outreach_sender_resume_mongo.py tests/test_outreach_campaign_readiness_mongo.py tests/test_outreach_email_reporting_mongo.py tests/test_outreach_linkedin_reporting_mongo.py tests/test_outreach_activity_resume_mongo.py tests/test_outreach_voice_selection_mongo.py
-          python scripts/check_native_results.py test-results/outreach-native.xml --minimum 447
+          python -m pytest -p pytest_asyncio.plugin -o asyncio_mode=auto -q --junitxml=test-results/outreach-native.xml tests/test_outreach_lead_workspace_scope_mongo.py tests/test_outreach_authorized_context_mongo.py tests/test_outreach_stream_access_mongo.py tests/test_outreach_billing_and_integration_responses_mongo.py tests/test_outreach_style_save_mongo.py tests/test_outreach_lead_admission_mongo.py tests/test_outreach_warmup_admission_mongo.py tests/test_outreach_campaign_deletion_mongo.py tests/test_outreach_engage_projection_mongo.py tests/test_outreach_sender_resume_mongo.py tests/test_outreach_campaign_readiness_mongo.py tests/test_outreach_email_reporting_mongo.py tests/test_outreach_linkedin_reporting_mongo.py tests/test_outreach_activity_resume_mongo.py tests/test_outreach_voice_selection_mongo.py tests/test_outreach_lead_tags_mongo.py tests/test_outreach_lead_tags_reverify_mongo.py tests/test_outreach_search_source_mongo.py tests/test_outreach_lead_lists_mongo.py tests/test_outreach_lead_list_imports_mongo.py tests/test_outreach_sequence_validation_mongo.py tests/test_outreach_connection_waits_mongo.py tests/test_outreach_connection_crashes.py tests/test_outreach_field_conditions_mongo.py
+          python scripts/check_native_results.py test-results/outreach-native.xml --minimum 813
       - uses: actions/upload-artifact@v4
         if: always()
         with:

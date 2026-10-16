@@ -38,3 +38,10 @@ describe('Campaign list availability', () => {
     }
   });
 });
+
+it('does not treat failed or unknown server template compatibility as ready', () => {
+  const template=PREBUILT_TEMPLATES.find((item) => item.id === 'tpl_connect_and_follow_up');
+  expect(isLaunchableTemplate({...template,compatibility:{contract_version:1,valid:false}})).toBe(false);
+  expect(isLaunchableTemplate({...template,compatibility:{contract_version:2,valid:true}})).toBe(false);
+  expect(isLaunchableTemplate({...template,compatibility:{contract_version:1,valid:true}})).toBe(true);
+});

@@ -27,8 +27,9 @@ async def claim_activation(db: AsyncIOMotorDatabase, campaign: dict, *, sequence
 
 
 def activation_lead_filter(workspace_id: str, campaign_id: str, revision: int) -> dict:
+    from outreach.core.search_sources import SEARCH_PROVENANCE_QUERY
     return {"workspace_id": workspace_id, "campaign_id": campaign_id,
-            "execution_state": {"$ne": "staged"},
+            "execution_state": {"$ne": "staged"}, "$nor": [SEARCH_PROVENANCE_QUERY],
             "$or": [{"authorized_revision": None}, {"authorized_revision": {"$lte": revision}}]}
 
 

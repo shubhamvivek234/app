@@ -32,6 +32,10 @@ class MockCursor:
     def sort(self, *args, **kwargs):
         return self
 
+    def limit(self, count):
+        self.items = self.items[:count]
+        return self
+
     async def to_list(self, length=None):
         if length is not None:
             return list(self.items[:length])
@@ -45,6 +49,7 @@ class MockCollection:
     def find(self, query=None, *args, **kwargs):
         def matches_condition(item, condition):
             return all(
+                (item.get(key) is not None) == expected["$exists"] if isinstance(expected, dict) and "$exists" in expected else
                 item.get(key) != expected["$ne"] if isinstance(expected, dict) and "$ne" in expected
                 else item.get(key) == expected
                 for key, expected in condition.items()
@@ -79,6 +84,10 @@ class MockCollection:
                             and_matched = False
                             break
                     if not and_matched:
+                        match = False
+                        break
+                elif isinstance(v, dict) and "$exists" in v:
+                    if (item.get(k) is not None) != v["$exists"]:
                         match = False
                         break
                 elif item.get(k) != v:

@@ -1,0 +1,193 @@
+# Unravler.io — Eight-video feature review and implementation plan
+
+Reviewed: 2026-10-14 IST. Status: proposed implementation plan; no new feature authorization inferred from this document. Current baseline: deployed application v2.62–v2.64, local corrected v2.65.1 tags/DNC/reviewed drafts. Repository HEAD at review: `2cb2d72`. Live actions remain disabled. Source inspection establishes implementation presence, not successful live integration.
+
+Implementation update, 2026-10-14 IST: the user subsequently authorized implementation. Bounded F0 is implemented locally as v2.66: production search no longer generates input-selected fixtures; exact URL/filter/keyword and conservative response contracts are enforced. Collection and search-marked promotion are explicitly unavailable until source fidelity is verified. CSV and pasted public profile intake remain available. The original comparison below is a dated source snapshot, not a statement that collection remains enabled. See [the F0 report](/Users/shubham/Documents/Workspace/SocialEntangler/app/docs/UNRAVLER_IO_SEARCH_SOURCE_TRUST_RELEASE.md). F1/F2 completion checkpoints are recorded below; filtered Basic/Sales Navigator support and verified result schemas remain F3. v2.65.1 follow-up independent sign-off is now recorded in its report.
+
+## Recommendation
+
+F1 implementation update, 2026-10-14 IST: the local backend foundation now provides named lists, guarded many-list/one-enrollment membership, native parent identity and explicit bounded legacy adoption. This introduces no send path or customer UI. At that checkpoint F2 list-management UI/import binding was next; the later F2 update supersedes that status. See [the foundation report](/Users/shubham/Documents/Workspace/SocialEntangler/app/docs/UNRAVLER_IO_AUDIENCE_LIST_FOUNDATION_RELEASE.md). F0 source closure remains in force; source fidelity and activation still need F3 and operational evidence.
+
+First harden existing search ingestion, then add campaign audience lists and extend that common import pipeline. Improve sequence semantics before adding new live actions. Reuse the existing authorization, suppression, outbox, custody and erasure foundations; do not replace them with another execution engine.
+
+The biggest visible gaps are named lists within campaigns; Recruiter search/project/pipeline acquisition; a recent-connections source; event-attendee acquisition; resolution of Sales Navigator/Recruiter individual profile URLs; and advanced sequence actions/conditions. Basic search, Sales Navigator search, CSV, public profile URLs, a visual builder, templates, tags, lead profiles, mailbox/finder foundations and bounded reporting already exist to different degrees. They should not be rebuilt or called production-verified merely because their UI exists.
+
+## Evidence from all eight videos
+
+All eight actual English auto-generated transcripts were retrieved and read. Captions were initially unavailable before player loading; that was resolved, not substituted with titles. This is transcript-based review plus source inspection, not a frame-by-frame UI or live competitor account test. Timestamps below let a reviewer verify the described behavior. Tutorial limits describe the demonstrated product, not permanent LinkedIn API guarantees.
+
+| Video | Observed feature and relevant time | Implication for Unravler |
+|---|---|---|
+| [1. Master Dripify in under 13 Minutes](https://www.youtube.com/watch?v=dnZTzJOelOo) | Sources/named lists 0:37–2:04; builder 2:07–6:38; launch and campaign audience 7:02–8:29; team/inbox/settings 8:34–12:05. | Compare the whole workflow, not only acquisition tiles. |
+| [2. LinkedIn Search](https://www.youtube.com/watch?v=6Qq-hv707Hk) | Filter externally, validate pasted URL, choose quantity, name list, add to new/existing campaigns 0:37–2:33. | Existing search needs filter fidelity, source validation and list identity. |
+| [3. Sales Navigator](https://www.youtube.com/watch?v=dOmK2aa7LVA) | Import filtered Sales Nav results into a named list in an existing campaign 0:28–2:44. | Existing partial support needs seat/contract and query-specific validation. |
+| [4. Recruiter](https://www.youtube.com/watch?v=vthZrZVpv_g) | Recruiter/Lite sourcing, project/talent-pool filters and pipeline URLs 0:29–3:36. | Dedicated unsupported source family; cannot relabel it Basic search. |
+| [5. My Network](https://www.youtube.com/watch?v=lSzIo2t-8E4) | Recent first-degree connections 0:30–1:26; filtered search fallback with different ordering 1:39–2:48. | Recency and first-degree membership need distinct evidence and UI. |
+| [6. Event attendees](https://www.youtube.com/watch?v=OrWYt0ZNB-g) | Attendee visibility requires attendance in the demonstrated flow; URL, quantity and list creation 0:38–2:39. | Model event scope/access explicitly; membership is not outreach consent. |
+| [7. Specific profiles](https://www.youtube.com/watch?v=F2kNZ1bY8RE) | Pasted regular, Sales Nav and Recruiter profile links 0:33–1:45. | Public `/in/` intake exists; opaque product-specific links need resolution. |
+| [8. Outreach sequence](https://www.youtube.com/watch?v=dVOA6iU9K5s) | Actions/conditions and predecessor restrictions 0:34–1:43; late acceptance redirects from the negative path 4:36–4:46; pause/reviewed resume after reply 6:24–6:56. | Topology alone is insufficient: add path semantics and event-driven interruption. |
+
+Current official documentation confirms the lead-source families and gives a Sales Navigator limit of 2,475, whereas the tutorial rounds near 2,500. Our current code clamps at 2,500. Use source-specific tested bounds, not a copied marketing constant. [Dripify source guide](https://help.dripify.com/en/articles/5028652-step-1-how-to-add-leads-to-a-campaign).
+
+Sales Navigator Advanced contract selection is a further current requirement described by Dripify, not shown fully in these older tutorials. Do not infer support from a boolean seat flag or copy their extension design without a supported access path. [Official contract setup](https://help.dripify.com/en/articles/11408275-how-to-use-a-sales-navigator-advanced-account-with-dripify).
+
+## Verified feature inventory at the original analysis checkpoint
+
+“Partial” means concrete code exists but the specified behavior or operational proof is missing. “Unavailable” includes enum/UI placeholders without an executable supported capability. Local tags are distinguished from deployed code.
+
+Current F0 completion and v2.65.1 review status are recorded above and in their release reports. The following table preserves the findings that motivated this roadmap; its original search-availability and pending-review descriptions are historical.
+
+| ID / priority | Feature | Current code evidence and missing behavior |
+|---|---|---|
+| G01 / P0 | Truthful source capabilities and exact URLs | `ImportLeadsModal.js` advertises combined search as active/safe. `parse_linkedin_search_url` accepts substring hosts and relative paths; source/account/contract distinctions are incomplete. UI/API/worker need one capability contract and truthful gates. |
+| G02 / P0 | Real search data and full filter fidelity | `search_people_entities` allows URL keywords such as `short` to select synthetic results outside mock mode. It reads raw filters but transmits essentially keywords/start/count; geography, industry and relationship filters are not faithfully forwarded. Fix before expansion. |
+| G03 / P1 | Named audience lists within campaigns | Leads are campaign enrollment records; search jobs/staged data are not first-class named lists. No campaign audience-list entity/membership lifecycle was found. Do not confuse the campaign dropdown or Engage lists with this feature. |
+| G04 / P1 | Reliable collection reports and controls | Discrete crawler, leases, pacing, durable publication, staging, review and cancellation exist. Add named-list linkage, exact count semantics, retained per-row decisions, schema/access-change reasons and reconciled stop/resume. Preserve existing fences. |
+| G05 / P1 | Basic/Sales Nav acquisition parity | Source URLs and explicit sender/seat checks exist, behind live controls. Missing full query semantics, typed URL variants and fresh contract/session evidence. Existing code is not live verification. |
+| G06 / P2 | Recruiter/Lite/project/pipeline import | Parser/job/adapter support is Basic/Sales Nav; no dedicated Recruiter workflow. Needs distinct identity resolution, permissions and source-specific parsers. |
+| G07 / P2 | Recent first-degree connections | No dedicated My Network source. A first-degree Basic search is only a partial alternative and cannot claim newest-first ordering. |
+| G08 / P2 | Event-attendee import | Event tile is explicitly disabled; no verified attendee source adapter. A generic search URL is not proof of event membership/access or complete coverage. |
+| G09 / P1 | Product-specific profile URLs | Pasted public `/in/` URLs work; `normalize_linkedin_url` rejects `/sales/lead/…` and `/talent/profile/…`. Store opaque IDs separately; resolve without inventing a vanity URL/name. |
+| G10 / P1 | Branch semantics and late acceptance | Compiler validates topology/labels; executor polls while a lead remains on the connection-condition node. No general redirect from later negative-path descendants on acceptance was found. Unknowns must remain distinct from “no.” |
+| G11 / P2 | InMail, Follow, Endorse, Withdraw | InMail/Follow/Endorse exist as unsupported enum/capability entries; invitation withdrawal is not a supported sequence node. Each needs its own transport/evidence contract or an explicitly manual task. |
+| G12 / P1–P2 | Message viewed / open profile / data-column conditions | `if_opened_message`, `open_profile_check` and `has_data_in_column` are unavailable in the capability catalog. Add only where a reliable observation/evaluation contract exists; disabled read receipts cannot mean unread. |
+| G13 / P1 | Template/variable semantics | Prebuilt and workspace custom templates, preview and name cleaning already exist. Improve path-aware validation, missing-field handling, template revisions/sharing governance, and safe preview fallbacks. Location currently uses `location_raw`; define aliases explicitly. |
+| G14 / P1 | Cross-enrollment reply stops and reviewed resume | Existing suppression/freshness/uncertainty fences and per-lead resume exist. Broader sender/recipient alias propagation and authenticated recovery remain open. A UI “unpause” must not clear consent/DNC or replay unknown sends. |
+| G15 / P2 | Inbox organization | Replies, reminders, snippets, intent labels, linked lead tags and lead notes exist. Complete usable star/archive/thread notes and consistent conversation scope; an `is_archived` model field alone is not a feature. |
+| G16 / P2 | Team operational views | Workspace roles/member management exist. Outreach-specific ownership/delegated sender access and per-member performance views are incomplete. Do not add silent account impersonation. |
+| G17 / P1 | Activity/analytics completeness | Recorded cohort/email reports and bounded completed-task paging exist. Immutable insertion order, retention/gap semantics and writer completeness remain open; do not revive mixed denominators or claim delivery without evidence. |
+| G18 / P1 | Email/finder/integration activation | Gmail/Graph/Hunter and outbound integrations have guarded implementations. Actual controlled pilots, credentials/access/network and observed outcomes remain operational work, not another CRUD implementation. |
+| G19 / P2 | Adaptive activity control | Daily budgets, schedules, circuit breakers and bounded passive controls exist. Customer-facing adaptive limits with explainable policy, input freshness and controlled rollout are not established. Never imply protection from platform restrictions. |
+| G20 / existing local | Tags, DNC and reviewed re-engagement | Corrected v2.65.1 implements these locally. Preserve exact identity, negative email policy and recovery references. Release needs the remaining independent review gate; do not build a second tagging system. |
+
+Additional overview items: groups are another source decision, not covered by a dedicated linked tutorial; CSV is already supported but its “custom columns & tags” UI text needs verification against actual canonical-tag mapping. Current Dripify post/evergreen collection is outside these eight videos; it should not silently enlarge this plan. [Official current post workflow](https://help.dripify.com/en/articles/12658858-how-to-add-leads-from-linkedin-posts), [evergreen behavior](https://help.dripify.com/en/articles/14181907-how-evergreen-lead-upload-works-in-dripify).
+
+## Concrete source findings to address first
+
+Offline calls of the actual parser/normalizer/search method reproduced:
+
+1. `https://linkedin.com.attacker.invalid/search/results/people/?keywords=CEO` is accepted as a search URL. This proves overly broad validation, not an observed arbitrary-host network request; transport still fixes its request host.
+2. A relative `/search/results/people/…` URL is accepted despite the API claiming a valid LinkedIn URL.
+3. With `is_mock=False` and `OUTREACH_MOCK_AUTH=false`, a search containing `keywords=short` returns generated Alex Morgan records before transport. It must be impossible for user input to enable a test fixture.
+4. Raw source query parameters are parsed but the live request constructs a minimal keyword query. It can target a different audience from the one the user reviewed.
+5. Valid-looking Sales Navigator and Recruiter individual profile URLs normalize to an empty string. They need a typed resolver, not a relaxed `/in/` regex.
+
+These were read-only/isolated observations; no LinkedIn, provider or AWS call was made. They are new planned fixes, not corrections already included in v2.65.1.
+
+## Architecture decisions
+
+### Audience identity and import ownership
+
+Keep `outreach_leads` as campaign enrollment records. Introduce campaign-scoped `outreach_lead_lists` with immutable ID, scalar workspace/campaign identity, display name, source kind, sanitized source fingerprint, requested limit, revision, creation actor and collection state. A separate membership relation links list to enrollment so the same existing enrollment can belong to multiple audience lists without creating another send path. This is not canonical-person merging.
+
+Use unique workspace/list IDs and workspace/list/enrollment membership keys; capture native identities and source generations for commits. Backfill one deterministic “Existing audience” list per known campaign, marking unknown historical source provenance explicitly. Retry backfill by checkpoint without changing lead IDs, enrollment, sequence versions, task history or authorizations. Ambiguous/orphan/array-scope rows remain held for repair. Drain incompatible writers for index/cutover; never delete conflicts to make an index pass.
+
+Extend current import jobs/staging instead of adding a competing queue. Bind job, list revision, campaign revision, actor, sender generation, paid term and source/contract identity. Reference-only publication, bounded pages, durable due recovery, shared physical budgets and exact receipt/unknown handling remain mandatory. Collection, approval/enrollment and launch are three separate operations.
+
+### Source adapters
+
+A common registry describes source kind, accepted URL grammar, account/contract requirements, quantities, schema version, permitted access path, and whether collection is implemented/operator-enabled/verified. API, UI and workers consume the same decisions. Basic search, Sales Nav, Recruiter search, Recruiter pipeline, recent connections, events and profile resolution use separate typed adapters where their semantics differ.
+
+Preserve supported filters exactly. Reject unsupported filters with an actionable explanation rather than broadening the audience. Store source provenance without persisting authentication material in URLs/logs. Provider pagination totals are estimates unless completeness is actually established. No automatic filter splitting to bypass a provider limit, automatic event joining, extension installation, premium purchase or session takeover.
+
+### Sequence observations and interruption
+
+Retain immutable sequence versions and existing ActionIntent/ActionAttempt boundaries. Add pure graph semantic validation and deterministic simulation first. Then model a connection wait-scope/accepted target, bound to campaign/enrollment/sender/sequence version and original invite intent. A retained acceptance observation can atomically redirect eligible negative-path descendants; invalidate only pending jobs with matching ownership/revisions. Received/possibly-submitted actions remain evidence, never replay or “unhappen.”
+
+Define “acceptance at the same time as a send” by the existing ordered dispatch/suppression protocol: whichever commits first establishes the boundary. A request already physically authorized cannot be promised unsent. Reply/DNC/erasure/restore stops outrank a branch redirect. Completed unrelated campaigns and other senders cannot be redirected by a loose identity join.
+
+For read/open-profile conditions use `yes / no / unknown`, with observation identity, source, captured time, maximum age and bounded wait policy. No usable evidence leads to wait/manual review or an explicit user-selected fallback; it is never automatically false. Data-column conditions distinguish absent/null/empty/whitespace/zero/false and compare typed values using a fixed documented rule.
+
+## Bounded implementation sequence
+
+Each slice should deliver source, meaningful unit/native/browser checks as applicable, a migration/cutover note, architecture updates and independent review. Stop expanding a slice when its acceptance criteria are met. Keep live actions disabled throughout local implementation.
+
+| Slice / dependency | Deliverable | Exit evidence |
+|---|---|---|
+| F0 — bounded local completion | Remove URL-selected fixtures; exact HTTPS host/path/source parser; reject unsupported filters and explicitly close collection/promotion until verified fidelity. | Transport spies, real Mongo and compiled UI prove no generated results or denied-source collection; saved rows stay inspectable/unverified. Full filter translation and verified source schemas remain F3, with no collection enablement in F0. |
+| F1 — local backend foundation | Named campaign list schema/membership/read APIs; revisioned metadata lifecycle; deterministic explicit bounded legacy backfill/indexes. | Native identity/retry/rollback/parent replacement and standalone denials; two lists share one enrollment without new scheduling. Admin drain assertion and selected-scalar-scope checkpoint are not authenticated source completeness. F2 later supplies the UI and bounded public-profile request binding; F1 evidence is historical. |
+| F2 — bounded local completion | Existing/newly-created campaign list UI; native-token metadata writes; dedicated 1–100-row public-profile/CSV prefix review, original-row decisions and atomic admission/membership/receipt; scoped recovery and cancellation tombstones. | Root checks and final independent source/test/docs approval are recorded in the F2 report. Draft/paused only; source/legacy/premium identities stay unavailable for later proof. No implicit launch, queue or provider call. |
+| F3 — after F0–F2 | Harden Basic/Sales Nav adapters and query variants, seat/contract binding, honest collection counts. | Recorded sanitized parser fixtures, local transport contracts, changed account/filters/contract denial. Pilot remains separate. |
+| F4 — after F1–F3 | Typed public/Sales Nav/Recruiter profile-link intake and guarded resolution. | Mixed batches retain source IDs/provenance; unresolved/private/ambiguous profiles stay excluded, retries do not duplicate enrollment. |
+| F5 — independent after F0 | Path-aware compiler validation and bounded deterministic sequence simulation; template compatibility/revisions. | Every displayed path matches saved graph, unsupported nodes block, missing variables and impossible predecessors produce exact errors. |
+| F6 — after F5 | Late connection acceptance wait-scope and atomic negative-path redirection. | Native transaction races and process/broker drills prove one next node; accepted/unknown sends remain held; no double positive-path entry. |
+| F7 — after F5–F6 | Typed data-column conditions, bounded observed connection/email checks; remaining read/open conditions only with usable source evidence. | Unknown vs no covered; deadline and source revision changes deny stale branches; preview and runner agree. |
+| F8 — after F1–F4 | Recent-connections source or a clearly labeled first-degree-search alternative. | Same-sender scope and ordering evidence; changing pages/dedup/partial limits; no “all connections” claim. |
+| F9 — after F1–F4 + approved access | Recruiter/Lite/project/pipeline acquisition. | Validated session/project/contract fixtures and resolution; unsupported paths rejected; no false Basic fallback. |
+| F10 — after F1–F4 + approved access | Event attendee source. | Selected sender/event access, revoked visibility, event changes and private/non-personal records covered. No automatic event registration. |
+| F11 — after F5–F7 + provider-specific proof | Separate slices for withdrawal, Follow, Endorse and InMail; manual-task alternative where unsupported. | Intent/attempt/evidence/uncertainty, prerequisites, budgets, observed result, explicit capability and no automatic resend for each action. |
+| F12 — alongside F2–F7 | Inbox star/archive/thread notes; outreach ownership/team views; template governance and name/field review refinements. | RBAC/revocation/native identity/erasure; sender access is explicit and audited; archive does not disable reply suppression. |
+| F13 — after source/event contracts | Immutable activity and defined per-list/member analytics; strengthen cross-enrollment reply stops. | Writer coverage/gaps/retention, typed attribution and native reply-before-send races. Preserve partial/unavailable reports. |
+| F14 — release gate | Combined checks, independent review, security remediation, supported credential/access setup, then a separately authorized pilot/release. | Complete one controlled import→review→launch→reply-stop journey plus failure/restore drills; retain deployment and live evidence separately. |
+
+F5 can proceed independently of list UI after F0. F8–F10 can be deferred without blocking improved CSV/public-URL campaigns. Prioritize F0, F1/F2, F5/F6 and F13 over decorative unsupported action tiles. If an acceptable access path does not exist for a source/action, ship explicit unavailability plus manual/CSV intake rather than a synthetic implementation.
+
+## Edge-case and acceptance register
+
+This register covers the known business, identity, concurrency and failure boundaries. It does not claim every possible upstream change is predictable; schema drift/unknown outcomes must fail closed and create new regression fixtures.
+
+| Area | Cases that must be exercised |
+|---|---|
+| URL grammar | Exact approved host/subdomain; attacker suffix; userinfo; non-HTTPS; port; relative URL; lookalike Unicode host; double encoding; oversized/nested query; unsupported redirects; fragment/tracking removal only when semantically irrelevant. Never log embedded secrets. |
+| Query fidelity | Multiple values, nested Sales Nav queries, job-change/geography/industry/connection filters, saved searches and lead lists; unsupported account URLs; account-search vs people-search; reject rather than silently dropping a filter. |
+| Truth/provenance | Mock/test inputs with live flags false/true; strings `short`, `empty`, `canary` in genuine searches; schema with missing fields; unknown vs zero totals; imported user-provided names vs observed names; original source date vs local collection date. |
+| Tenant and actor | Foreign same public ID, duplicate native records, array workspace/resource IDs, stale workspace tab, removed member, role downgrade, changed owner, personal-workspace bootstrap, replayed idempotency key across actors/workspaces. |
+| Source access | Missing/expired session, wrong sender, country/proxy binding, Basic vs Premium vs Sales Nav vs Recruiter/Lite, changed corporate contract, 2FA/checkpoint, permission lost midway, event visibility revoked, project no longer accessible. |
+| Profile identity | Vanity change, Sales/Recruiter opaque ID, public URL plus URN disagreement, multiple possible matches, private/deleted/out-of-network profile, organization results, original/current aliases, Unicode names; do not guess an identity or infer consent. |
+| List lifecycle | Empty and duplicate names, renamed list during review, archived/deleted list during import/commit, one enrollment in several lists, simultaneous list additions, same source in another campaign, unknown legacy sources, orphan campaigns, backfill acknowledgement loss. |
+| Counts | Requested vs visible vs fetched vs staged vs approved vs enrolled vs excluded vs unresolved; duplicate page rows; source exhausted early; provider cap; count decreases/increases; no inferred “complete” merely from an empty or malformed page. |
+| Pagination | Stable cursor vs offset shifts, repeated cursor/page, duplicate/late results, inaccessible last page, cursor expiry, page schema drift; bounded retry and clear partial report. Never loop indefinitely or skip suppression on resumed pages. |
+| Worker recovery | Broker publish/ack loss, process kill before/after GET marker/receipt, duplicate delivery, stale lease, replacement credential generation, due recovery after cancellation, job deletion, fairness under many senders. Saved evidence repairs projections without replaying ambiguous work. |
+| Billing/budgets | Paid expiry during collect/resolve/commit; daily budget shared across sources/sends; billable lookup response lost; quota reset/timezone; no refund of uncertain physical calls; no automatic provider purchase. |
+| Admission | Reply, DNC, email opt-out, unknown/invalid verification, withdrawal cooldown and duplicate identity introduced after preview; scope/tag/list/source revision changes; all-or-nothing membership/enrollment commit or an explicit documented partial-import transaction contract. |
+| Running campaigns | Adding a list must not authorize unreviewed new content. Preserve sender/sequence/approval revisions, warm-up lead snapshot and live gates. Reject armed-list mutation or explicitly disarm/review under the existing rules. |
+| Graph structure | Duplicate nodes/edges, cycles, disconnected roots, converging paths, missing/duplicate yes/no branches, stale visible tree, oversized/deep graph, unsupported enum, negative/fractional/infinite delays, empty message, unknown variable and missing field. Bound complexity after measurement. |
+| Predecessors | Withdraw requires the exact original pending invite; viewed-message condition requires a matching message observation; email requires usable verified/provided policy state and mailbox; InMail requires credit/open-profile evidence appropriate to its type. Ancestor on another branch is insufficient. |
+| Acceptance race | Before negative-branch entry; during a delay; after visit/like; while email is queued/preparing/possibly submitted; after a receipt; same-time reply; duplicate/out-of-order acceptance; prior campaign invite; different sender; deleted/reconnected sender. Define atomic ordering, not retroactive unsending. |
+| Reply/resume | Reply on another enrollment/current or saved alias, delayed reply, malformed timestamp, missing Inbox coverage, bounced/opted-out recipient, DNC, actor revocation during resume, unresolved operation. A “thanks” is still a reply until a separate explicit reviewed continuation is authorized. |
+| Conditions | Read receipts disabled; privacy-restricted open profile; stale contradictory observations; unknown until timeout; no usable email; data `0`, `false`, null, missing, empty, whitespace, array/object; chosen field renamed/deleted. Preview and worker use identical semantics. |
+| New physical actions | Withdraw after acceptance/rejection/already withdrawn; endorsement already present/skill removed; Follow already following; InMail credits exhausted/open-profile change; challenge/429; response timeout after submission. Never infer success from attempted/completed task state. |
+| UI/recovery | Remount/reload, deleted source after saved request, changed account/workspace, delayed old-filter response, invalid/malformed JSON, permission failure, lost response, storage quota/corruption, keyboard focus, mobile navigation; exact recovery reference remains visible and retained. |
+| Reporting/team | One contact across lists/campaigns/senders, overlapping events, member reassignment, removed user, human-reported action, mocked historical data, incomplete read, export pagination, timezone/DST; recorded association is not causal attribution or delivered email. |
+| Erasure/restore | List/source/staged data deletion while queued, minimal uncertainty/financial evidence retained, old callback after erasure, backup-restored duplicate identities, stale epoch jobs and missing outside-backup facts. No restored import/list/branch event can reactivate execution authority. |
+| Schedule/operations | DST, sender-local hours, pause at a boundary, clock skew, shutdown/restart, DB standalone vs replica set, unavailable KMS/proxy/mailbox, egress restriction, credentials in logs/CSV/webhooks, downgrade and rollback with new list IDs present. |
+
+## Test and rollout contract
+
+1. Unit tests for typed parsers, filter translation, identity decisions, graph semantics and count/state rules; transport stand-ins prove rejected inputs never reach a physical call.
+2. Actual replica-set tests for ID cardinality, unique indexes, native BSON identity, rollback, suppression/dispatch ordering, revocation, list membership, backfill retries, erasure and stale-epoch denial. Explicit standalone denial where multi-document authority is required.
+3. Loopback provider/process-kill and Redis redelivery drills for changed physical boundaries; unknown outcomes remain held and saved receipts repair without resend.
+4. Browser journeys using real compiled components for new/existing campaign lists, review/partial/error/cancel flows, sequence simulation and workspace changes. These are synthetic-API checks until a controlled live pilot supplies external evidence.
+5. Broader application/frontend/build/static/security checks, an independent final review, three spec/Desktop updates and session memory last. A skipped native suite, offline validator or mock screenshot cannot close a live or restore-completeness gate.
+6. Deploy only a concrete reviewed slice under the existing live-off default when separately requested. Enable a supported source/action only for an explicitly authorized bounded pilot with retained results, failure limits and rollback. No production calls were made for this analysis.
+
+## Next implementation decision
+
+Bounded **F0, F1 and the F2 customer workflow are implemented locally**, with F2 final independent source/test/docs approval recorded after the earlier reviewer usage interruption. F5 is independently approved locally. Bounded F6 original wait/late-acceptance handling now has final source/test/evidence/docs approval and passing combined verification; Bounded F7 typed stored-field conditions are now implemented locally; next complete **the existing usable-email policy condition under a guarded current-policy decision/receipt**, then evidence-bound conditions only where a trustworthy source contract exists. This does not complete all of F7. Full source adapters/filter fidelity remain F3; Recruiter/connections/events follow after their access path is established. No source may be enabled merely because its parser or enum exists.
+
+The historical September parity plan contains superseded Redis-budget and blanket-parity assumptions. Current Mongo authority/custody/suppression documents govern; this plan proposes incremental extensions, not a rollback to that older architecture. Existing security, authenticated restore/recovery, credential migrations, IAM/egress and live-pilot work remains pending alongside this feature roadmap.
+
+Related verification: [corrected v2.65.1 local changes](/Users/shubham/Documents/Workspace/SocialEntangler/app/docs/UNRAVLER_IO_LEAD_TAGS_RELEASE.md). Earlier three architecture specs remain the implementation authority until each new slice is reviewed and their contracts are updated.
+
+
+F2 implementation details and limitations: [Audience-list workflow release](UNRAVLER_IO_AUDIENCE_LIST_WORKFLOW_RELEASE.md). This database-only CSV/public-profile admission uses the existing importer inside the shared guard, with a request-control receipt rather than a competing background queue. F3/F4 collection/resolution still requires trustworthy source/access contracts. Supplied transport IDs are rejected by F2; older generic/legacy recipient-identity cases remain open.
+
+
+Historical pre-implementation F5 read-only probe (compiler was unchanged at that checkpoint) reproduced scalar/type/delay/config handling gaps, silently interpreted misspelled/conflicting/cross-condition branch labels and negative-connection-to-message paths. The F2 report records the concrete cases and bounded path/simulation requirements. F2 final review is now complete; source/access contracts and later live/release gates remain separate.
+
+
+## F5 local implementation checkpoint — 2026-10-15 IST
+
+See [sequence validation, preview and timing](UNRAVLER_IO_SEQUENCE_VALIDATION_AND_PREVIEW_RELEASE.md). Bounded strict execution-graph/config/branch and path analysis now guards saves/readiness/new attempts; visual-tree fidelity guards authoring and editor loads; supplied-only preview defaults unknown and stops at unconfirmed actions. It binds request/context/full input and clears stale results. Older visual/source mismatches hold rather than loading a substitute flow. Exact root/successor delays, warm-up/resume timing and final due/source/content fences are implemented. Reply-negative deadlines require completed fresh inbox evidence; malformed wait starts hold. Immutable snapshots, original receipts and unknown outcomes remain. Read-only template compatibility is included; broader governance and the email-template gallery allowlist remain pending. Final4,310distinctbackend=3,647combinedpass+663native/21modules0skip (1,455optional/historicalskip,6sandboxdeselected);110pure+37native new checks,162overlappingcoveragechecks88% (contract92/preview88/compiler90/API82),235wholefrontend/38suites,19syntheticcompiledbrowser,build/compile/configuredmedium-highscopedBandit0/diff pass. IndependentPython/frontend source/test/docs approve.
+
+Historical F5 checkpoint: F6 was still pending at that checkpoint. The v2.70 implementation below supersedes that status. F3/F4 source access and recipient identity, later roadmap work and operational release gates remain pending. Local only; no deployment or live authority change.
+
+
+## F6 local implementation checkpoint — 2026-10-15 IST
+
+See [original connection waits and late acceptance](UNRAVLER_IO_LATE_CONNECTION_ACCEPTANCE_RELEASE.md). New modern original invite receipts/native identities bind due-action membership checks and one atomic original negative-path redirect; pending work alone cancels, accepted/unknown work remains held and ordinary shared joins/terminal leads are not reopened. Fact publication, condition-only advancement and physical authorization share the suppression guard, including nested rollback. Saved positives outrank negatives; the original positive target/delay/receipt survives prompt redelivery. No continuous monitor is implemented. Stale positives older60s require review: default120s job leases are longer, so accelerated3s/fixture-lease crash checks do not prove automatic production-timing recovery. Only verified LinkedIn visit/like ancestors are retained automatically; paid finder/communication ancestors hold. URL-only/profile-visit/legacy IF_CONNECTED transport requires reviewed F4 work. Final4,472distinctbackend=3,707combinedpass+765native/23modules0skip (1,557optional/historicalskip,6sandboxdeselected);55pure+99native focused checks154 with88%coverage(evidence90/waits88/observations91/recheck83),3ownedRedis/SIGKILL drills in nativeCI,compile/configuredmedium-highscopedBandit0/diff pass. Frontend unchanged; prior F5 235tests/19browser/build evidence retained. Final independent source/test/evidence/docs approval is recorded;123 affected pure checks independently rerun. Actual original invite, physical commit-order, condition-join, rollback, native type, index/erasure/standalone and owned broker checks define the bounded gate. Existing F3/F4 source contracts and later operational/release gates remain open.
+
+
+## Local bounded F7 checkpoint — v2.71, 16 October 2026
+
+[Typed stored-field conditions](/Users/shubham/Documents/Workspace/SocialEntangler/app/docs/UNRAVLER_IO_TYPED_FIELD_CONDITIONS_RELEASE.md) implements strict literal-field presence and typed comparisons, shared offline preview semantics, a data capability channel and guarded current-value/branch/job-receipt atomicity. Native identity and explicit nonlegacy enrollment bind jobs; unknown/malformed identity holds, receipt redelivery and F6 original acceptance priority are covered. No physical action, search source, recipient resolver or execution grant is added. CSV values remain text and arbitrary old column keys need explicit mapping. Existing IF_EMAIL_AVAILABLE atomic policy decisions and generic observed connection/read/open source contracts remain pending, so F7 is only partly complete. F3/F4 acquisition/recipient proof, F8–F13 and operational release gates remain open. Verified scope/results are in the report; local only.

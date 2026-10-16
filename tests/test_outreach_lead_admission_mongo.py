@@ -32,7 +32,8 @@ async def campaign(db, status='active'):
     await db.outreach_campaigns.insert_one(doc)
     await db.outreach_accounts.insert_one({'id': 'sender', 'workspace_id': WS, 'status': 'active'})
     await db.outreach_sequence_versions.insert_one({'_id': 'version', 'campaign_id': 'campaign', 'workspace_id': WS,
-        'version': 3, 'compiled_dag': {'root_node_ids': ['root']}})
+        'version': 3, 'compiled_dag': {'root_node_ids': ['root'], 'nodes': {'root': {
+            'id':'root','type':'visit_profile','delay_hours':0,'config':{},'branches':{},'next_default':None}}}})
     return doc
 
 
@@ -121,15 +122,15 @@ async def staged(db):
 
 async def test_search_promotion_preserves_identity_and_installs_binding_once(replica_db):
     await campaign(replica_db); await staged(replica_db)
-    for count in (1, 0):
-        result = await lead_api.commit_staged_leads('job', None, current_user=USER, db=replica_db)
-        assert result['enrolled_count'] == count
+    before = await replica_db.outreach_leads.find_one({'id': 'staged'})
+    for _ in range(2):
+        with pytest.raises(HTTPException) as failure:
+            await lead_api.commit_staged_leads('job', None, current_user=USER, db=replica_db)
+        assert failure.value.status_code == 409
     lead = await replica_db.outreach_leads.find_one({'id': 'staged'})
-    assert lead['execution_state'] == 'queued' and lead['staged_at'] is None
-    assert lead['assigned_account_id'] == 'sender' and lead['authorized_revision'] == 4
-    assert lead['current_node_id'] == 'root' and lead['sequence_version'] == 3
+    assert lead == before and lead['execution_state'] == 'staged'
     assert await replica_db.outreach_leads.count_documents({}) == 1
-    assert (await replica_db.outreach_campaigns.find_one({}))['leads_count'] == 1
+    assert (await replica_db.outreach_campaigns.find_one({}))['leads_count'] == 0
 
 
 async def test_search_promotion_during_warmup_preserves_staged_row(replica_db):
@@ -144,8 +145,9 @@ async def test_search_promotion_during_warmup_preserves_staged_row(replica_db):
 async def test_search_promotion_accepts_actual_unedited_review_payload(replica_db, body):
     await campaign(replica_db); await staged(replica_db)
     req = lead_api.CommitStagedLeadsRequest(**body)
-    result = await lead_api.commit_staged_leads('job', req, current_user=USER, db=replica_db)
-    assert result['enrolled_count'] == 1
+    with pytest.raises(HTTPException) as failure:
+        await lead_api.commit_staged_leads('job', req, current_user=USER, db=replica_db)
+    assert failure.value.status_code == 409
     assert (await replica_db.outreach_leads.find_one({'id': 'staged'}))['first_name'] == 'Person'
 
 

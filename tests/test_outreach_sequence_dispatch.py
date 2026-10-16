@@ -76,16 +76,16 @@ async def test_scheduler_deferral_cannot_overwrite_a_reply(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_root_assignment_and_busy_action_remain_recoverable(monkeypatch):
+@pytest.mark.parametrize('current',[None,'',0,[],{},False])
+async def test_selector_does_not_initialize_unproven_current_steps_or_bypass_root_delay(monkeypatch,current):
     from outreach.tasks import sequence_dispatch as module
     monkeypatch.setattr(module, "sequence_dispatch_enabled", lambda: True)
     db = execution_db()
-    db.outreach_leads.docs[0]["current_node_id"] = None
-    await prepare_due(db)
-    job = db.outreach_sequence_jobs.docs[0]
-    assert job["stamp"]["lead_node_id"] == "n"
-    await execute_job(db, "w", job["_id"], executor=AsyncMock(return_value={"status": "action_busy"}))
-    assert db.outreach_sequence_jobs.docs[0]["status"] == "deferred"
+    db.outreach_leads.docs[0]["current_node_id"] = current
+    db.outreach_sequences.docs[0]['compiled_dag']['nodes']['n']['delay_hours']=24
+    assert (await prepare_due(db))["prepared"]==0
+    assert db.outreach_leads.docs[0]["current_node_id"]==current
+    assert not db.outreach_intents.docs and not db.outreach_sequence_jobs.docs
 
 
 @pytest.mark.asyncio

@@ -46,7 +46,7 @@ def _runner_db(node_type="connection_request", *, waiting=None):
     lead = {
         "id": "lead_a", "workspace_id": "ws_a", "campaign_id": "camp_a",
         "linkedin_url": "https://www.linkedin.com/in/person-a/", "assigned_account_id": "sender_a",
-        "execution_state": "queued", **(waiting or {}),
+        "execution_state": "queued", "current_node_id": "step_a", **(waiting or {}),
     }
     db.outreach_leads.find_one = AsyncMock(return_value=lead)
     db.outreach_leads.update_one = AsyncMock()
@@ -60,6 +60,11 @@ def _runner_db(node_type="connection_request", *, waiting=None):
             "branches": {"positive": "yes", "negative": "no"} if node_type == "if_connected" else {},
         }}},
     })
+    if node_type == 'if_connected':
+        # A positive-control graph needs actual referenced successors.
+        db.outreach_sequences.find_one.return_value['compiled_dag']['nodes'].update({
+            key: {'id':key,'type':'visit_profile','delay_hours':0,'config':{},'branches':{},'next_default':None}
+            for key in ('yes','no')})
     db.outreach_tasks.insert_one = AsyncMock()
     db.outreach_tasks.update_one = AsyncMock()
     db.outreach_tasks.find_one = AsyncMock(return_value=None)

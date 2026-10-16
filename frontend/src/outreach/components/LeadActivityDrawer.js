@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   X,
   ExternalLink,
@@ -21,6 +21,7 @@ import {
   RefreshCw,
   Mic,
   ChevronRight,
+  Ban,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -56,9 +57,16 @@ export default function LeadActivityDrawer({ leadId, isOpen, onClose, onLeadUpda
   const [pauseReasonInput, setPauseReasonInput] = useState('');
   const [showPausePrompt, setShowPausePrompt] = useState(false);
   const [updatingStage, setUpdatingStage] = useState(false);
+  const [tagDefinitions, setTagDefinitions] = useState([]);
+  const [changingTag, setChangingTag] = useState(false);
+  const [excluding, setExcluding] = useState(false);
+  const activeLead = useRef(null);
+  activeLead.current = isOpen ? leadId : null;
+  const activityRequest = useRef(0);
 
   const fetchActivity = useCallback(async () => {
-    if (!leadId) return;
+    if (!leadId || activeLead.current !== leadId) return;
+    const requestId = ++activityRequest.current;
     setLoading(true);
     setError('');
     try {
@@ -70,17 +78,22 @@ export default function LeadActivityDrawer({ leadId, isOpen, onClose, onLeadUpda
       if (!res.ok) {
         throw new Error(resData.detail || 'Could not load lead activity history.');
       }
+      if (resData.lead?.id !== leadId) throw new Error('Lead details changed. Reopen the correct lead.');
+      if (activeLead.current !== leadId || requestId !== activityRequest.current) return;
       setData(resData);
     } catch (err) {
       console.error('Failed to load lead activity:', err);
-      setError(err.message);
+      if (activeLead.current === leadId && requestId === activityRequest.current) setError(err.message);
     } finally {
-      setLoading(false);
+      if (activeLead.current === leadId && requestId === activityRequest.current) setLoading(false);
     }
   }, [leadId]);
 
   useEffect(() => {
     if (isOpen && leadId) {
+      setData(null);
+      setShowPausePrompt(false);
+      setPauseReasonInput('');
       fetchActivity();
     } else {
       setData(null);
@@ -90,10 +103,59 @@ export default function LeadActivityDrawer({ leadId, isOpen, onClose, onLeadUpda
     }
   }, [isOpen, leadId, fetchActivity]);
 
+  useEffect(() => {
+    if (!isOpen || !leadId) return undefined;
+    const controller = new AbortController();
+    fetch('/api/v1/outreach/leads/tags', { credentials: 'include', headers: authHeaders(), signal: controller.signal })
+      .then(async (response) => { if (!response.ok) throw new Error('Could not load lead tags'); return response.json(); })
+      .then((tags) => { if (!Array.isArray(tags)) throw new Error('Lead tags are unavailable'); if (!controller.signal.aborted) setTagDefinitions(tags); })
+      .catch((failure) => { if (failure.name !== 'AbortError') toast.error(failure.message); });
+    return () => controller.abort();
+  }, [isOpen, leadId]);
+
   if (!isOpen) return null;
 
-  const lead = data?.lead;
-  const activities = data?.activities || [];
+  const lead = data?.lead?.id === leadId ? data.lead : null;
+  const activities = lead ? data?.activities || [] : [];
+
+  const changeTag = async (tagId, operation) => {
+    if (!lead || lead.id !== leadId || activeLead.current !== leadId || changingTag) return;
+    setChangingTag(true);
+    try {
+      const response = await fetch(`/api/v1/outreach/leads/${leadId}/tags`, {
+        method: 'PATCH', credentials: 'include', headers: authHeaders(),
+        body: JSON.stringify({ tag_id: tagId, operation, revision: lead.tag_revision || 0 }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || 'Could not update lead tags');
+      await fetchActivity();
+      onLeadUpdated?.();
+    } catch (failure) {
+      toast.error(failure.message);
+    } finally {
+      setChangingTag(false);
+    }
+  };
+
+  const excludeLead = async () => {
+    if (!lead || lead.id !== leadId || activeLead.current !== leadId || excluding) return;
+    if (!window.confirm('Add this contact to Do-Not-Contact? Future outreach to these identifiers will be blocked across this workspace.')) return;
+    setExcluding(true);
+    try {
+      const response = await fetch(`/api/v1/outreach/leads/${leadId}/do-not-contact`, {
+        method: 'POST', credentials: 'include', headers: authHeaders(), body: JSON.stringify({}),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || 'Could not exclude this contact');
+      await fetchActivity();
+      onLeadUpdated?.();
+      toast.success('Contact added to Do-Not-Contact');
+    } catch (failure) {
+      toast.error(failure.message);
+    } finally {
+      setExcluding(false);
+    }
+  };
 
   const handleAddNote = async (e) => {
     e.preventDefault();
@@ -255,6 +317,28 @@ export default function LeadActivityDrawer({ leadId, isOpen, onClose, onLeadUpda
 
           {lead && (
             <>
+              <div className="rounded-2xl border border-gray-200 bg-white p-4 space-y-3">
+                <h4 className="text-xs font-bold text-gray-900">Lead tags</h4>
+                <div className="flex flex-wrap gap-1.5">
+                  {(lead.tags || []).map((tag) => (
+                    <button key={tag.id} disabled={changingTag} onClick={() => changeTag(tag.id, 'remove')} title={`Remove ${tag.name}`} className="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-semibold disabled:opacity-50" style={{ color: tag.color, borderColor: `${tag.color}55`, backgroundColor: `${tag.color}12` }}>{tag.name}<X className="h-3 w-3" /></button>
+                  ))}
+                  {!lead.tags?.length && <span className="text-xs text-gray-400">No tags assigned</span>}
+                </div>
+                {!!lead.archived_tags?.length && <div className="space-y-1.5">
+                  <p className="text-[10px] text-gray-500">Archived assignments · remove to free tag space</p>
+                  <div className="flex flex-wrap gap-1.5">{lead.archived_tags.map((tag) => <button key={tag.id} disabled={changingTag} onClick={() => changeTag(tag.id, 'remove')} title={`Remove archived ${tag.name}`} className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2 py-1 text-[10px] text-gray-500">{tag.name}<X className="h-3 w-3" /></button>)}</div>
+                </div>}
+                <select aria-label="Add lead tag" value="" disabled={changingTag} onChange={(event) => { if (event.target.value) changeTag(event.target.value, 'add'); }} className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-xs">
+                  <option value="">Add a tag…</option>
+                  {tagDefinitions.filter((tag) => !(lead.tag_ids || []).includes(tag.id)).map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
+                </select>
+                <div className="border-t border-gray-100 pt-3">
+                  {lead.do_not_contact ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-red-700"><Ban className="h-3.5 w-3.5" />Do-Not-Contact</span> : (
+                    <button disabled={excluding} onClick={excludeLead} className="inline-flex items-center gap-1.5 text-xs font-semibold text-red-600 disabled:opacity-50"><Ban className="h-3.5 w-3.5" />{excluding ? 'Saving exclusion…' : 'Add to Do-Not-Contact'}</button>
+                  )}
+                </div>
+              </div>
               {/* Sequence Position & Execution Status */}
               <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-2xs space-y-3">
                 <div className="flex items-center justify-between">

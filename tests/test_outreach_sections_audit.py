@@ -86,6 +86,7 @@ async def test_confirmed_sequence_action_is_recorded_once_for_analytics():
     db.outreach_leads.find_one = AsyncMock(return_value={
         "id": "lead_a", "workspace_id": "workspace_a", "campaign_id": "campaign_a",
         "linkedin_url": "https://linkedin.com/in/person-a", "assigned_account_id": "account_a",
+        "current_node_id": "node_a",
     })
     db.outreach_campaigns.find_one = AsyncMock(return_value={"id": "campaign_a", "status": "active"})
     db.outreach_accounts.find_one = AsyncMock(return_value={"id": "account_a", "status": "active", "user_id": "user_a"})
