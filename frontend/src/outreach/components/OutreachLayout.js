@@ -72,11 +72,11 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hi
           {/* Logo */}
           <div
             onClick={() => onNavigate('home')}
-            className="w-10 h-10 rounded-full bg-gradient-to-tr from-indigo-600 via-indigo-500 to-sky-400 text-white flex items-center justify-center cursor-pointer shadow-xs hover:opacity-95 hover:scale-105 active:scale-95 transition-all p-2 focus:outline-none"
+            className="w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer hover:bg-gray-100/80 active:scale-95 transition-all focus:outline-none select-none"
             title="Unravler Outreach - Home"
             aria-label="Unravler Outreach - Home"
           >
-            <UnravlerLogo size="small" showText={false} color="white" />
+            <UnravlerLogo height={32} showText={false} animated={true} />
           </div>
 
           {/* Navigation Items */}

@@ -5,6 +5,9 @@ import logoDark from "@/assets/brand/unravler-logo-dark.png";
 import logoWhite from "@/assets/brand/unravler-logo-white.png";
 import markDark from "@/assets/brand/unravler-mark-upload-dark.png";
 import markWhite from "@/assets/brand/unravler-mark-upload-white.png";
+import { UnravlerAnimatedMark } from "./BrandMarkLoader";
+
+export { UnravlerAnimatedMark };
 
 const UnravlerLogo = ({ 
   size = 'default', 
@@ -14,6 +17,7 @@ const UnravlerLogo = ({
   color = null,
   forceWhite = false,
   height: customHeight = null,
+  animated = false,
 }) => {
   // Sizing is based on logo height.
   const sizes = {
@@ -27,6 +31,17 @@ const UnravlerLogo = ({
   const height = customHeight || sizes[size] || sizes.default;
   const isWhite = forceWhite || color === 'white';
   const preferDark = !isWhite && !!darkText;
+
+  if (animated) {
+    return (
+      <div className={cn("flex items-center select-none", className)}>
+        <UnravlerAnimatedMark
+          size={height}
+          color={isWhite ? '#ffffff' : '#000000'}
+        />
+      </div>
+    );
+  }
 
   return (
     <div
