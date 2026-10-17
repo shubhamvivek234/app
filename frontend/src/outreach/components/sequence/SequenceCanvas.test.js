@@ -145,4 +145,43 @@ describe('Server-driven sequence capabilities', () => {
     await act(async () => root.render(<SequenceCanvas campaignId="camp-active" />));
     expect(container.textContent).toContain('34 leads waiting');
   });
+
+  it('allows zooming out below 50% down to 20% and has Fit button', async () => {
+    global.fetch = jest.fn((url) => {
+      if (url.includes('node-counts')) return Promise.resolve(ok({ node_counts: {}, waiting_node_counts: {}, total_leads: 0 }));
+      if (url.includes('sequence-capabilities')) return Promise.resolve(ok({ capabilities: [] }));
+      if (url.includes('/api/v1/outreach/sequences')) {
+        return Promise.resolve(ok({
+          tree: [{ id: 'step_1', type: 'visit_profile', title: 'Visit Profile', delay_days: 1 }],
+        }));
+      }
+      return Promise.reject(new Error(`Unexpected url: ${url}`));
+    });
+
+    await act(async () => root.render(<SequenceCanvas campaignId="camp-active" />));
+    expect(container.textContent).toContain('100%');
+
+    const fitBtn = container.querySelector('button[title="Fit sequence to screen"]');
+    expect(fitBtn).toBeTruthy();
+
+    const zoomOutBtn = container.querySelector('button[title="Zoom out"]');
+    expect(zoomOutBtn).toBeTruthy();
+
+    // Zoom out multiple times below 50%
+    for (let i = 0; i < 7; i++) {
+      await act(async () => zoomOutBtn.click());
+    }
+    // Should be at 30% (100 - 70)
+    expect(container.textContent).toContain('30%');
+
+    // Zoom out to minimum 20%
+    for (let i = 0; i < 3; i++) {
+      await act(async () => zoomOutBtn.click());
+    }
+    expect(container.textContent).toContain('20%');
+
+    // Click fit to screen
+    await act(async () => fitBtn.click());
+    // Should execute without crashing
+  });
 });

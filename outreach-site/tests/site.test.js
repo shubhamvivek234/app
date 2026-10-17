@@ -126,3 +126,19 @@ test('features mega menu contains links to all dedicated feature pages and direc
   assert.match(js, /Escape/);
 });
 
+test('login page is a standalone auth switch document without header or footer', () => {
+  const html = read('login.html');
+  assert.match(html, /<!doctype html>/i, 'login.html needs a doctype');
+  assert.match(html, /<html[^>]+lang="en"/i, 'login.html needs an English language attribute');
+  assert.match(html, /<meta[^>]+name="viewport"/i, 'login.html needs a mobile viewport');
+  assert.match(html, /<meta[^>]+name="description"/i, 'login.html needs a description');
+  assert.match(html, /sign-in-form/i, 'login.html needs sign-in form');
+  assert.match(html, /sign-up-form/i, 'login.html needs sign-up form');
+  assert.doesNotMatch(html, /<header\b/i, 'login.html must not have a header');
+  assert.doesNotMatch(html, /<footer\b/i, 'login.html must not have a footer');
+  assert.doesNotMatch(html, /social-media/i, 'login.html must not have social icons');
+  assert.doesNotMatch(html, /social-text/i, 'login.html must not have social text');
+  assert.doesNotMatch(html, /Unravler Account Access/i, 'login.html must not have Unravler Account Access text');
+  assert.match(read('styles.css'), /\.auth-body\s*\{[^}]*background:\s*#FFFFFF/i, 'auth-body must have white background');
+});
+

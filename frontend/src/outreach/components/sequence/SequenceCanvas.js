@@ -5,7 +5,7 @@ import FieldConditionEditor, { DEFAULT_FIELD_CONDITION, conditionBranchLabel } f
 import {
   Eye, UserPlus, MessageSquare, Mic, Mail, UserCheck, ThumbsUp, MessageCircle,
   CornerDownRight, Award, GitBranch, Clock, Plus, X, ZoomIn, ZoomOut, Maximize2,
-  CheckCircle2, Sparkles, ChevronRight, Edit3, Trash2, MoreVertical, Navigation,
+  CheckCircle2, AlertCircle, Sparkles, ChevronRight, Edit3, Trash2, MoreVertical, Navigation,
   Link2, Check, Search, ExternalLink, Play, Copy, RefreshCw, ChevronDown,
   ArrowLeft, ArrowRight, Crosshair, Users
 } from 'lucide-react';
@@ -143,8 +143,17 @@ export const DEFAULT_TREE = [
   },
 ];
 
-export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
-  const [tree, setTree] = useState(DEFAULT_TREE);
+export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, templateTree, onRegisterTemplateSnapshot }) {
+  const templateMode = templateTree !== undefined;
+  const [tree, setTree] = useState(() => {
+    if (!templateMode) return DEFAULT_TREE;
+    try {
+      const supplied = JSON.parse(JSON.stringify(templateTree));
+      if (!Array.isArray(supplied) || !supplied.length) return [];
+      flattenTreeToDAG(supplied);
+      return supplied;
+    } catch { return []; }
+  });
   const [selectedStepId, setSelectedStepId] = useState(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteTarget, setPaletteTarget] = useState(null); // { type: 'linear' | 'branch', stepId, branchKey, index }
@@ -157,6 +166,36 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const dragStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+  const canvasViewportRef = useRef(null);
+  const sequenceTreeRef = useRef(null);
+
+  const clampPan = (x, y) => ({
+    x: Math.max(-3000, Math.min(3000, x)),
+    y: Math.max(-3000, Math.min(1000, y)),
+  });
+
+  const handleFitToScreen = () => {
+    if (!canvasViewportRef.current || !sequenceTreeRef.current) {
+      setZoomLevel(60);
+      setPanOffset({ x: 0, y: 0 });
+      return;
+    }
+    const viewport = canvasViewportRef.current.getBoundingClientRect();
+    const treeEl = sequenceTreeRef.current;
+    const treeWidth = treeEl.offsetWidth || 800;
+    const treeHeight = treeEl.offsetHeight || 600;
+
+    const availableWidth = Math.max(viewport.width - 100, 320);
+    const availableHeight = Math.max(viewport.height - 140, 320);
+
+    const scaleX = availableWidth / treeWidth;
+    const scaleY = availableHeight / treeHeight;
+    const idealScale = Math.min(scaleX, scaleY, 1.0);
+    const targetZoom = Math.max(20, Math.min(100, Math.round(idealScale * 100)));
+
+    setZoomLevel(targetZoom);
+    setPanOffset({ x: 0, y: 0 });
+  };
 
   const handleCanvasMouseDown = (e) => {
     if (e.button !== 0) return;
@@ -176,10 +215,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
     if (!isPanning) return;
     const dx = e.clientX - dragStartRef.current.x;
     const dy = e.clientY - dragStartRef.current.y;
-    setPanOffset({
-      x: dragStartRef.current.panX + dx,
-      y: dragStartRef.current.panY + dy,
-    });
+    setPanOffset(clampPan(dragStartRef.current.panX + dx, dragStartRef.current.panY + dy));
   };
 
   const handleCanvasMouseUp = () => {
@@ -192,13 +228,10 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
       const zoomDelta = e.deltaY < 0 ? 5 : -5;
-      setZoomLevel((z) => Math.max(50, Math.min(150, z + zoomDelta)));
+      setZoomLevel((z) => Math.max(20, Math.min(200, z + zoomDelta)));
       return;
     }
-    setPanOffset((prev) => ({
-      x: prev.x - e.deltaX,
-      y: prev.y - e.deltaY,
-    }));
+    setPanOffset((prev) => clampPan(prev.x - e.deltaX, prev.y - e.deltaY));
   };
 
   const [showTip, setShowTip] = useState(true);
@@ -208,6 +241,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
   const [sequenceRetryKey, setSequenceRetryKey] = useState(0);
   const hasLoaded = useRef(false);
   const treeRef = useRef(tree);
+  treeRef.current = tree;
 
   useEffect(() => {
     let cancelled = false;
@@ -235,7 +269,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
   }, [capabilityRetryKey]);
 
   useEffect(() => {
-    if (!campaignId || campaignId === 'new') return;
+    if (templateMode || !campaignId || campaignId === 'new') return;
     let cancelled = false;
     const fetchNodeCounts = async () => {
       try {
@@ -258,7 +292,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
     };
     fetchNodeCounts();
     return () => { cancelled = true; };
-  }, [campaignId]);
+  }, [campaignId, templateMode]);
 
   const stepCapability = (type) => capabilities?.[type] || null;
   const stepReason = (type) => {
@@ -306,6 +340,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
   }, [tree]);
 
   const openPromptLibrary = () => {
+    if (templateMode) return;
     setPromptDrawerOpen(true);
     fetchPrompts();
   };
@@ -321,6 +356,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
   };
 
   const handleCreatePrompt = async () => {
+    if (templateMode) return;
     if (!newPromptName.trim() || !newPromptText.trim()) return;
     try {
       const token = localStorage.getItem('token');
@@ -353,7 +389,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
   };
 
   const handleOpenPreview = async (step) => {
-    if (!step) return;
+    if (templateMode || !step) return;
     const template =
       step.config?.script ||
       step.config?.body ||
@@ -397,6 +433,23 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
     setSequenceReviewOpen(false);
     setSequenceLoadError('');
 
+    if (templateMode) {
+      try {
+        if (campaignId) throw new Error('Template editing cannot target a campaign.');
+        if (!Array.isArray(templateTree) || !templateTree.length) throw new Error('This template has no faithful visual tree.');
+        const supplied = JSON.parse(JSON.stringify(templateTree));
+        flattenTreeToDAG(supplied);
+        setTree(supplied);
+        treeRef.current = supplied;
+        setSelectedStepId(null);
+        setPromptDrawerOpen(false);
+        setPreviewModalOpen(false);
+        hasLoaded.current = true;
+        setLoadedCampaignId(campaignId);
+      } catch (error) { setSequenceLoadError(error.message || 'Template graph needs review.'); }
+      return;
+    }
+
     if (!campaignId || campaignId === 'new' || campaignId === 'new_campaign') {
       hasLoaded.current = true;
       setLoadedCampaignId(campaignId);
@@ -429,11 +482,21 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
     };
     loadSequence();
     return () => { cancelled = true; };
-  }, [campaignId, sequenceRetryKey]);
+  }, [campaignId, sequenceRetryKey, templateMode, templateTree]);
+
+  const templateSnapshot = React.useCallback(() => {
+    if (!templateMode || campaignId || !hasLoaded.current || sequenceLoadError) throw new Error('Template draft is unavailable.');
+    const current = JSON.parse(JSON.stringify(treeRef.current));
+    return {...flattenTreeToDAG(current), tree:current};
+  }, [templateMode, campaignId, sequenceLoadError]);
+  useEffect(() => {
+    if (templateMode && onRegisterTemplateSnapshot) onRegisterTemplateSnapshot(templateSnapshot);
+    return () => { if (onRegisterTemplateSnapshot) onRegisterTemplateSnapshot(null); };
+  }, [templateMode, onRegisterTemplateSnapshot, templateSnapshot]);
 
   const saveQueueRef = React.useRef(Promise.resolve());
   const persistSequence = React.useCallback((treeToSave = treeRef.current, assertCurrent) => {
-    if (!campaignId || campaignId === 'new' || campaignId === 'new_campaign') return false;
+    if (templateMode || !campaignId || campaignId === 'new' || campaignId === 'new_campaign') return false;
     if (!hasLoaded.current) {
       setToastMessage('Sequence is still loading. Wait a moment, then save again.');
       return false;
@@ -470,19 +533,19 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
     });
     saveQueueRef.current = save;
     return save;
-  }, [campaignId, onSave]);
+  }, [campaignId, onSave, templateMode]);
 
   useEffect(() => {
-    if (onRegisterSave) onRegisterSave(persistSequence);
+    if (onRegisterSave) onRegisterSave(templateMode ? null : persistSequence);
     return () => { if (onRegisterSave) onRegisterSave(null); };
-  }, [onRegisterSave, persistSequence]);
+  }, [onRegisterSave, persistSequence, templateMode]);
 
   // Auto-save sequence debounced when tree changes
   useEffect(() => {
-    if (!hasLoaded.current || !campaignId || campaignId === 'new' || campaignId === 'new_campaign') return;
+    if (templateMode || !hasLoaded.current || !campaignId || campaignId === 'new' || campaignId === 'new_campaign') return;
     const timer = setTimeout(() => persistSequence(tree), 600);
     return () => clearTimeout(timer);
-  }, [tree, campaignId, persistSequence]);
+  }, [tree, campaignId, persistSequence, templateMode]);
 
   // Inline header delay editor state (matches media_1790088397090.png)
   const [editingDelayId, setEditingDelayId] = useState(null);
@@ -731,14 +794,14 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
   const renderEditorToolbar = () => (
     <div className="flex flex-col gap-2 mb-2">
       <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
-        <button
+        {!templateMode && <button
           type="button"
           onClick={openPromptLibrary}
           className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-semibold border border-purple-200 shadow-2xs transition-colors shrink-0"
         >
           <Sparkles className="w-3.5 h-3.5 text-purple-600" />
           Prompt guidance
-        </button>
+        </button>}
         <button
           type="button"
           onClick={() => setShowVariablePicker(!showVariablePicker)}
@@ -746,14 +809,14 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
         >
           + Contact Variables
         </button>
-        <button
+        {!templateMode && <button
           type="button"
           onClick={() => handleOpenPreview(selectedStep)}
           className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold border border-indigo-200 shadow-2xs transition-colors ml-auto shrink-0"
         >
           <Eye className="w-3.5 h-3.5" />
           Preview
-        </button>
+        </button>}
       </div>
 
       {showVariablePicker && (
@@ -944,10 +1007,10 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
   // Recursive Branch / Subtree Renderer
   const renderBranchSubtree = (branchSteps, parentStepId, branchKey, endsHere) => {
     return (
-      <div className="flex flex-col items-center w-full min-w-max">
+      <div className="flex flex-col items-center shrink-0 w-auto">
         {branchSteps && branchSteps.length > 0 ? (
           branchSteps.map((step, idx) => (
-            <div key={step.id} className="flex flex-col items-center w-full min-w-max">
+            <div key={step.id} className="flex flex-col items-center shrink-0 w-auto">
               {renderVerticalConnector({
                 type: 'branch',
                 parentStepId,
@@ -1052,14 +1115,14 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
     const right = node.branches.right || { condition: 'No path saved', type: 'success', steps: [], endsHere: true };
 
     return (
-      <div className="flex flex-col items-center w-full min-w-max">
+      <div className="flex flex-col items-center shrink-0 w-auto">
         {/* Center vertical trunk line dropping from parent card */}
         <div className="w-[2px] h-5 bg-slate-300 shrink-0" />
 
-        {/* 2-Column Responsive Grid for Branches */}
-        <div className="grid grid-cols-2 w-full min-w-max items-start">
+        {/* 2-Column Responsive Flex Layout for Branches */}
+        <div className="flex flex-row items-start justify-center shrink-0 w-auto">
           {/* Left Branch Column */}
-          <div className="flex flex-col items-center min-w-[360px] w-full px-4">
+          <div className="flex flex-col items-center min-w-[360px] shrink-0 w-auto px-4">
             {/* Orthogonal Branch Header Connector */}
             <div className="w-full h-5 relative shrink-0">
               {/* Horizontal line from center (50%) to right seam (100%) */}
@@ -1085,7 +1148,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
           </div>
 
           {/* Right Branch Column */}
-          <div className="flex flex-col items-center min-w-[360px] w-full px-4">
+          <div className="flex flex-col items-center min-w-[360px] shrink-0 w-auto px-4">
             {/* Orthogonal Branch Header Connector */}
             <div className="w-full h-5 relative shrink-0">
               {/* Horizontal line from left seam (0%) to center (50%) */}
@@ -1166,28 +1229,37 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
         )}
 
         {/* Action Toast Banner matching media_1790088446398.png */}
-        {toastMessage && (
-          <div className={`absolute top-16 left-1/2 -translate-x-1/2 z-20 w-[640px] max-w-[90%] flex items-center justify-between gap-2 rounded-xl border px-4 py-2 text-xs font-semibold shadow-xs animate-fade-in ${
-            /could not|failed|error/i.test(toastMessage)
-              ? 'bg-rose-50 border-rose-200 text-rose-800'
-              : 'bg-emerald-50 border-emerald-200 text-emerald-800'
-          }`}>
-            <div className="flex items-center gap-2">
-              {/could not|failed|error/i.test(toastMessage)
-                ? <AlertCircle className="w-4 h-4 text-rose-600" />
-                : <CheckCircle2 className="w-4 h-4 text-emerald-600" />}
-              <span>{toastMessage}</span>
+        {toastMessage && (() => {
+          const messageText = typeof toastMessage === 'string' ? toastMessage : toastMessage?.text || '';
+          const isError = /could not|failed|error|exceeds|invalid|required|bound|cycle|must|cannot|rejected/i.test(messageText) || toastMessage?.type === 'error';
+          return (
+            <div className={`absolute top-16 left-1/2 -translate-x-1/2 z-20 w-[640px] max-w-[90%] flex items-center justify-between gap-2 rounded-xl border px-4 py-2 text-xs font-semibold shadow-xs animate-fade-in ${
+              isError
+                ? 'bg-rose-50 border-rose-200 text-rose-800'
+                : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+            }`}>
+              <div className="flex items-center gap-2">
+                {isError
+                  ? <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  : <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />}
+                <span>{messageText}</span>
+              </div>
+              <button
+                onClick={() => setToastMessage(null)}
+                className={`p-1 rounded-md transition-colors ${
+                  isError ? 'text-rose-500 hover:text-rose-800 hover:bg-rose-100' : 'text-emerald-500 hover:text-emerald-800 hover:bg-emerald-100'
+                }`}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
             </div>
-            <button onClick={() => setToastMessage(null)} className="text-emerald-500 hover:text-emerald-800">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Zoom & Canvas Panning Controls (Top Left) */}
         <div className="absolute top-5 left-6 z-20 flex items-center gap-1 rounded-xl bg-white border border-gray-200 p-1 shadow-xs text-gray-600">
           <button
-            onClick={() => setPanOffset((p) => ({ ...p, x: p.x + 180 }))}
+            onClick={() => setPanOffset((p) => clampPan(p.x + 180, p.y))}
             className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors text-gray-600 hover:text-indigo-600 flex items-center gap-1"
             title="Move canvas left (reveals leftward steps)"
           >
@@ -1195,7 +1267,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
             <span className="text-[10px] font-semibold text-gray-500 hidden md:inline">Left</span>
           </button>
           <button
-            onClick={() => setPanOffset((p) => ({ ...p, x: p.x - 180 }))}
+            onClick={() => setPanOffset((p) => clampPan(p.x - 180, p.y))}
             className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors text-gray-600 hover:text-indigo-600 flex items-center gap-1"
             title="Move canvas right"
           >
@@ -1217,17 +1289,26 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
             <span className="text-[10px] font-semibold text-gray-500 hidden sm:inline">Center</span>
           </button>
 
+          <button
+            onClick={handleFitToScreen}
+            className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors text-gray-600 hover:text-indigo-600 flex items-center gap-1"
+            title="Fit sequence to screen"
+          >
+            <Maximize2 className="h-3.5 w-3.5" />
+            <span className="text-[10px] font-semibold text-gray-500 hidden sm:inline">Fit</span>
+          </button>
+
           <div className="w-px h-4 bg-gray-200 mx-0.5" />
 
           <button
-            onClick={() => setZoomLevel((z) => Math.max(z - 10, 50))}
+            onClick={() => setZoomLevel((z) => Math.max(z - 10, 20))}
             className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
             title="Zoom out"
           >
             <ZoomOut className="h-4 w-4" />
           </button>
           <button
-            onClick={() => setZoomLevel((z) => Math.min(z + 10, 150))}
+            onClick={() => setZoomLevel((z) => Math.min(z + 10, 200))}
             className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
             title="Zoom in"
           >
@@ -1238,19 +1319,21 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
           </span>
         </div>
 
-        {/* Main Flowchart Tree Canvas Area (Pannable & Scrollable) */}
+        {/* Main Flowchart Tree Canvas Area (Pannable & Clamped) */}
         <div
+          ref={canvasViewportRef}
           onMouseDown={handleCanvasMouseDown}
           onMouseMove={handleCanvasMouseMove}
           onMouseUp={handleCanvasMouseUp}
           onMouseLeave={handleCanvasMouseUp}
           onWheel={handleCanvasWheel}
-          className={`flex-1 h-full min-h-0 overflow-auto flex flex-col items-center pt-24 pb-48 px-10 relative select-none ${
+          className={`flex-1 h-full min-h-0 overflow-hidden flex flex-col items-center pt-24 pb-48 px-10 relative select-none ${
             isPanning ? 'cursor-grabbing' : 'cursor-grab'
           }`}
         >
           <div
-            className="flex flex-col items-center transition-transform origin-top will-change-transform min-w-[760px] w-max"
+            ref={sequenceTreeRef}
+            className="flex flex-col items-center transition-transform origin-top will-change-transform shrink-0 w-auto"
             style={{
               transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomLevel / 100})`,
               transitionDuration: isPanning ? '0ms' : '150ms',
@@ -1281,7 +1364,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave }) {
 
             {/* Root vertical trunk lines and recursive nodes */}
             {tree.map((rootStep, index) => (
-              <div key={rootStep.id} className="flex flex-col items-center w-full min-w-max">
+              <div key={rootStep.id} className="flex flex-col items-center shrink-0 w-auto">
                 {renderVerticalConnector({
                   type: 'linear',
                   stepId: index > 0 ? tree[index - 1].id : 'start',

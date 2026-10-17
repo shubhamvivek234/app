@@ -185,3 +185,24 @@ def test_nested_linear_steps_cannot_hide_actions_from_the_actual_editor():
 def test_waiting_start_timezone_overflow_is_a_controlled_hold(value):
     from outreach.core.sequence_preview import waiting_start
     with pytest.raises(DAGValidationError):waiting_start({'waiting_for_connection_at':value},'if_connected',datetime.now(timezone.utc))
+
+
+def test_deep_branching_tree_compiles_successfully():
+    from outreach.core.sequence_contract import visual_graph
+    current = {
+        'id': 'step_6',
+        'type': 'send_message',
+        'config': {'message': 'Hello'},
+    }
+    for level in range(5, 0, -1):
+        current = {
+            'id': f'step_{level}',
+            'type': 'if_connected',
+            'branches': {
+                'left': {'condition': 'not connected', 'type': 'danger', 'steps': [{'id': f'left_{level}', 'type': 'visit_profile'}], 'endsHere': False},
+                'right': {'condition': 'connected', 'type': 'success', 'steps': [current], 'endsHere': False},
+            }
+        }
+    nodes, edges = visual_graph([current])
+    assert len(nodes) >= 6
+    assert len(edges) >= 5

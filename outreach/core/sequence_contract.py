@@ -11,6 +11,7 @@ MAX_NODES = 100
 MAX_EDGES = 200
 MAX_JSON_BYTES = 1_000_000
 MAX_DEPTH = 12
+MAX_TREE_DEPTH = 32
 MAX_DELAY_HOURS = 8760
 MAX_RENDER_CHARS = 10000
 
@@ -19,13 +20,13 @@ class DAGValidationError(ValueError):
     """An invalid or ambiguous sequence cannot be published as executable."""
 
 
-def bounded_json(value: Any) -> None:
+def bounded_json(value: Any, max_depth: int = MAX_DEPTH) -> None:
     stack = [(value, 0)]
     items = size = 0
     while stack:
         current, depth = stack.pop()
         items += 1
-        if depth > MAX_DEPTH or items > 20_000:
+        if depth > max_depth or items > 20_000:
             raise DAGValidationError("Sequence data exceeds its depth or item bound.")
         if isinstance(current, dict):
             if items + len(stack) + 2 * len(current) > 20_000:
@@ -135,7 +136,7 @@ def graph_envelope(nodes: Any, edges: Any) -> None:
 
 def visual_graph(tree: Any) -> tuple[list[dict], list[dict]]:
     """Bound before recursive traversal; never round or invent IDs/configuration."""
-    bounded_json(tree)
+    bounded_json(tree, max_depth=MAX_TREE_DEPTH)
     nodes, edges = [], []
 
     def visit(steps, parent=None, label=None):
