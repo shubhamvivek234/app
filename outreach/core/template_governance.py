@@ -152,6 +152,11 @@ async def authorize_create(current: SuppressionDatabase, actor: str, authenticat
     await _authorize(current, actor, authenticated_uid, "sequence:create")
 
 
+async def authorize_update(current: SuppressionDatabase, actor: str, authenticated_uid: str) -> None:
+    """Metadata editing authority is fenced inside the caller transaction."""
+    await _authorize(current, actor, authenticated_uid, "sequence:update")
+
+
 async def create_template(db: Any, workspace: str, actor: str, doc: dict, *, authenticated_uid: str) -> dict:
     """Coordinate new template insertions with deletion and erasure.
 

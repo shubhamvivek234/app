@@ -18,7 +18,7 @@ from outreach.core.sequence_preview import analyze_sequence, same_execution_grap
 from outreach.core.authorization import canonical_hash
 from outreach.core.template_governance import MAX_REVISION, scoped_review, delete_template, create_template
 from outreach.core.workspace_scope import workspace_scope
-from outreach.core import template_saves
+from outreach.core import template_saves, template_metadata, template_graphs, template_metadata_updates
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +82,22 @@ class RecoverableTemplateRequest(BaseModel):
     content_json: StrictStr = Field(min_length=1, max_length=template_saves.MAX_INPUT_BYTES)
 
 
+class EditTemplateMetadataRequest(DeleteTemplateRequest):
+    revision: StrictInt = Field(ge=0, lt=MAX_REVISION)
+    name: StrictStr = Field(min_length=1, max_length=100)
+    description: StrictStr = Field(max_length=1000)
+
+
+class RecoverableMetadataUpdateRequest(RecoverableTemplateRequest):
+    content_json: StrictStr = Field(min_length=1, max_length=template_metadata_updates.MAX_INPUT_BYTES)
+
+
+class EditTemplateGraphRequest(DeleteTemplateRequest):
+    revision: StrictInt = Field(ge=0, lt=MAX_REVISION)
+    graph_json: StrictStr = Field(min_length=1, max_length=template_graphs.MAX_INPUT_BYTES)
+    input_digest: StrictStr = Field(pattern=r'^[0-9a-f]{64}$')
+
+
 class PreviewSequenceRequest(ValidateSequenceRequest):
     request_scope: str = Field(pattern=r"^[0-9a-f]{64}$")
     request_id: str = Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -130,7 +146,9 @@ async def get_sequence_templates(
             custom_templates = await cursor.to_list(length=100)
             for doc in custom_templates:
                 templates.append({**{key: value for key, value in doc.items() if key != "_id"},
-                    "deletion_review": scoped_review(doc, ws_id, current_user.get("user_id"), current_user.get("firebase_uid"))})
+                    "deletion_review": scoped_review(doc, ws_id, current_user.get("user_id"), current_user.get("firebase_uid")),
+                    "metadata_review": template_metadata.metadata_review(doc, ws_id, current_user.get("user_id"), current_user.get("firebase_uid")),
+                    "graph_review": template_graphs.graph_review(doc, ws_id, current_user.get("user_id"), current_user.get("firebase_uid"))})
         except Exception:
             logger.warning("Could not load workspace sequence templates")
             raise HTTPException(503, "Sequence templates are unavailable. Please retry.") from None
@@ -206,6 +224,63 @@ async def delete_custom_template(
     return await delete_template(db, ws_id, current_user.get("user_id"), template_id,
         req.revision, req.review_digest, req.identity_digest,
         authenticated_uid=current_user.get("firebase_uid"), scope_digest=req.scope_digest)
+
+
+@router.patch('/templates/{template_id}/metadata-reviewed')
+async def edit_custom_template_metadata(template_id: str, req: EditTemplateMetadataRequest,
+    current_user: dict = require_outreach_permission('sequence:update'),
+    db: AsyncIOMotorDatabase = Depends(get_db)):
+    """Change only reviewed metadata; original graphs and campaign copies remain."""
+    workspace = _workspace_id(current_user)
+    if req.workspace_id != workspace:
+        raise HTTPException(403, 'Template review workspace changed; reload before editing')
+    return await template_metadata.update_metadata(db, workspace, current_user.get('user_id'), template_id,
+        req.revision, req.review_digest, req.identity_digest, req.name, req.description,
+        authenticated_uid=current_user.get('firebase_uid'), scope_digest=req.scope_digest)
+
+
+@router.patch('/templates/{template_id}/graph-reviewed')
+async def edit_custom_template_graph(template_id: str, req: EditTemplateGraphRequest,
+    current_user: dict = require_outreach_permission('sequence:update'),
+    db: AsyncIOMotorDatabase = Depends(get_db)):
+    """Update only one original reviewed template graph under current authority."""
+    workspace = _workspace_id(current_user)
+    if req.workspace_id != workspace:
+        raise HTTPException(403, 'Template graph review workspace changed')
+    return await template_graphs.update_graph(db, workspace, current_user.get('user_id'), template_id,
+        req.revision, req.review_digest, req.identity_digest, req.graph_json, req.input_digest,
+        authenticated_uid=current_user.get('firebase_uid'), scope_digest=req.scope_digest)
+
+
+@router.get('/template-metadata-updates/context')
+async def template_metadata_update_context(current_user: dict = require_outreach_permission('sequence:update')):
+    return template_metadata_updates.update_context(_workspace_id(current_user),
+        current_user.get('user_id'), current_user.get('firebase_uid'))
+
+
+@router.get('/template-metadata-updates/{request_id}')
+async def inspect_template_metadata_update(request_id: str,
+    workspace_id: str = Query(min_length=1, max_length=200),
+    scope_digest: str = Query(pattern=r'^[0-9a-f]{64}$'),
+    input_digest: str = Query(pattern=r'^[0-9a-f]{64}$'),
+    current_user: dict = require_outreach_permission('sequence:update'),
+    db: AsyncIOMotorDatabase = Depends(get_db)):
+    workspace = _workspace_id(current_user)
+    if workspace_id != workspace:
+        raise HTTPException(403, 'Template update workspace changed')
+    return await template_metadata_updates.inspect_update(db, workspace, current_user.get('user_id'),
+        current_user.get('firebase_uid'), request_id, scope_digest, input_digest)
+
+
+@router.post('/template-metadata-updates')
+async def save_template_metadata_update(req: RecoverableMetadataUpdateRequest,
+    current_user: dict = require_outreach_permission('sequence:update'),
+    db: AsyncIOMotorDatabase = Depends(get_db)):
+    workspace = _workspace_id(current_user)
+    if req.workspace_id != workspace:
+        raise HTTPException(403, 'Template update workspace changed')
+    return await template_metadata_updates.save_update(db, workspace, current_user.get('user_id'),
+        current_user.get('firebase_uid'), req.request_id, req.scope_digest, req.content_json, req.input_digest)
 
 
 @router.get('/template-saves/context')

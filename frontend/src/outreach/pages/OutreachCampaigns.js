@@ -20,6 +20,10 @@ import OutreachCampaignWizard from './OutreachCampaignWizard';
 import OutreachCampaignDetail from './OutreachCampaignDetail';
 import { flattenTreeToDAG } from '../components/sequence/sequenceGraph';
 import { reviewedTemplateDeletion, matchesTemplateDeletionReceipt } from '../utils/templateDeletion';
+import TemplateMetadataEditor from '../components/TemplateMetadataEditor';
+import { reviewedTemplateMetadata } from '../utils/templateMetadata';
+import TemplateGraphEditor from '../components/TemplateGraphEditor';
+import { reviewedTemplateGraph } from '../utils/templateGraph';
 
 const DELETION_REFERENCES_KEY = 'unravler.campaign-deletions.v1';
 const readDeletionReferences = () => {
@@ -455,6 +459,10 @@ export default function OutreachCampaigns({
   const templateDeleteRef = useRef(null);
   const [templateDeletion, setTemplateDeletion] = useState(null);
   const templateDeletionBlocked = templateDeletion && templateDeletion.phase !== 'reviewed';
+  const templateMetadataRef = useRef(null);
+  const [templateMetadata, setTemplateMetadata] = useState(null);
+  const [templateMetadataNotice, setTemplateMetadataNotice] = useState(false);
+  const [templateGraphNotice, setTemplateGraphNotice] = useState(false);
   const templateMountedRef = useRef(true);
   useEffect(() => {
     templateMountedRef.current = true;
@@ -520,8 +528,9 @@ export default function OutreachCampaigns({
     }
   };
 
-  const fetchTemplates = async (reviewUnconfirmed = false) => {
-    if (templateUseRef.current || ['pending', 'refreshing'].includes(templateDeleteRef.current?.phase)) return;
+  const fetchTemplates = async (reviewUnconfirmed = false, reviewMetadata = false) => {
+    if (templateUseRef.current || ['pending', 'refreshing'].includes(templateDeleteRef.current?.phase)
+      || templateMetadataRef.current && reviewMetadata !== true) return false;
     let refreshedDeletion = null;
     if (reviewUnconfirmed === true && templateDeleteRef.current) {
       refreshedDeletion = { ...templateDeleteRef.current, phase: 'refreshing' };
@@ -539,7 +548,11 @@ export default function OutreachCampaigns({
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (res.ok) {
+        if (reviewMetadata === true && res.status !== 200) throw new Error('Could not review current template details. Please retry.');
         const data = await res.json();
+        if (reviewMetadata === true && token !== localStorage.getItem('token')) {
+          throw new Error('Template account changed. Reload to review current details.');
+        }
         if (!Array.isArray(data) || data.length > 104 || data.some((item) => !item || typeof item.id !== 'string'
           || !item.id || typeof item.name !== 'string' || !item.name || item.description != null && typeof item.description !== 'string')
           || new Set(data.map((item) => item.id)).size !== data.length) {
@@ -552,6 +565,11 @@ export default function OutreachCampaigns({
             templateDeleteRef.current = reviewed;
             setTemplateDeletion(reviewed);
           }
+          if (reviewMetadata === true && templateMountedRef.current) {
+            templateMetadataRef.current = null;
+            setTemplateMetadata(null);
+          }
+          return true;
         }
       } else {
         throw new Error('Could not load sequence templates. Please retry.');
@@ -568,6 +586,7 @@ export default function OutreachCampaigns({
     } finally {
       if (generation === templateRequestRef.current) setLoadingTemplates(false);
     }
+    return false;
   };
 
   useEffect(() => {
@@ -584,7 +603,7 @@ export default function OutreachCampaigns({
 
   const handleDeleteTemplate = async (template) => {
     const captured = reviewedTemplateDeletion(template);
-    if (!captured || loadingTemplates || templateError || templateUseRef.current
+    if (!captured || loadingTemplates || templateError || templateUseRef.current || templateMetadataRef.current
       || templateDeleteRef.current && templateDeleteRef.current.phase !== 'reviewed') return;
     const operation = { ...captured, template_id: template.id, phase: 'pending', generation: templateRequestRef.current };
     templateDeleteRef.current = operation;
@@ -622,7 +641,7 @@ export default function OutreachCampaigns({
 
   const handleUseTemplate = async (tpl) => {
     const fullTpl = tpl;
-    if (templateUseRef.current || loadingTemplates || templateError || !isLaunchableTemplate(fullTpl)
+    if (templateUseRef.current || templateMetadataRef.current || loadingTemplates || templateError || !isLaunchableTemplate(fullTpl)
       || templateDeleteRef.current && templateDeleteRef.current.phase !== 'reviewed') {
       toast.error('This template needs a successful compatibility review before configuration.');
       return false;
@@ -689,6 +708,39 @@ export default function OutreachCampaigns({
       templateUseRef.current = false;
       if (templateMountedRef.current) setUsingTemplateId(null);
     }
+  };
+
+  const openTemplateMetadata = (template) => {
+    if (templateMetadataRef.current || templateUseRef.current || loadingTemplates || templateError
+      || templateDeleteRef.current && templateDeleteRef.current.phase !== 'reviewed'
+      || !reviewedTemplateMetadata(template) || !templatesList.includes(template)) return;
+    const operation = {template,generation:templateRequestRef.current};
+    templateMetadataRef.current = operation;
+    setTemplateMetadata(operation);
+  };
+
+  const closeTemplateMetadata = () => {
+    templateMetadataRef.current = null;
+    setTemplateMetadata(null);
+  };
+
+  const openTemplateGraph = (template) => {
+    if (templateMetadataRef.current || templateUseRef.current || loadingTemplates || templateError
+      || templateDeleteRef.current && templateDeleteRef.current.phase !== 'reviewed'
+      || !reviewedTemplateGraph(template) || !isLaunchableTemplate(template) || !templatesList.includes(template)) return;
+    const operation = {template,generation:templateRequestRef.current,kind:'graph'};
+    templateMetadataRef.current = operation;
+    setTemplateMetadata(operation);
+  };
+
+  const savedTemplateMetadata = (template,receipt,recovery) => {
+    const operation = templateMetadataRef.current;
+    if (!templateMountedRef.current || operation?.template !== template
+      || operation.generation !== templateRequestRef.current) return;
+    closeTemplateMetadata();
+    toast.success(operation.kind === 'graph' ? 'Template sequence updated'
+      : recovery?.historical === true ? 'Original template update confirmed' : 'Template details updated');
+    fetchTemplates();
   };
 
   // Auto-drafting when user clicks "New campaign"
@@ -905,7 +957,7 @@ export default function OutreachCampaigns({
       <div className="max-w-6xl mx-auto px-6 py-8">
         <button
           onClick={() => setIsTemplatesOpen(false)}
-          disabled={usingTemplateId !== null || templateDeletion?.phase === 'pending' || templateDeletion?.phase === 'refreshing'}
+          disabled={usingTemplateId !== null || Boolean(templateMetadata) || templateDeletion?.phase === 'pending' || templateDeletion?.phase === 'refreshing'}
           className="text-xs font-semibold text-gray-500 hover:text-gray-900 transition-colors mb-4 inline-flex items-center gap-1.5"
         >
           ← Campaigns
@@ -927,6 +979,17 @@ export default function OutreachCampaigns({
           <button type="button" onClick={fetchTemplates} className="mt-2 font-semibold">Retry templates</button>
         </div>}
         {!loadingTemplates && !templateError && displayTemplates.length === 0 && <p className="mb-4 text-sm text-gray-500">No sequence templates are available.</p>}
+
+        {templateMetadataNotice && !templateMetadata && <p role="status" className="mb-4 text-sm text-amber-800">
+          {templateGraphNotice ? 'The earlier sequence update is unconfirmed. These are the current catalog templates; review the sequence before making a new edit.'
+            : 'The earlier details update is unconfirmed. These are the current catalog details; review them before making a new edit.'}
+        </p>}
+        {templateMetadata?.kind === 'graph' ? <TemplateGraphEditor template={templateMetadata.template}
+          onClose={closeTemplateMetadata} onSaved={savedTemplateMetadata}
+          onRefresh={() => {setTemplateMetadataNotice(true);setTemplateGraphNotice(true);return fetchTemplates(false,true);}} />
+          : templateMetadata && <TemplateMetadataEditor template={templateMetadata.template}
+            onClose={closeTemplateMetadata} onSaved={savedTemplateMetadata}
+            onRefresh={() => {setTemplateMetadataNotice(true);setTemplateGraphNotice(false);return fetchTemplates(false,true);}} />}
 
         {templateDeletion && <div role={templateDeletion.phase === 'pending' ? 'status' : 'alert'} className="mb-4 rounded-lg border border-amber-200 p-4 text-sm">
           {templateDeletion.phase === 'pending' ? <p>Deleting the reviewed template…</p> : <>
@@ -970,9 +1033,25 @@ export default function OutreachCampaigns({
                   <td className="py-4 px-5 text-right">
                     <div className="flex items-center justify-end gap-2">
                       {tpl.is_custom === true && (
+                        <button type="button" onClick={() => openTemplateGraph(tpl)}
+                          disabled={usingTemplateId !== null || Boolean(templateMetadata) || Boolean(templateDeletionBlocked) || !reviewedTemplateGraph(tpl) || !isLaunchableTemplate(tpl)}
+                          aria-label={`Edit template sequence ${tpl.name}`}
+                          className="rounded-lg px-2 py-1 text-indigo-600 hover:bg-indigo-50 disabled:opacity-50">
+                          Edit sequence
+                        </button>
+                      )}
+                      {tpl.is_custom === true && (
+                        <button type="button" onClick={() => openTemplateMetadata(tpl)}
+                          disabled={usingTemplateId !== null || Boolean(templateMetadata) || Boolean(templateDeletionBlocked) || !reviewedTemplateMetadata(tpl)}
+                          aria-label={`Edit template details ${tpl.name}`}
+                          className="p-1.5 text-gray-400 hover:text-indigo-600 rounded-lg transition-colors disabled:opacity-50">
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      {tpl.is_custom === true && (
                         <button
                           onClick={() => handleDeleteTemplate(tpl)}
-                          disabled={usingTemplateId !== null || Boolean(templateDeletionBlocked) || !reviewedTemplateDeletion(tpl)}
+                          disabled={usingTemplateId !== null || Boolean(templateMetadata) || Boolean(templateDeletionBlocked) || !reviewedTemplateDeletion(tpl)}
                           className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
                           title={reviewedTemplateDeletion(tpl) ? 'Delete reviewed custom template' : 'Reload a valid template review before deleting'}
                           aria-label={`Delete template ${tpl.name}`}
@@ -982,7 +1061,7 @@ export default function OutreachCampaigns({
                       )}
                       <button
                         onClick={() => handleUseTemplate(tpl)}
-                        disabled={!isLaunchableTemplate(tpl) || usingTemplateId !== null || Boolean(templateDeletionBlocked)}
+                        disabled={!isLaunchableTemplate(tpl) || usingTemplateId !== null || Boolean(templateMetadata) || Boolean(templateDeletionBlocked)}
                         title={!isLaunchableTemplate(tpl) ? 'Requires a compatible, editable sequence graph' : undefined}
                         className="rounded-lg bg-indigo-50 text-[#5145cd] hover:bg-indigo-100 px-3.5 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
