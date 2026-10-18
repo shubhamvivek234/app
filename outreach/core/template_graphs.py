@@ -123,50 +123,73 @@ def graph_review(row: dict, workspace: str, actor: str, uid: str) -> dict:
         'identity_digest': review['identity_digest'], 'review_digest': review['review_digest'], 'scope_digest': scope}
 
 
-async def update_graph(db: Any, workspace: str, actor: str, template_id: str,
-                       revision: int, review_digest: str, identity_digest: str,
-                       graph_json: str, input_digest: str, *, authenticated_uid: str, scope_digest: str) -> dict:
-    """Replace one reviewed original graph without mutating campaign snapshots."""
+def prepare_graph_operation(workspace: str, actor: str, authenticated_uid: str, template_id: str,
+                            revision: int, review_digest: str, identity_digest: str, scope_digest: str) -> dict:
+    """Validate the original graph review without compiling new graph content."""
     if (type(template_id) is not str or not re.fullmatch(r'tpl_custom_[0-9a-f]{10}', template_id)
             or type(revision) is not int or not 0 <= revision < governance.MAX_REVISION
             or any(type(value) is not str or not re.fullmatch(r'[0-9a-f]{64}', value)
-                   for value in (review_digest, identity_digest, scope_digest, input_digest))):
+                   for value in (review_digest, identity_digest, scope_digest))):
         raise HTTPException(422, 'A current template graph review is required')
     if scope_digest != graph_scope(workspace, actor, authenticated_uid):
         raise HTTPException(403, 'Template graph account or workspace changed')
+    return {'contract_version': 1, 'workspace_id': workspace, 'template_id': template_id,
+        'revision': revision, 'review_digest': review_digest, 'identity_digest': identity_digest, 'scope_digest': scope_digest}
+
+
+async def _replace_graph(current: Any, workspace: str, actor: str, authenticated_uid: str,
+                         operation: dict, prepared: dict, timestamp: datetime) -> dict:
+    """Apply only within the caller's shared guard and current authority fence.
+
+    Both callers validate the operation and prepared graph before this helper.
+    Its exceptions propagate through the owning transaction, including a later
+    receipt failure. prepared.input_digest belongs to that caller's contract:
+    graph-only JSON for legacy PATCH, whole-operation JSON for recoverable POST.
+    """
+    template_id = operation['template_id']
+    captured = {key: operation[key] for key in ('contract_version', 'workspace_id',
+        'revision', 'review_digest', 'identity_digest', 'scope_digest')}
+    row = await unique_resource(current.outreach_templates, workspace, template_id)
+    if row is None:
+        raise HTTPException(404, 'Reviewed template is unavailable; reload before editing')
+    reviewed = graph_review(row, workspace, actor, authenticated_uid)
+    if not reviewed['reviewable'] or any(reviewed[key] != value for key,value in captured.items()):
+        raise HTTPException(409, 'Template changed; reload before editing its graph')
+    fields = {**deepcopy(prepared['document']), 'template_revision': operation['revision'] + 1,
+        'graph_updated_at': timestamp, 'graph_updated_by': actor}
+    expected = {**deepcopy(row), **fields}
+    result_review = governance.template_review(expected, workspace)
+    if not result_review['reviewable']:
+        raise HTTPException(422, 'Updated template exceeds the supported full-record bound')
+    query = {**workspace_scope(workspace), 'id': template_id, '_id': row['_id'],
+        '$expr': {'$eq': ['$$ROOT', {'$literal': deepcopy(row)}]}}
+    result = await current.outreach_templates.replace_one(query, deepcopy(expected))
+    if result.matched_count != 1:
+        raise HTTPException(409, 'Template changed; reload before editing its graph')
+    saved = await current.outreach_templates.find_one({**workspace_scope(workspace), '_id': row['_id']})
+    if saved is None or BSON.encode(saved) != BSON.encode(expected):
+        raise HTTPException(409, 'Could not verify updated template graph')
+    return {**captured, 'status': 'updated', 'template_id': template_id,
+        'input_digest': prepared['input_digest'], 'graph_digest': prepared['graph_digest'],
+        'new_revision': operation['revision'] + 1, 'new_review_digest': result_review['review_digest']}
+
+
+async def update_graph(db: Any, workspace: str, actor: str, template_id: str,
+                       revision: int, review_digest: str, identity_digest: str,
+                       graph_json: str, input_digest: str, *, authenticated_uid: str, scope_digest: str) -> dict:
+    """Retain the legacy reviewed PATCH's graph-only input and receipt semantics."""
+    if type(input_digest) is not str or not re.fullmatch(r'[0-9a-f]{64}', input_digest):
+        raise HTTPException(422, 'A current template graph review is required')
+    operation = prepare_graph_operation(workspace, actor, authenticated_uid, template_id,
+        revision, review_digest, identity_digest, scope_digest)
     prepared = prepare_graph(graph_json)
     if prepared['input_digest'] != input_digest:
         raise HTTPException(422, 'Template graph input changed')
     now = datetime.now(timezone.utc)
-    fields = {**prepared['document'], 'template_revision': revision + 1,
-        'graph_updated_at': now.replace(microsecond=now.microsecond // 1000 * 1000), 'graph_updated_by': actor}
-    captured = {'contract_version': 1, 'workspace_id': workspace, 'revision': revision,
-        'review_digest': review_digest, 'identity_digest': identity_digest, 'scope_digest': scope_digest}
-
+    timestamp = now.replace(microsecond=now.microsecond // 1000 * 1000)
     async def update(current):
         await governance.authorize_update(current, actor, authenticated_uid)
-        row = await unique_resource(current.outreach_templates, workspace, template_id)
-        if row is None:
-            raise HTTPException(404, 'Reviewed template is unavailable; reload before editing')
-        reviewed = graph_review(row, workspace, actor, authenticated_uid)
-        if not reviewed['reviewable'] or any(reviewed[key] != value for key,value in captured.items()):
-            raise HTTPException(409, 'Template changed; reload before editing its graph')
-        expected = {**deepcopy(row), **deepcopy(fields)}
-        result_review = governance.template_review(expected, workspace)
-        if not result_review['reviewable']:
-            raise HTTPException(422, 'Updated template exceeds the supported full-record bound')
-        query = {**workspace_scope(workspace), 'id': template_id, '_id': row['_id'],
-            '$expr': {'$eq': ['$$ROOT', {'$literal': deepcopy(row)}]}}
-        result = await current.outreach_templates.replace_one(query, deepcopy(expected))
-        if result.matched_count != 1:
-            raise HTTPException(409, 'Template changed; reload before editing its graph')
-        saved = await current.outreach_templates.find_one({**workspace_scope(workspace), '_id': row['_id']})
-        if saved is None or BSON.encode(saved) != BSON.encode(expected):
-            raise HTTPException(409, 'Could not verify updated template graph')
-        return {**captured, 'status': 'updated', 'template_id': template_id, 'input_digest': input_digest,
-            'graph_digest': prepared['graph_digest'], 'new_revision': revision + 1,
-            'new_review_digest': result_review['review_digest']}
-
+        return await _replace_graph(current, workspace, actor, authenticated_uid, operation, prepared, timestamp)
     try:
         return await mutate_suppression(db, workspace, update)
     except SuppressionUnavailable:

@@ -196,21 +196,29 @@ async def delete_template(db: Any, workspace: str, actor: str, template_id: str,
 
     async def remove(current):
         await authorize_delete(current, actor, authenticated_uid)
-        row = await unique_resource(current.outreach_templates, workspace, template_id)
-        if row is None:
-            raise HTTPException(404, "Reviewed template is unavailable; reload before another deletion")
-        public = template_review(row, workspace)
-        if public["identity_digest"] != identity_digest:
-            raise HTTPException(409, "Template identity changed; reload before deleting")
-        query = deletion_precondition(row, workspace, revision, review_digest)
-        result = await current.outreach_templates.delete_one(query)
-        if result.deleted_count != 1:
-            raise HTTPException(409, "Template changed; reload before deleting")
-        return {"contract_version": 1, "status": "deleted", "template_id": template_id,
-                "workspace_id": workspace, "revision": revision, "review_digest": review_digest,
-                "identity_digest": identity_digest, "scope_digest": scope_digest}
+        return await _remove_reviewed(current, workspace, template_id, revision, review_digest, identity_digest, scope_digest)
 
     try:
         return await mutate_suppression(db, workspace, remove)
     except SuppressionUnavailable:
         raise HTTPException(503, "Could not confirm template deletion. Reload before another deletion.") from None
+
+
+async def _remove_reviewed(current: SuppressionDatabase, workspace: str, template_id: str,
+                           revision: int, review_digest: str, identity_digest: str, scope_digest: str) -> dict:
+    """Caller must fence current deletion authority in this same transaction."""
+    row = await unique_resource(current.outreach_templates, workspace, template_id)
+    if row is None:
+        raise HTTPException(404, "Reviewed template is unavailable; reload before another deletion")
+    public = template_review(row, workspace)
+    if public["identity_digest"] != identity_digest:
+        raise HTTPException(409, "Template identity changed; reload before deleting")
+    query = deletion_precondition(row, workspace, revision, review_digest)
+    result = await current.outreach_templates.delete_one(query)
+    if result.deleted_count != 1:
+        raise HTTPException(409, "Template changed; reload before deleting")
+    if await current.outreach_templates.find_one({**workspace_scope(workspace), '_id': row['_id']}) is not None:
+        raise HTTPException(503, "Original template deletion is unconfirmed")
+    return {"contract_version": 1, "status": "deleted", "template_id": template_id,
+            "workspace_id": workspace, "revision": revision, "review_digest": review_digest,
+            "identity_digest": identity_digest, "scope_digest": scope_digest}

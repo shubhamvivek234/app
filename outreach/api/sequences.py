@@ -18,7 +18,7 @@ from outreach.core.sequence_preview import analyze_sequence, same_execution_grap
 from outreach.core.authorization import canonical_hash
 from outreach.core.template_governance import MAX_REVISION, scoped_review, delete_template, create_template
 from outreach.core.workspace_scope import workspace_scope
-from outreach.core import template_saves, template_metadata, template_graphs, template_metadata_updates
+from outreach.core import template_saves, template_metadata, template_graphs, template_metadata_updates, template_graph_updates, template_deletions
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +90,10 @@ class EditTemplateMetadataRequest(DeleteTemplateRequest):
 
 class RecoverableMetadataUpdateRequest(RecoverableTemplateRequest):
     content_json: StrictStr = Field(min_length=1, max_length=template_metadata_updates.MAX_INPUT_BYTES)
+
+
+class RecoverableDeletionRequest(RecoverableTemplateRequest):
+    content_json: StrictStr = Field(min_length=1, max_length=template_deletions.MAX_INPUT_BYTES)
 
 
 class EditTemplateGraphRequest(DeleteTemplateRequest):
@@ -250,6 +254,68 @@ async def edit_custom_template_graph(template_id: str, req: EditTemplateGraphReq
     return await template_graphs.update_graph(db, workspace, current_user.get('user_id'), template_id,
         req.revision, req.review_digest, req.identity_digest, req.graph_json, req.input_digest,
         authenticated_uid=current_user.get('firebase_uid'), scope_digest=req.scope_digest)
+
+
+@router.get('/template-deletions/context')
+async def template_deletion_context(current_user: dict = require_outreach_permission('sequence:delete')):
+    return template_deletions.deletion_context(_workspace_id(current_user),
+        current_user.get('user_id'), current_user.get('firebase_uid'))
+
+
+@router.get('/template-deletions/{request_id}')
+async def inspect_template_deletion(request_id: str,
+    workspace_id: str = Query(min_length=1, max_length=200),
+    scope_digest: str = Query(pattern=r'^[0-9a-f]{64}$'),
+    input_digest: str = Query(pattern=r'^[0-9a-f]{64}$'),
+    current_user: dict = require_outreach_permission('sequence:delete'),
+    db: AsyncIOMotorDatabase = Depends(get_db)):
+    workspace = _workspace_id(current_user)
+    if workspace != workspace_id:
+        raise HTTPException(403, 'Original template deletion workspace changed')
+    return await template_deletions.inspect_deletion(db, workspace, current_user.get('user_id'),
+        current_user.get('firebase_uid'), request_id, scope_digest, input_digest)
+
+
+@router.post('/template-deletions')
+async def save_template_deletion(req: RecoverableDeletionRequest,
+    current_user: dict = require_outreach_permission('sequence:delete'),
+    db: AsyncIOMotorDatabase = Depends(get_db)):
+    workspace = _workspace_id(current_user)
+    if workspace != req.workspace_id:
+        raise HTTPException(403, 'Original template deletion workspace changed')
+    return await template_deletions.save_deletion(db, workspace, current_user.get('user_id'),
+        current_user.get('firebase_uid'), req.request_id, req.scope_digest, req.content_json, req.input_digest)
+
+
+@router.get('/template-graph-updates/context')
+async def template_graph_update_context(current_user: dict = require_outreach_permission('sequence:update')):
+    return template_graph_updates.update_context(_workspace_id(current_user),
+        current_user.get('user_id'), current_user.get('firebase_uid'))
+
+
+@router.get('/template-graph-updates/{request_id}')
+async def inspect_template_graph_update(request_id: str,
+    workspace_id: str = Query(min_length=1, max_length=200),
+    scope_digest: str = Query(pattern=r'^[0-9a-f]{64}$'),
+    input_digest: str = Query(pattern=r'^[0-9a-f]{64}$'),
+    current_user: dict = require_outreach_permission('sequence:update'),
+    db: AsyncIOMotorDatabase = Depends(get_db)):
+    workspace = _workspace_id(current_user)
+    if workspace_id != workspace:
+        raise HTTPException(403, 'Template update workspace changed')
+    return await template_graph_updates.inspect_update(db, workspace, current_user.get('user_id'),
+        current_user.get('firebase_uid'), request_id, scope_digest, input_digest)
+
+
+@router.post('/template-graph-updates')
+async def save_template_graph_update(req: RecoverableTemplateRequest,
+    current_user: dict = require_outreach_permission('sequence:update'),
+    db: AsyncIOMotorDatabase = Depends(get_db)):
+    workspace = _workspace_id(current_user)
+    if req.workspace_id != workspace:
+        raise HTTPException(403, 'Template update workspace changed')
+    return await template_graph_updates.save_update(db, workspace, current_user.get('user_id'),
+        current_user.get('firebase_uid'), req.request_id, req.scope_digest, req.content_json, req.input_digest)
 
 
 @router.get('/template-metadata-updates/context')

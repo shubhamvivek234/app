@@ -1,0 +1,55 @@
+# Unravler.io v2.81 — Recoverable template sequence updates
+
+Updated: 2026-10-18 IST. Bounded local implementation on main at `090ae86`; uncommitted and undeployed. Commit `9b78307` contains the preceding [reviewed graph editing](UNRAVLER_IO_TEMPLATE_GRAPH_RELEASE.md) and [metadata recovery](UNRAVLER_IO_TEMPLATE_METADATA_RECOVERY_RELEASE.md). The `090ae86` canvas geometry, sequence contract and landing/auth changes are preserved. The local origin/main tracking ref points to `090ae86`; this is not a fresh remote CI or deployment verification.
+
+## User behavior and scope
+
+Save template sequence now records a recoverable original graph update. A successful original template replacement and its historical receipt commit together. If the response is lost, **Check original sequence update status** checks the original request without resaving it. Recovery reports **Original template sequence update confirmed**, then loads the current gallery, which may reflect later graph or metadata changes or deletion.
+
+The existing graph/revision/latest-audit fields alone change. Metadata, native/public/workspace/creator identity, nongraph BSON and independent campaign/version/task copies retain v2.79 behavior. Intentional graph recompilation can normalize source numbers; unchanged graph BSON is not claimed. Original creation/metadata receipts remain historical. This adds graph outcome recovery, not sharing, immutable graph history, previous-version restore, deletion recovery or execution authority.
+
+## Whole-operation contract and historical receipts
+
+New context GET, POST and original-reference GET use /sequences/template-graph-updates with current sequence:update access. Strict version 1 fields bind resolved workspace, canonical UUID, distinct template-graph-update-scope-v1 actor/UID/workspace scope, exact frozen content_json and its SHA-256 input digest. The complete operation JSON contains original graph-review fields, template ID, nodes, edges and tree. Recursive duplicate keys, coercion and unexpected fields deny.
+
+Browser, API and core enforce the 1,048,576-byte UTF-8 limit for the complete new operation input. The shared graph compiler separately enforces its existing 1,000,000 JSON-byte/20,000-item/depth-12/100-node/200-edge, semantic and faithful nonempty visual-tree contracts. The original stored compiled/marker pair must still agree strictly with its current source or remain unavailable.
+
+Three digests have distinct meanings: the new input_digest hashes the entire original operation, the retained legacy PATCH input_digest hashes graph-only JSON, and graph_digest canonically hashes the compiled graph. Whitespace changes the input digest without changing an equivalent compiled graph digest. The extracted in-transaction graph helper preserves the old PATCH response/hash semantics.
+
+Only stable envelope/scope/reference/byte/hash validation and current authority precede original receipt lookup. An existing same-request/input receipt returns before graph parsing/compilation/current-template lookup; conflicting input returns 409. A new request alone parses and compiles. Thus original retries/status do not overwrite a newer graph, revalidate historical content against new policy or recreate a deleted/replaced template.
+
+## Atomicity, authority and privacy
+
+The existing workspace guard/snapshot/majority transaction rechecks original authenticated UID, current unique native user/member-or-owner and erasure authority with counter writes. Both graph service callers authorize before invoking the shared replacement helper. Captured original native identity/revision/full-row review, literal full-row CAS and exact BSON readback protect the original replacement. New receipt insertion and exact stored BSON reread share the same transaction; failures roll back the graph, receipt and authority counters.
+
+New outreach_template_graph_updates uses deterministic scoped UUID-derived _id and MongoDB's built-in unique _id index, with no TTL. Its strict minimal receipt records original request/input/template/native identity/revision/full-row proof and expected inner graph-review scope, plus compiled graph digest, next revision/result review hash, public actor reference and UTC-millisecond creation audit. Schema/scalar/JS-safe integer/Int64/next-revision checks reject malformed records. Expected inner scope is deterministically checked on status, retry and readback.
+
+No graph, name, description, raw JSON or separate authenticated Firebase UID field is stored in the receipt. Public actor identifiers can coincide with legacy identity values; references and hashes remain linkable metadata. Receipt digests are trusted application/database assertions, not signed external evidence or immutable content history. Current-authority status/retry reads can advance guard/counter metadata. Actual guarded erasure purges this collection and blocks recovery. Backup rollback, raw writers and missing outside-backup evidence remain limits.
+
+The retained legacy graph PATCH is unchanged and does not create a new receipt. New POST URLs cannot fall through to that older handler. Metadata update, creation and deletion APIs retain their existing contracts; older unknown graph PATCH outcomes have no retroactive receipt.
+
+## Browser fencing and unresolved outcomes
+
+The actual canvas supplies a copied nodes/edges/tree snapshot. The editor explicitly selects those fields so extra snapshot keys cannot override the original proof or template ID. It freezes complete operation JSON before asynchronous context/hash work. One UUID/reference is admitted only after current-context preparation and retained before POST. Exact HTTP 200 receipts must match original outer reference/input and inner native/revision/full-row scope, next revision and valid resulting server digests.
+
+Preparation/transport/status are single-flight. Original props, mount and per-request token checks fence dependent awaits; the canvas unmounts while preparing/pending/held. Definite preparation or byte-bound failure retains an editable draft without a new reference. Pre-POST context loss permits safe stopped-preparation Cancel. Explicit status checking uses current credentials plus a fresh context matching the retained original scope, so normal token refresh can recover the same original identity; foreign contexts never query its outcome.
+
+Malformed/extra receipts,201/202, network/JSON failure and missing 404 remain held. Catalog resemblance or absence never confirms the original. No automatic POST replay, fresh UUID, cancellation protocol or browser write retry is introduced. GET-only 404 can remain held indefinitely if no receipt committed. References, drafts and holds remain view-memory-only; leaving/unmounting/tab/browser loss discards them. Existing creation-reference sessionStorage is unchanged. Cross-tab/raw-script coordination and drained-writer cutover remain open.
+
+## Verified scope and provenance
+
+Final affected backend selection: 191 passes, zero skips, one existing warning in 37.18 seconds = 100 new (41 pure/59 native) plus 91 prior graph checks. Native controls cover identical/conflicting requests, later graph/metadata/delete/native replacement, current and post-snapshot authority drift for first save/status/retry, persisted/valid-shaped receipt corruption, graph-digest corruption rollback, actual guarded erasure ordering/purge, standalone denial, simulated commit-ack loss, old-route denial and final JS-safe Int64 receipts. Five raw-original proof cases cannot bypass malformed stored compiled/marker agreement, and recoverable graph saves racing actual metadata edits/deletion have one winner.
+
+Independent backend source/test review approves; 41 pure checks independently passed. Independent frontend review approves; 43 affected checks across three suites independently passed. Tests include the real latest canvas delay edit, frozen original proof, full UTF-8 overflow before UUID/POST, snapshot-key override rejection, current-token recovery, foreign scope denial, stopped preparation, exact receipts and unknown holds. Earlier surrogate escaping, legacy receipt extra-field and overly broad capability-read expectations were fixture errors corrected without weakening production guards.
+
+Fresh whole frontend passes 482 checks across 54 suites in 11.185 seconds. The 43 affected frontend checks also pass under coverage in 2.063 seconds: selected graph editor/helper 92.56% statements, 98.71% lines and 92.98% branches. All 43 compiled synthetic-API browser journeys pass in 38.711 seconds, including four graph recovery journeys with real Unicode title/whole-input SHA verification, current-catalog refresh after historical recovery and missing-status holds. The CI-mode frontend production build passes in 49.69 seconds with existing warnings.
+
+Backend coverage passes 540 overlapping checks in 157.75 seconds: combined 430/495 statements (87%), new receipt core 106/109 (97%), shared graph core 128/132 (97%) and sequence API 196/254 (77%). Python compilation, configured medium/high scoped Bandit (zero findings) and diff checks pass. Fresh broad application checks pass 4,040 with 2,009 historical/opt-in skips, six sandbox deselections and 13 warnings in 233.17 seconds. The complete 32-module native suite passes 1,217 checks with zero skips and three existing warnings in 605.68 seconds; the CI minimum of 1,217 is verified. Broad/native passing-ID overlap is zero, giving 5,257 distinct backend passes. All 191 affected checks belong to that union; focused/coverage selections are not added twice. Synthetic API/browser tests do not establish authenticated live source/provider fidelity. Remote CI/security/protected-check enforcement and current production health remain separate.
+
+Private backup/evidence: /tmp/unravler-template-graph-recovery-zRPx0k. Verification checks 19 frozen source/test/config/doc hashes, 39 preserved baseline/earlier-source hashes, 25 byte-identical Desktop pairs from 22 source documents, 330 local links, 1,751 protected tracked baseline files and nine historical unrelated fingerprints. Final-verification.json records distinct passing IDs/overlap, final independent numerical/document approval, cleanup and memory hash. Session memory is written last.
+
+## Rollout and remaining work
+
+This continuation stays local. A separately authorized rollout must drain older writers and use matching backend/frontend contracts with the new receipt collection included in erasure. No commit/push/deploy, production migration, live/conditional flag change, grant, purchase or real provider/AWS request occurred here.
+
+Next: recoverable reviewed deletion, persistent update references, sharing/ownership and immutable revision history. Broader source/recipient fidelity, team/sender governance, security/legacy migration, authenticated restore/reconciliation/activation, live health/IAM-egress and an actual pilot remain open. Unrelated untracked Prosp comparison/plan/skill files and .gitignore edits are preserved.

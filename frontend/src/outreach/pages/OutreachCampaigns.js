@@ -19,7 +19,9 @@ import { toast } from 'sonner';
 import OutreachCampaignWizard from './OutreachCampaignWizard';
 import OutreachCampaignDetail from './OutreachCampaignDetail';
 import { flattenTreeToDAG } from '../components/sequence/sequenceGraph';
-import { reviewedTemplateDeletion, matchesTemplateDeletionReceipt } from '../utils/templateDeletion';
+import { reviewedTemplateDeletion } from '../utils/templateDeletion';
+import { deletionInputDigest, matchesDeletionReceipt } from '../utils/templateDeletionRecovery';
+import { validSaveContext } from '../hooks/useTemplateSave';
 import TemplateMetadataEditor from '../components/TemplateMetadataEditor';
 import { reviewedTemplateMetadata } from '../utils/templateMetadata';
 import TemplateGraphEditor from '../components/TemplateGraphEditor';
@@ -458,7 +460,7 @@ export default function OutreachCampaigns({
   const [usingTemplateId, setUsingTemplateId] = useState(null);
   const templateDeleteRef = useRef(null);
   const [templateDeletion, setTemplateDeletion] = useState(null);
-  const templateDeletionBlocked = templateDeletion && templateDeletion.phase !== 'reviewed';
+  const templateDeletionBlocked = Boolean(templateDeletion);
   const templateMetadataRef = useRef(null);
   const [templateMetadata, setTemplateMetadata] = useState(null);
   const [templateMetadataNotice, setTemplateMetadataNotice] = useState(false);
@@ -528,15 +530,9 @@ export default function OutreachCampaigns({
     }
   };
 
-  const fetchTemplates = async (reviewUnconfirmed = false, reviewMetadata = false) => {
-    if (templateUseRef.current || ['pending', 'refreshing'].includes(templateDeleteRef.current?.phase)
+  const fetchTemplates = async (reviewMetadata = false) => {
+    if (templateUseRef.current || ['preparing', 'pending', 'checking'].includes(templateDeleteRef.current?.phase)
       || templateMetadataRef.current && reviewMetadata !== true) return false;
-    let refreshedDeletion = null;
-    if (reviewUnconfirmed === true && templateDeleteRef.current) {
-      refreshedDeletion = { ...templateDeleteRef.current, phase: 'refreshing' };
-      templateDeleteRef.current = refreshedDeletion;
-      setTemplateDeletion(refreshedDeletion);
-    }
     const generation = ++templateRequestRef.current;
     setLoadingTemplates(true);
     setTemplatesList([]);
@@ -560,11 +556,6 @@ export default function OutreachCampaigns({
         }
         if (generation === templateRequestRef.current) {
           setTemplatesList(data);
-          if (refreshedDeletion && templateDeleteRef.current === refreshedDeletion) {
-            const reviewed = { ...refreshedDeletion, phase: 'reviewed' };
-            templateDeleteRef.current = reviewed;
-            setTemplateDeletion(reviewed);
-          }
           if (reviewMetadata === true && templateMountedRef.current) {
             templateMetadataRef.current = null;
             setTemplateMetadata(null);
@@ -577,11 +568,6 @@ export default function OutreachCampaigns({
     } catch (err) {
       if (generation === templateRequestRef.current) {
         setTemplateError(err.message || 'Could not load sequence templates. Please retry.');
-        if (refreshedDeletion && templateDeleteRef.current === refreshedDeletion) {
-          const held = { ...refreshedDeletion, phase: 'held' };
-          templateDeleteRef.current = held;
-          setTemplateDeletion(held);
-        }
       }
     } finally {
       if (generation === templateRequestRef.current) setLoadingTemplates(false);
@@ -601,48 +587,94 @@ export default function OutreachCampaigns({
     return () => { templateRequestRef.current += 1; };
   }, [isTemplatesOpen]);
 
+  const deletionHeaders = (token) => ({'Content-Type':'application/json',Authorization:token ? `Bearer ${token}` : ''});
+  const confirmTemplateDeletion = (operation) => {
+    if (!templateMountedRef.current || templateDeleteRef.current !== operation) return;
+    templateDeleteRef.current = null;
+    setTemplateDeletion(null);
+    toast.success('Original template deletion confirmed');
+    // Historical confirmation cannot remove a replacement from the current catalog.
+    fetchTemplates(true);
+  };
+
   const handleDeleteTemplate = async (template) => {
     const captured = reviewedTemplateDeletion(template);
     if (!captured || loadingTemplates || templateError || templateUseRef.current || templateMetadataRef.current
-      || templateDeleteRef.current && templateDeleteRef.current.phase !== 'reviewed') return;
-    const operation = { ...captured, template_id: template.id, phase: 'pending', generation: templateRequestRef.current };
+      || templateDeleteRef.current || !templatesList.includes(template)) return;
+    const original = {...captured, template_id:template.id};
+    const frozen = JSON.stringify(original);
+    const operation = {original, phase:'preparing'};
+    const generation = templateRequestRef.current;
+    const token = localStorage.getItem('token');
     templateDeleteRef.current = operation;
-    setTemplateDeletion(operation);
+    setTemplateDeletion({...operation});
     const current = () => templateMountedRef.current && templateDeleteRef.current === operation;
-    const hold = () => {
-      if (!current()) return;
-      const held = { ...operation, phase: 'held' };
-      templateDeleteRef.current = held;
-      setTemplateDeletion(held);
-    };
+    const sameContext = () => current() && generation === templateRequestRef.current && token === localStorage.getItem('token');
+    const publish = (phase) => {if(current()){operation.phase=phase;setTemplateDeletion({...operation});}};
+    let submitted = false;
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`/api/v1/outreach/sequences/templates/${encodeURIComponent(template.id)}/reviewed`, {
-        method: 'DELETE',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
-        body: JSON.stringify(captured),
-      });
+      const contextResponse = await fetch('/api/v1/outreach/sequences/template-deletions/context', {
+        credentials:'include', headers:deletionHeaders(token)});
+      const context = await contextResponse.json();
+      if (!sameContext()) {publish('stopped');return;}
+      if (contextResponse.ok !== true || contextResponse.status !== 200 || !validSaveContext(context)
+        || context.workspace_id !== original.workspace_id) throw new Error('context');
+      const inputDigest = await deletionInputDigest(frozen);
+      if (!sameContext()) {publish('stopped');return;}
+      const requestId = globalThis.crypto.randomUUID();
+      if (typeof requestId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(requestId)) throw new Error('reference');
+      const reference = {contract_version:1,workspace_id:context.workspace_id,scope_digest:context.scope_digest,
+        request_id:requestId,input_digest:inputDigest};
+      operation.reference = reference;
+      submitted = true;
+      publish('pending');
+      const res = await fetch('/api/v1/outreach/sequences/template-deletions', {
+        method:'POST',credentials:'include',headers:deletionHeaders(token),
+        body:JSON.stringify({...reference,content_json:frozen})});
       const data = await res.json();
-      if (!current()) return;
-      if (res.status !== 200 || res.ok !== true || !matchesTemplateDeletionReceipt(data, template.id, captured)
-        || operation.generation !== templateRequestRef.current) { hold(); return; }
-      setTemplatesList((previous) => previous.filter((row) => {
-        const review = reviewedTemplateDeletion(row);
-        return row.id !== template.id || !review || Object.keys(captured).some((key) => review[key] !== captured[key]);
-      }));
-      templateDeleteRef.current = null;
-      setTemplateDeletion(null);
-      toast.success('Reviewed template deleted');
+      if (!sameContext() || res.status !== 200 || res.ok !== true
+        || !matchesDeletionReceipt(data,reference,original)) {publish('held');return;}
+      confirmTemplateDeletion(operation);
     } catch {
-      hold();
+      if (submitted) publish('held');
+      else if (sameContext()) {
+        templateDeleteRef.current=null;setTemplateDeletion(null);
+        toast.error('Could not prepare template deletion. Review the current template and try again.');
+      } else publish('stopped');
     }
+  };
+
+  const checkTemplateDeletion = async () => {
+    const operation = templateDeleteRef.current;
+    if (!operation?.reference || operation.phase !== 'held') return;
+    operation.phase = 'checking';
+    setTemplateDeletion({...operation});
+    const generation = templateRequestRef.current;
+    const token = localStorage.getItem('token');
+    const current = () => templateMountedRef.current && templateDeleteRef.current === operation;
+    const sameContext = () => current() && generation === templateRequestRef.current && token === localStorage.getItem('token');
+    const hold = () => {if(current()){operation.phase='held';setTemplateDeletion({...operation});}};
+    try {
+      const res = await fetch('/api/v1/outreach/sequences/template-deletions/context', {
+        credentials:'include',headers:deletionHeaders(token)});
+      const context = await res.json();
+      const reference = operation.reference;
+      if (!sameContext() || res.status !== 200 || res.ok !== true || !validSaveContext(context)
+        || context.workspace_id !== reference.workspace_id || context.scope_digest !== reference.scope_digest) {hold();return;}
+      const query = new URLSearchParams({workspace_id:reference.workspace_id,scope_digest:reference.scope_digest,input_digest:reference.input_digest});
+      const result = await fetch(`/api/v1/outreach/sequences/template-deletions/${encodeURIComponent(reference.request_id)}?${query}`, {
+        credentials:'include',headers:deletionHeaders(token)});
+      const receipt = await result.json();
+      if (!sameContext() || result.status !== 200 || result.ok !== true
+        || !matchesDeletionReceipt(receipt,reference,operation.original)) {hold();return;}
+      confirmTemplateDeletion(operation);
+    } catch {hold();}
   };
 
   const handleUseTemplate = async (tpl) => {
     const fullTpl = tpl;
     if (templateUseRef.current || templateMetadataRef.current || loadingTemplates || templateError || !isLaunchableTemplate(fullTpl)
-      || templateDeleteRef.current && templateDeleteRef.current.phase !== 'reviewed') {
+      || templateDeleteRef.current) {
       toast.error('This template needs a successful compatibility review before configuration.');
       return false;
     }
@@ -712,7 +744,7 @@ export default function OutreachCampaigns({
 
   const openTemplateMetadata = (template) => {
     if (templateMetadataRef.current || templateUseRef.current || loadingTemplates || templateError
-      || templateDeleteRef.current && templateDeleteRef.current.phase !== 'reviewed'
+      || templateDeleteRef.current
       || !reviewedTemplateMetadata(template) || !templatesList.includes(template)) return;
     const operation = {template,generation:templateRequestRef.current};
     templateMetadataRef.current = operation;
@@ -726,7 +758,7 @@ export default function OutreachCampaigns({
 
   const openTemplateGraph = (template) => {
     if (templateMetadataRef.current || templateUseRef.current || loadingTemplates || templateError
-      || templateDeleteRef.current && templateDeleteRef.current.phase !== 'reviewed'
+      || templateDeleteRef.current
       || !reviewedTemplateGraph(template) || !isLaunchableTemplate(template) || !templatesList.includes(template)) return;
     const operation = {template,generation:templateRequestRef.current,kind:'graph'};
     templateMetadataRef.current = operation;
@@ -738,8 +770,9 @@ export default function OutreachCampaigns({
     if (!templateMountedRef.current || operation?.template !== template
       || operation.generation !== templateRequestRef.current) return;
     closeTemplateMetadata();
-    toast.success(operation.kind === 'graph' ? 'Template sequence updated'
-      : recovery?.historical === true ? 'Original template update confirmed' : 'Template details updated');
+    toast.success(recovery?.historical === true
+      ? operation.kind === 'graph' ? 'Original template sequence update confirmed' : 'Original template update confirmed'
+      : operation.kind === 'graph' ? 'Template sequence updated' : 'Template details updated');
     fetchTemplates();
   };
 
@@ -957,7 +990,7 @@ export default function OutreachCampaigns({
       <div className="max-w-6xl mx-auto px-6 py-8">
         <button
           onClick={() => setIsTemplatesOpen(false)}
-          disabled={usingTemplateId !== null || Boolean(templateMetadata) || templateDeletion?.phase === 'pending' || templateDeletion?.phase === 'refreshing'}
+          disabled={usingTemplateId !== null || Boolean(templateMetadata) || ['preparing','pending','checking'].includes(templateDeletion?.phase)}
           className="text-xs font-semibold text-gray-500 hover:text-gray-900 transition-colors mb-4 inline-flex items-center gap-1.5"
         >
           ← Campaigns
@@ -986,18 +1019,24 @@ export default function OutreachCampaigns({
         </p>}
         {templateMetadata?.kind === 'graph' ? <TemplateGraphEditor template={templateMetadata.template}
           onClose={closeTemplateMetadata} onSaved={savedTemplateMetadata}
-          onRefresh={() => {setTemplateMetadataNotice(true);setTemplateGraphNotice(true);return fetchTemplates(false,true);}} />
+          onRefresh={() => {setTemplateMetadataNotice(true);setTemplateGraphNotice(true);return fetchTemplates(true);}} />
           : templateMetadata && <TemplateMetadataEditor template={templateMetadata.template}
             onClose={closeTemplateMetadata} onSaved={savedTemplateMetadata}
-            onRefresh={() => {setTemplateMetadataNotice(true);setTemplateGraphNotice(false);return fetchTemplates(false,true);}} />}
+            onRefresh={() => {setTemplateMetadataNotice(true);setTemplateGraphNotice(false);return fetchTemplates(true);}} />}
 
-        {templateDeletion && <div role={templateDeletion.phase === 'pending' ? 'status' : 'alert'} className="mb-4 rounded-lg border border-amber-200 p-4 text-sm">
-          {templateDeletion.phase === 'pending' ? <p>Deleting the reviewed template…</p> : <>
-            <p>Earlier deletion is unconfirmed. A refreshed catalog is not a deletion receipt.</p>
-            <p>{templateDeletion.phase === 'reviewed' ? 'Review the refreshed template before choosing Delete again.' : 'Reload and review templates before another deletion. The earlier request will not be replayed.'}</p>
-            <button type="button" disabled={loadingTemplates || templateDeletion.phase === 'refreshing'}
-              onClick={() => fetchTemplates(true)} className="mt-2 font-semibold">Reload and review templates</button>
-          </>}
+        {templateDeletion && <div role={['preparing','pending','checking'].includes(templateDeletion.phase) ? 'status' : 'alert'} className="mb-4 rounded-lg border border-amber-200 p-4 text-sm">
+          {templateDeletion.phase === 'preparing' ? <p>Preparing reviewed template deletion…</p>
+            : templateDeletion.phase === 'pending' ? <p>Deleting the reviewed template…</p>
+              : templateDeletion.phase === 'checking' ? <p>Checking original template deletion…</p>
+                : templateDeletion.phase === 'stopped' ? <>
+                  <p>Deletion preparation stopped because the account or view changed. No deletion was submitted.</p>
+                  <button type="button" onClick={() => {if(templateDeleteRef.current?.phase==='stopped'){templateDeleteRef.current=null;setTemplateDeletion(null);}}}
+                    className="mt-2 font-semibold">Cancel deletion preparation</button>
+                </> : <>
+                  <p>Earlier deletion is unconfirmed. A refreshed catalog is not a deletion receipt.</p>
+                  <p>Check the original request before another deletion. It will not be replayed. This reference remains only in this view; leaving the app can lose it.</p>
+                  <button type="button" onClick={checkTemplateDeletion} className="mt-2 font-semibold">Check original deletion status</button>
+                </>}
         </div>}
 
         <div className="rounded-2xl border border-gray-200 bg-white shadow-2xs overflow-hidden">
