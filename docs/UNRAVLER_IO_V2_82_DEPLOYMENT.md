@@ -1,6 +1,6 @@
 # Unravler.io v2.81–v2.82 deployment checkpoint
 
-Updated: 2026-10-18 IST. **Frontend deployed; backend awaiting the new EC2 address.**
+Updated: 2026-10-18 IST. **Frontend deployed; backend rollout blocked by SSH network access to the new EC2 instance.**
 
 Application commit [`b29a734`](https://github.com/shubhamvivek234/app/commit/b29a734aa39f35648c104224dbd2be99636a03ac) is pushed to `origin/main`. It contains the reviewed graph-update and deletion recovery slices and their tests/documents. Unrelated `.gitignore`, Prosp documents, skill files and nested worktree changes are excluded. Implementation evidence remains in the [graph recovery](UNRAVLER_IO_TEMPLATE_GRAPH_RECOVERY_RELEASE.md) and [deletion recovery](UNRAVLER_IO_TEMPLATE_DELETION_RECOVERY_RELEASE.md) reports; their local-only statements describe the implementation checkpoint before this rollout.
 
@@ -15,9 +15,9 @@ Both `https://www.unravler.com/login` and `https://app-fgv2.vercel.app/login` re
 
 ## Backend and required input
 
-The user changed the deployment key to `/Users/shubham/Downloads/unravler-ec2-key.pem`. The key exists and local permissions are restricted to0600; its contents were neither printed nor committed. An SSH connection to the previously recorded `ubuntu@51.20.210.184` timed out on port22. No backend checkout, containers, flags, secrets or production data were modified.
+The user changed the deployment key to `/Users/shubham/Downloads/unravler-ec2-key.pem`. The key exists and local permissions are restricted to0600; its contents were neither printed nor committed. The previous `ubuntu@51.20.210.184` target timed out on port22. The supplied new Sydney target, `ubuntu@3.104.181.230` (`ec2-3-104-181-230.ap-southeast-2.compute.amazonaws.com`), also times out on port22 before SSH authentication. DNS resolves the hostname to the supplied address. No backend checkout, containers, flags, secrets or production data were modified.
 
-The new EC2 public IP/hostname and SSH username are required before rollout can continue. A question is pending in this chat; `ubuntu` is only the previous username, not a verified new-target identity. Once supplied, inspect the actual server/checkout/Compose setup, preserve configuration, supervise background-worker shutdown and matching sequential image rollout, start beat last, then verify health/readiness, worker pings, source hashes and unchanged execution flags. Do not treat frontend success as backend availability of the new receipt APIs. An older backend can return unavailable/unconfirmed outcomes until its matching rollout completes.
+Before rollout can continue, the new instance must accept SSH connections. Confirm that it is running and that its security group/network path permits TCP22 from this workstation's observed public address `122.172.85.80/32`; preserve any existing required administration rules. Once access is available, inspect the actual server/checkout/Compose setup, preserve configuration, supervise background-worker shutdown and matching sequential image rollout, start beat last, then verify health/readiness, worker pings, source hashes and unchanged execution flags. Do not treat frontend success as backend availability of the new receipt APIs. An older backend can return unavailable/unconfirmed outcomes until its matching rollout completes.
 
 ## Checks and limits
 
