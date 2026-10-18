@@ -1,0 +1,24 @@
+# Source control and local agent state
+.git
+.claude
+.agents
+
+# Python caches and test artifacts
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.coverage
+htmlcov
+
+# Frontend and MCP dependencies are installed within their respective images.
+frontend/node_modules
+frontend/build
+mcp-server/node_modules
+
+# Local development artifacts and credentials must never enter an image context.
+*.log
+*.pem
+.env
+.env.*
+backend/.env
+backend/.env.*
