@@ -113,6 +113,8 @@ async def _replace_metadata(current: Any, workspace: str, actor: str, authentica
     if saved is None or BSON.encode(saved) != BSON.encode(expected):
         raise HTTPException(409, 'Could not verify updated template; reload before editing')
     await append_metadata_checkpoints(current, row, saved, actor, timestamp)
+    from outreach.core.template_mutation_snapshots import capture_mutation
+    await capture_mutation(current, (row, saved), actor, authenticated_uid, timestamp, event='metadata')
     return {**original_review, 'status': 'updated', 'template_id': template_id,
         'name': operation['name'], 'description': operation['description'],
         'new_revision': operation['revision'] + 1, 'new_review_digest': raw_review['review_digest']}

@@ -157,7 +157,8 @@ async def save_deletion(db: Any, workspace: str, actor: str, uid: str, request_i
         operation = prepare_deletion(content_json, workspace, actor, uid)
         now = datetime.now(timezone.utc)
         timestamp = now.replace(microsecond=now.microsecond // 1000 * 1000)
-        result = await governance._remove_reviewed(current, workspace, **operation, actor=actor, timestamp=timestamp)
+        result = await governance._remove_reviewed(current, workspace, **operation,
+            actor=actor, authenticated_uid=uid, timestamp=timestamp)
         row = {**scope, 'contract_version': 1, 'input_digest': digest, 'status': 'deleted',
             **{key:result[key] for key in ('template_id', 'revision', 'review_digest', 'identity_digest')},
             'review_scope_digest': operation['scope_digest'], 'created_at': timestamp}

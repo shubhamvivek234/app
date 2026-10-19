@@ -151,6 +151,8 @@ the browser can explicitly read status without replaying this callback.
         now = datetime.now(timezone.utc)
         timestamp = now.replace(microsecond=now.microsecond // 1000 * 1000)
         await append_creation_checkpoint(current, stored, actor, timestamp)
+        from outreach.core.template_mutation_snapshots import capture_mutation
+        await capture_mutation(current, (stored,), actor, uid, timestamp, event='created')
         row = {**scope, 'contract_version': 1, 'input_digest': digest, 'status': 'saved',
             'template_id': prepared['id'], 'template_revision': 1,
             'template_identity_digest': review['identity_digest'], 'template_review_digest': review['review_digest'],

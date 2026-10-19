@@ -8,6 +8,10 @@ from typing import Any, Literal
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel, Field, ConfigDict, StrictBool, StrictInt, StrictStr
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -23,7 +27,7 @@ from outreach.core.template_governance import MAX_REVISION, scoped_review, delet
 from outreach.core.workspace_scope import workspace_scope
 from outreach.core.template_access import inspect_access, describe_access
 from outreach.core import template_saves, template_metadata, template_graphs, template_metadata_updates, template_graph_updates, template_deletions
-from outreach.core import template_history
+from outreach.core import template_history, template_snapshot_reads
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +203,43 @@ async def get_template_history(template_id: str, request: Request, identity_dige
     result = await template_history.read_history(db, workspace_id(current_user), current_user.get('user_id'),
         current_user.get('firebase_uid'), template_id, identity_digest, page_size=int(page_size), cursor=cursor)
     return JSONResponse(result, headers={'Cache-Control': 'no-store'})
+
+
+class _SnapshotContentRoute(APIRoute):
+    """Keep dependency, validation and handler responses private on this route."""
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+        async def dispatch(request):
+            try:
+                response = await handler(request)
+            except RequestValidationError as error:
+                response = await request_validation_exception_handler(request, error)
+            except StarletteHTTPException as error:
+                raise StarletteHTTPException(error.status_code, error.detail,
+                    headers={**(error.headers or {}), **template_snapshot_reads.RESPONSE_HEADERS}) from None
+            except Exception:
+                response = JSONResponse({'detail': 'Recorded template content is unavailable'}, status_code=503)
+            response.headers.update(template_snapshot_reads.RESPONSE_HEADERS)
+            return response
+        return dispatch
+
+
+async def get_template_snapshot_content(template_id: str, checkpoint_id: str, request: Request,
+    identity_digest: str = Query(...), history_digest: str = Query(...),
+    current_user: dict = Depends(get_current_user), db: AsyncIOMotorDatabase = Depends(get_db)):
+    # Current permission/UID/erasure admission belongs to the owning snapshot.
+    pairs = list(request.query_params.multi_items())
+    if (any(key not in {'identity_digest', 'history_digest'} for key, _ in pairs)
+            or len(pairs) != len({key for key, _ in pairs})):
+        raise HTTPException(422, 'Invalid recorded content query')
+    result = await template_snapshot_reads.read_content(db, workspace_id(current_user),
+        current_user.get('user_id'), current_user.get('firebase_uid'), template_id,
+        identity_digest, checkpoint_id, history_digest)
+    return JSONResponse(result, headers=template_snapshot_reads.RESPONSE_HEADERS)
+
+
+router.add_api_route('/templates/{template_id}/revision-checkpoints/{checkpoint_id}/content',
+    get_template_snapshot_content, methods=['GET'], route_class_override=_SnapshotContentRoute)
 
 
 @router.post("/templates")

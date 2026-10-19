@@ -175,6 +175,7 @@ async def create_template(db: Any, workspace: str, actor: str, doc: dict, *, aut
     """
     # Checkpoints use this module's review contract; defer the reverse import.
     from outreach.core.template_revision_checkpoints import append_creation_checkpoint
+    from outreach.core.template_mutation_snapshots import capture_mutation
 
     review_scope(workspace, actor, authenticated_uid)
     prepared = {**deepcopy(doc), "_id": ObjectId(), "template_revision": 1}
@@ -190,7 +191,9 @@ async def create_template(db: Any, workspace: str, actor: str, doc: dict, *, aut
         if stored is None or BSON.encode(stored) != BSON.encode(prepared):
             raise HTTPException(409, 'Could not verify saved template; reload before saving again')
         now = datetime.now(timezone.utc)
-        await append_creation_checkpoint(current, stored, actor, now.replace(microsecond=now.microsecond // 1000 * 1000))
+        timestamp = now.replace(microsecond=now.microsecond // 1000 * 1000)
+        await append_creation_checkpoint(current, stored, actor, timestamp)
+        await capture_mutation(current, (stored,), actor, authenticated_uid, timestamp, event='created')
         return {key: value for key, value in prepared.items() if key != "_id"}
 
     try:
@@ -216,7 +219,7 @@ async def delete_template(db: Any, workspace: str, actor: str, template_id: str,
     async def remove(current):
         await authorize_delete(current, actor, authenticated_uid)
         return await _remove_reviewed(current, workspace, template_id, revision, review_digest, identity_digest, scope_digest,
-            actor=actor, timestamp=timestamp)
+            actor=actor, authenticated_uid=authenticated_uid, timestamp=timestamp)
 
     try:
         return await mutate_suppression(db, workspace, remove)
@@ -226,10 +229,11 @@ async def delete_template(db: Any, workspace: str, actor: str, template_id: str,
 
 async def _remove_reviewed(current: SuppressionDatabase, workspace: str, template_id: str,
                            revision: int, review_digest: str, identity_digest: str, scope_digest: str, *,
-                           actor: str, timestamp: datetime) -> dict:
+                           actor: str, authenticated_uid: str, timestamp: datetime) -> dict:
     """Caller fences current authority; deletion and digest terminal commit together."""
     # The checkpoint module uses this module's native review contract.
     from outreach.core.template_revision_checkpoints import append_deletion_checkpoints
+    from outreach.core.template_mutation_snapshots import capture_mutation
 
     row = await unique_resource(current.outreach_templates, workspace, template_id)
     if row is None:
@@ -244,6 +248,7 @@ async def _remove_reviewed(current: SuppressionDatabase, workspace: str, templat
     if await current.outreach_templates.find_one({**workspace_scope(workspace), '_id': row['_id']}) is not None:
         raise HTTPException(503, "Original template deletion is unconfirmed")
     await append_deletion_checkpoints(current, row, actor, timestamp)
+    await capture_mutation(current, (row,), actor, authenticated_uid, timestamp, event='deleted')
     return {"contract_version": 1, "status": "deleted", "template_id": template_id,
             "workspace_id": workspace, "revision": revision, "review_digest": review_digest,
             "identity_digest": identity_digest, "scope_digest": scope_digest}

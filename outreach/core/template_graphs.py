@@ -172,6 +172,8 @@ async def _replace_graph(current: Any, workspace: str, actor: str, authenticated
     if saved is None or BSON.encode(saved) != BSON.encode(expected):
         raise HTTPException(409, 'Could not verify updated template graph')
     await append_graph_checkpoints(current, row, saved, actor, timestamp)
+    from outreach.core.template_mutation_snapshots import capture_mutation
+    await capture_mutation(current, (row, saved), actor, authenticated_uid, timestamp, event='graph')
     return {**captured, 'status': 'updated', 'template_id': template_id,
         'input_digest': prepared['input_digest'], 'graph_digest': prepared['graph_digest'],
         'new_revision': operation['revision'] + 1, 'new_review_digest': result_review['review_digest']}
