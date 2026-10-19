@@ -6,19 +6,17 @@ immutable encrypted allowlist row. Existing templates remain plaintext.
 """
 from datetime import datetime, timezone
 import json
-import re
 from typing import Any
 
-from bson import BSON, Int64, ObjectId
+from bson import BSON, Int64
 from fastapi import HTTPException
 
 from utils import encryption
-from outreach.core import template_governance as governance, template_history as history
+from outreach.core import template_governance as governance
 from outreach.core import template_history_storage as storage
 from outreach.core.authorization import canonical_hash
-from outreach.core.lead_tags import unique_resource
 from outreach.core.suppression import mutate_suppression
-from outreach.core.template_access import inspect_access
+from outreach.core.template_snapshot_capture import CapturePolicy, capture_reviewed
 from outreach.core.template_metadata import validate_metadata
 from outreach.core.template_revision_checkpoints import validate_checkpoint
 from outreach.core.workspace_scope import workspace_scope
@@ -158,45 +156,7 @@ async def _retained(current,workspace,identity):
 async def capture_snapshot(db: Any, workspace: str, actor: str, uid: str, template_id: str, *,
     revision: int, review_digest: str, identity_digest: str, scope_digest: str) -> dict:
     """Capture only current reviewed metadata; no historical-result recovery."""
-    if scope_digest!=snapshot_scope(workspace,actor,uid):raise HTTPException(403,'Snapshot account or workspace changed')
-    if (type(template_id) is not str or not re.fullmatch(r'tpl_custom_[0-9a-f]{10}',template_id)
-            or type(revision) is not int or not 0<=revision<=governance.MAX_REVISION
-            or any(type(x) is not str or not re.fullmatch(r'[0-9a-f]{64}',x) for x in (review_digest,identity_digest,scope_digest))):
-        raise HTTPException(422,'A current metadata snapshot review is required')
-    async def capture(current):
-        await governance.authorize_update(current,actor,uid)
-        await inspect_access(current.database,workspace,actor,uid,session=current.session)
-        source=await unique_resource(current.outreach_templates,workspace,template_id)
-        if source is None:raise HTTPException(404,'Current template is unavailable')
-        if (type(source.get('_id')) not in {str,ObjectId} or any(type(source.get(k)) is not str for k in ('workspace_id','id','user_id'))):_hold()
-        review=governance.template_review(source,workspace)
-        if not review['reviewable'] or any(review[k]!=v for k,v in (
-            ('revision',revision),('identity_digest',identity_digest),('review_digest',review_digest))):_hold()
-        collection=current.database[COLLECTION]
-        await storage.require_history_index(collection)
-        await storage.require_history_index(current.database.outreach_template_revisions)
-        recorded=await history._load_rows(current,workspace,identity_digest)
-        ordered,_=history.prepare_history(recorded,workspace,template_id,identity_digest)
-        if any(r['event']=='deleted' or int(r['revision'])>revision for r in ordered):_hold()
-        parents={int(r['revision']):r for r in ordered};checkpoint=parents.get(revision)
-        if checkpoint is None or checkpoint['review_digest']!=review_digest:_hold()
-        retained,total=await _retained(current,workspace,identity_digest)
-        existing=None
-        for row in retained:
-            if type(row.get('revision')) not in {int,Int64} or int(row['revision']) not in parents:_hold()
-            content=open_snapshot(row,parents[int(row['revision'])])
-            if row['_id']==_id(checkpoint):
-                if existing is not None or content!=_metadata(source):_hold()
-                existing=row
-        if existing is None:
-            now=datetime.now(timezone.utc);row=seal(source,checkpoint,actor,now.replace(microsecond=now.microsecond//1000*1000))
-            if len(retained)+1>MAX_SNAPSHOTS or total+len(BSON.encode(row))>MAX_TOTAL_BYTES:_hold()
-            await current[COLLECTION].insert_one(row)
-            existing=await current[COLLECTION].find_one({**workspace_scope(workspace),'_id':row['_id']})
-            if existing is None or BSON.encode(existing)!=BSON.encode(row) or open_snapshot(existing,checkpoint)!=_metadata(source):_hold()
-        await storage.require_history_index(collection)
-        await storage.require_history_index(current.database.outreach_template_revisions)
-        return receipt(existing)
-    try:return await mutate_suppression(db,workspace,capture)
-    except HTTPException:raise
-    except Exception:raise HTTPException(503,'Could not confirm metadata snapshot; review current source before retrying') from None
+    policy=CapturePolicy(COLLECTION,MAX_SNAPSHOTS,MAX_TOTAL_BYTES,snapshot_scope,_id,_metadata,
+        seal,open_snapshot,receipt,_retained,'metadata')
+    return await capture_reviewed(policy,db,workspace,actor,uid,template_id,revision=revision,
+        review_digest=review_digest,identity_digest=identity_digest,scope_digest=scope_digest,transaction=mutate_suppression)

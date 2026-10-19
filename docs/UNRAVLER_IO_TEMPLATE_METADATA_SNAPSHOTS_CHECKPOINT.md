@@ -1,5 +1,9 @@
 # v2.91 usage-stop checkpoint — 2026-10-19 IST
 
+Completed continuation: the v2.91 source-only primitive now has final independent documentation/numerical/evidence approval. The original tests and approved sources were preserved without rerunning implementation/tests/services. See the [final report](UNRAVLER_IO_TEMPLATE_METADATA_SNAPSHOTS_RELEASE.md) and `/tmp/unravler-template-metadata-snapshots-7yswoc83/manifest.json`. The one-shot continuation is paused after completion; final session memory is written last.
+
+The resumed checkout was already at external commit `a2e2db41bb4c2462c52ad5baf4b8cfa50f47febf`, containing the exact approved source hashes. This differs from the original test/baseline HEAD `e63bcfef3293eff407211096e764e4f516e3642b`. The continuation creates no commit or deployment. The paragraphs below are the historical usage-stop record; their pending status, scheduled time and pre-checkpoint builder instructions are superseded by this completion note and final manifest. The old planned-memory preview is preserved as historical evidence; the audited final preview is regenerated separately.
+
 Implementation stopped at actual2% short-term remaining. Actual reset:2026-10-19T10:29:08Z (15:59:08 IST). One continuation is scheduled16:01 IST. Keep all work local.
 
 Source and tests are finished and both independent reviews approve. Evidence: `/tmp/unravler-template-metadata-snapshots-7yswoc83/checkpoint-manifest.json`. Five frozen Python hashes are in reviewer-source-report.json and second-source-review.json. Do not redo finished implementation or native services.
