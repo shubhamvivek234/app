@@ -20,7 +20,7 @@ from tests.test_outreach_campaign_readiness_mongo import seed as seed_readiness
 from tests.test_outreach_sender_resume_mongo import local_custody  # noqa: F401
 
 pytestmark=[pytest.mark.asyncio,pytest.mark.atomic_dispatch,pytest.mark.skipif(os.getenv('OUTREACH_TEST_LOCAL_MONGO')!='1',reason='Owned native Mongo opt-in')]
-USER={'user_id':'actor','default_workspace_id':'workspace'}
+USER={'user_id':'actor','firebase_uid':'uid','default_workspace_id':'workspace'}
 
 
 def graph(delay=0):
@@ -33,6 +33,12 @@ async def client(db,role='admin'):
     app.dependency_overrides[get_current_user]=lambda:USER
     app.dependency_overrides[get_db]=lambda:db
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://test')
+
+
+async def gallery_client(db, role='admin'):
+    """Seed the authenticated identity required by the gallery access contract."""
+    await db.users.insert_one({'user_id': 'actor', 'firebase_uid': 'uid', 'status': 'active'})
+    return await client(db, role)
 
 
 @pytest.mark.parametrize('role,expected',[('admin',200),('editor',200),('viewer',403)])
@@ -63,7 +69,7 @@ async def test_gallery_reads_scoped_email_without_mutating_native_template_or_gr
     await replica_db.outreach_templates.insert_one(row)
     await replica_db.outreach_templates.insert_one({**row,'_id':'other-native','id':'other-template','workspace_id':'other'})
     before=await replica_db.outreach_templates.find({}).to_list(10)
-    async with await client(replica_db,role) as api:
+    async with await gallery_client(replica_db,role) as api:
         result=await api.get('/sequences/templates')
     assert result.status_code==200,result.text
     custom=[item for item in result.json() if item['id']=='custom-email']
@@ -79,7 +85,7 @@ async def test_gallery_existing_resolution_excludes_revoked_workspace_and_denies
     from tests.test_outreach_template_gallery import template
     row=template();row.pop('_id')
     await replica_db.outreach_templates.insert_one(row)
-    async with await client(replica_db) as api:
+    async with await gallery_client(replica_db) as api:
         await replica_db.workspace_members.delete_many({})
         # Existing authentication may create/select a personal workspace.
         # It must not expose templates from the workspace just revoked.
