@@ -1,6 +1,7 @@
 """Reviewed template graph replacement under current workspace authority.
 
-The shared transaction writes native authority counters and one template row.
+The shared transaction writes native authority counters, the template row and
+minimal linked digest checkpoints; these do not retain template content.
 Current audit fields are not immutable history or durable outcome receipts;
 unknown commits must not be automatically replayed with a newer review.
 """
@@ -24,6 +25,7 @@ from outreach.core.sequence_preview import analyze_sequence, same_execution_grap
 from outreach.core.suppression import SuppressionUnavailable, mutate_suppression
 from outreach.core.template_saves import input_digest, MAX_INPUT_BYTES
 from outreach.core.workspace_scope import workspace_scope
+from outreach.core.template_revision_checkpoints import append_graph_checkpoints
 
 
 def _require_browser_values(value: Any) -> None:
@@ -169,6 +171,7 @@ async def _replace_graph(current: Any, workspace: str, actor: str, authenticated
     saved = await current.outreach_templates.find_one({**workspace_scope(workspace), '_id': row['_id']})
     if saved is None or BSON.encode(saved) != BSON.encode(expected):
         raise HTTPException(409, 'Could not verify updated template graph')
+    await append_graph_checkpoints(current, row, saved, actor, timestamp)
     return {**captured, 'status': 'updated', 'template_id': template_id,
         'input_digest': prepared['input_digest'], 'graph_digest': prepared['graph_digest'],
         'new_revision': operation['revision'] + 1, 'new_review_digest': result_review['review_digest']}

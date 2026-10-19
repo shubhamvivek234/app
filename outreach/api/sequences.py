@@ -3,14 +3,17 @@ Phase 4: Sequences API router.
 Supports sequence graph validation, compiling, saving, and template retrieval.
 """
 import logging
+import re
 from typing import Any, Literal
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ConfigDict, StrictBool, StrictInt, StrictStr
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from db.mongo import get_db
-from outreach.api.dependencies import get_outreach_user, require_outreach_permission
+from api.deps import get_current_user
+from outreach.api.dependencies import get_outreach_user, require_outreach_permission, workspace_id
 from outreach.core.dag_compiler import DAGCompiler, DAGValidationError
 from outreach.core.sequence_versions import load_sequence, publish_sequence
 from outreach.core.sequence_contract import bounded_json, visual_graph
@@ -18,7 +21,9 @@ from outreach.core.sequence_preview import analyze_sequence, same_execution_grap
 from outreach.core.authorization import canonical_hash
 from outreach.core.template_governance import MAX_REVISION, scoped_review, delete_template, create_template
 from outreach.core.workspace_scope import workspace_scope
+from outreach.core.template_access import inspect_access, describe_access
 from outreach.core import template_saves, template_metadata, template_graphs, template_metadata_updates, template_graph_updates, template_deletions
+from outreach.core import template_history
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +147,14 @@ async def get_sequence_templates(
     """Inspect starter and workspace templates without granting execution."""
     if db is None or current_user is None:
         raise HTTPException(503, "Sequence templates are unavailable. Please retry.")
-    templates = list(DAGCompiler.get_prebuilt_templates())
+    try:
+        access = await inspect_access(db, _workspace_id(current_user), current_user.get('user_id'), current_user.get('firebase_uid'))
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(503, 'Sequence templates are unavailable. Please retry.') from None
+    templates = [{**row, 'workspace_access': describe_access(access, row, custom=False, actor=current_user['user_id'])}
+                 for row in DAGCompiler.get_prebuilt_templates()]
     if db is not None and current_user is not None:
         try:
             ws_id = _workspace_id(current_user)
@@ -152,7 +164,8 @@ async def get_sequence_templates(
                 templates.append({**{key: value for key, value in doc.items() if key != "_id"},
                     "deletion_review": scoped_review(doc, ws_id, current_user.get("user_id"), current_user.get("firebase_uid")),
                     "metadata_review": template_metadata.metadata_review(doc, ws_id, current_user.get("user_id"), current_user.get("firebase_uid")),
-                    "graph_review": template_graphs.graph_review(doc, ws_id, current_user.get("user_id"), current_user.get("firebase_uid"))})
+                    "graph_review": template_graphs.graph_review(doc, ws_id, current_user.get("user_id"), current_user.get("firebase_uid")),
+                    'workspace_access': describe_access(access, doc, custom=True, actor=current_user['user_id'])})
         except Exception:
             logger.warning("Could not load workspace sequence templates")
             raise HTTPException(503, "Sequence templates are unavailable. Please retry.") from None
@@ -171,6 +184,21 @@ async def get_sequence_templates(
                 'configuration_available': False}
         inspected.append({**template, 'compatibility': compatibility})
     return inspected
+
+
+@router.get('/templates/{template_id}/revision-checkpoints')
+async def get_template_history(template_id: str, request: Request, identity_digest: str = Query(...),
+    page_size: str = Query('20'), cursor: str | None = Query(None),
+    current_user: dict = Depends(get_current_user), db: AsyncIOMotorDatabase = Depends(get_db)):
+    # Permission and open-workspace checks belong to the guarded snapshot below.
+    allowed = {'identity_digest', 'page_size', 'cursor'}
+    pairs = list(request.query_params.multi_items())
+    if (any(key not in allowed for key, _ in pairs) or len(pairs) != len({key for key, _ in pairs})
+            or not re.fullmatch(r'(?:[1-9]|1[0-9]|2[0-5])', page_size)):
+        raise HTTPException(422, 'Invalid template history query')
+    result = await template_history.read_history(db, workspace_id(current_user), current_user.get('user_id'),
+        current_user.get('firebase_uid'), template_id, identity_digest, page_size=int(page_size), cursor=cursor)
+    return JSONResponse(result, headers={'Cache-Control': 'no-store'})
 
 
 @router.post("/templates")

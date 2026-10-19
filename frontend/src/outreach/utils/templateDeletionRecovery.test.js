@@ -1,4 +1,4 @@
-import { deletionInputDigest, matchesDeletionReceipt } from './templateDeletionRecovery';
+import { deletionInputDigest, matchesDeletionReceipt, validHistoricalDeletionReceipt } from './templateDeletionRecovery';
 import { TextEncoder } from 'util';
 
 const reference={contract_version:1,workspace_id:'workspace',request_id:'01234567-89ab-cdef-0123-456789abcdef',scope_digest:'f'.repeat(64),input_digest:'0'.repeat(64)};
@@ -19,4 +19,17 @@ it('bounds the complete UTF8 operation before hashing',async()=>{
   await expect(deletionInputDigest('☕'.repeat(2731))).rejects.toThrow();
   expect(global.crypto.subtle.digest).not.toHaveBeenCalled();
   await expect(deletionInputDigest('a'.repeat(8192))).resolves.toBe('0'.repeat(64));
+});
+it('reload receipt has exact native shape and permits the final JS-safe revision',()=>{
+  expect(validHistoricalDeletionReceipt(receipt(),reference)).toBe(true);
+  expect(validHistoricalDeletionReceipt({...receipt(),revision:Number.MAX_SAFE_INTEGER},reference)).toBe(true);
+});
+it.each([null,[],{},...['revision','review_digest','identity_digest','review_scope_digest'].map(key=>{const value=receipt();delete value[key];return value;})])('reload rejects absent receipt proof %#',value=>{
+  expect(validHistoricalDeletionReceipt(value,reference)).toBe(false);
+});
+it.each([{revision:true},{revision:-1},{revision:0.5},{revision:Number.MAX_SAFE_INTEGER+1},
+  {status:'updated'},{template_id:'tpl_custom_bad'},{review_digest:'bad'},{identity_digest:[]},
+  {review_scope_digest:'bad'},{input_digest:'e'.repeat(64)},{workspace_id:'other'},{contract_version:true},
+  {name:'unwanted text'},{graph_digest:'e'.repeat(64)}])('reload rejects malformed or foreign proof %#',change=>{
+  expect(validHistoricalDeletionReceipt({...receipt(),...change},reference)).toBe(false);
 });

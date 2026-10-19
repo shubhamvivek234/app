@@ -4,11 +4,14 @@ import { TextEncoder } from 'util';
 import { toast } from 'sonner';
 import OutreachCampaigns from './OutreachCampaigns';
 import { reviewedTemplateDeletion } from '../utils/templateDeletion';
+import { STORAGE_KEY, readReferences, storeReference } from '../utils/templateDeletionReferences';
 
 jest.mock('sonner', () => ({toast:{success:jest.fn(),error:jest.fn()}}));
 const request='01234567-89ab-cdef-0123-456789abcdef';
 const context={contract_version:1,workspace_id:'workspace',scope_digest:'f'.repeat(64),execution_authorized:false};
 const row = (change={}) => ({ id:'tpl_custom_012345abcd',name:'Reviewed starter',is_custom:true,
+  workspace_access:{contract_version:1,workspace_id:'workspace',visibility:'workspace',created_by_you:false,
+    can_configure:true,can_edit:true,can_delete:true,execution_authorized:false},
   nodes:[{id:'root',type:'visit_profile'}],edges:[],tree:[{id:'root',type:'visit_profile'}],
   compatibility:{contract_version:1,valid:true,configuration_available:true,execution_authorized:false},
   metadata_review:{contract_version:1,reviewable:true,revision:0,workspace_id:'workspace',review_digest:'a'.repeat(64),identity_digest:'b'.repeat(64),scope_digest:'d'.repeat(64),update_authorized:false,execution_authorized:false},
@@ -52,7 +55,7 @@ it('freezes original review and one UUID, posts once and reloads current catalog
   expect(posts()).toHaveLength(1);expect(global.crypto.randomUUID).toHaveBeenCalledTimes(1);
   expect(deleteButton()).toBeNull();expect(toast.success).toHaveBeenCalledWith('Original template deletion confirmed');
   expect(global.fetch.mock.calls.filter(([,opts])=>opts?.method==='DELETE')).toHaveLength(0);
-  expect(sessionStorage.length).toBe(0);
+  expect(readReferences()).toEqual([]);
 });
 
 it.each([null,{contract_version:1,reviewable:false}])('holds unreviewable custom templates %#',async(review)=>{
@@ -171,4 +174,121 @@ it('token drift in POST receipt JSON retains original reference without confirma
   post=async body=>({ok:true,status:200,json:async()=>{localStorage.setItem('token','refreshed');return receipt(body);}});
   await open();await act(async()=>deleteButton().click());expect(toast.success).not.toHaveBeenCalled();
   expect(deleteButton().disabled).toBe(true);expect(button('Check original deletion status')).toBeDefined();expect(posts()).toHaveLength(1);
+});
+
+const locator=()=>({contract_version:1,workspace_id:context.workspace_id,scope_digest:context.scope_digest,
+  request_id:request,input_digest:'0'.repeat(64)});
+const savedReceipt=()=>({...locator(),status:'deleted',template_id:row().id,revision:0,
+  review_digest:'a'.repeat(64),identity_digest:'b'.repeat(64),review_scope_digest:'c'.repeat(64)});
+it('lost deletion survives remount and original status confirms without removing a replacement',async()=>{
+  post=async()=>{throw Error('lost');};await open();await act(async()=>deleteButton().click());
+  expect(readReferences()).toEqual([locator()]);expect(sessionStorage.getItem(STORAGE_KEY)).not.toContain('Reviewed starter');
+  await act(async()=>root.unmount());root=createRoot(container);catalog=[row({name:'Replacement'})];await open();
+  expect(button('Use').disabled).toBe(true);expect(posts()).toHaveLength(1);
+  await act(async()=>{button('Check saved deletion status').click();button('Check saved deletion status').click();});
+  expect(readReferences()).toEqual([]);expect(posts()).toHaveLength(1);
+  expect(container.querySelector('[aria-label="Delete template Replacement"]').disabled).toBe(false);
+  expect(toast.success).toHaveBeenCalledWith('Original template deletion confirmed');
+});
+it.each([404,403,202,503])('saved status%s preserves locator and denies all template mutations',async(code)=>{
+  storeReference(locator());status=async()=>response({},code);await open();
+  await act(async()=>button('Check saved deletion status').click());expect(readReferences()).toEqual([locator()]);
+  expect(button('Use').disabled).toBe(true);expect(deleteButton().disabled).toBe(true);expect(posts()).toHaveLength(0);
+  expect(container.querySelector('[aria-label="Edit template details Reviewed starter"]').disabled).toBe(true);
+  expect(container.querySelector('[aria-label="Edit template sequence Reviewed starter"]').disabled).toBe(true);
+});
+it('corrupt deletion storage holds unchanged without transport',async()=>{
+  sessionStorage.setItem(STORAGE_KEY,'bad');await open();await act(async()=>button('Check saved deletion status').click());
+  expect(deleteButton().disabled).toBe(true);expect(sessionStorage.getItem(STORAGE_KEY)).toBe('bad');expect(posts()).toHaveLength(0);
+});
+it('foreign context retains the saved original without disclosing its status',async()=>{
+  storeReference(locator());contextReply=async()=>response({...context,scope_digest:'e'.repeat(64)});await open();
+  await act(async()=>button('Check saved deletion status').click());expect(readReferences()).toEqual([locator()]);
+  expect(global.fetch.mock.calls.some(([url])=>url.includes('/template-deletions/'+request))).toBe(false);
+  expect(deleteButton().disabled).toBe(false);
+});
+it('held in-view deletion can leave and return through stored-reference recovery',async()=>{
+  post=async()=>{throw Error('lost');};await open();await act(async()=>deleteButton().click());
+  await act(async()=>button('← Campaigns').click());catalog=[row()];await act(async()=>button('Browse winning templates').click());
+  expect(button('Check original deletion status')).toBeUndefined();expect(button('Use').disabled).toBe(true);
+  await act(async()=>button('Check saved deletion status').click());expect(readReferences()).toEqual([]);expect(deleteButton().disabled).toBe(false);
+});
+it('newer same-scope request survives stale cleanup and can be explicitly recovered',async()=>{
+  storeReference(locator());const later={...locator(),request_id:'11111111-1111-1111-1111-111111111111',input_digest:'1'.repeat(64)};
+  status=async()=>{sessionStorage.setItem(STORAGE_KEY,JSON.stringify({contract_version:1,references:[later]}));return response(savedReceipt());};
+  await open();await act(async()=>button('Check saved deletion status').click());expect(readReferences()).toEqual([later]);
+  status=async()=>response({...savedReceipt(),...later});await act(async()=>button('Check saved deletion status').click());
+  expect(readReferences()).toEqual([]);expect(global.fetch.mock.calls.at(-2)[0]).toContain(later.request_id);
+});
+it('verified locator is present before deletion POST; blocked storage prevents transport',async()=>{
+  post=async body=>{expect(readReferences()[0].request_id).toBe(body.request_id);return response(receipt(body));};
+  await open();await act(async()=>deleteButton().click());expect(readReferences()).toEqual([]);
+  catalog=[row()];await act(async()=>button('← Campaigns').click());await act(async()=>button('Browse winning templates').click());
+  const native=Storage.prototype.setItem;const spy=jest.spyOn(Storage.prototype,'setItem').mockImplementation(function(key,value){
+    if(key===STORAGE_KEY)throw Error('blocked');return native.call(this,key,value);});
+  try {await act(async()=>deleteButton().click());expect(posts()).toHaveLength(1);expect(deleteButton().disabled).toBe(true);}
+  finally {spy.mockRestore();}
+});
+
+it.each(['extra','wrong_input','bad_revision','update_receipt','bad_native'])('restored deletion rejects %s receipt',async(fault)=>{
+  storeReference(locator());status=async()=>response({...savedReceipt(),...(fault==='extra'?{name:'private'}
+    :fault==='wrong_input'?{input_digest:'1'.repeat(64)}:fault==='bad_revision'?{revision:true}
+      :fault==='update_receipt'?{status:'updated',new_revision:1}:{identity_digest:'bad'})});
+  await open();await act(async()=>button('Check saved deletion status').click());
+  expect(readReferences()).toEqual([locator()]);expect(deleteButton().disabled).toBe(true);expect(toast.success).not.toHaveBeenCalled();
+});
+it('cleanup failure after original receipt cannot unlock a new deletion',async()=>{
+  storeReference(locator());status=async()=>response(savedReceipt());await open();
+  const native=Storage.prototype.setItem;const spy=jest.spyOn(Storage.prototype,'setItem').mockImplementation(function(key,value){
+    if(key===STORAGE_KEY&&JSON.parse(value).references.length===0)throw Error('blocked');return native.call(this,key,value);});
+  try {await act(async()=>button('Check saved deletion status').click());
+    expect(readReferences()).toEqual([locator()]);expect(deleteButton().disabled).toBe(true);expect(toast.success).not.toHaveBeenCalled();
+  } finally {spy.mockRestore();}
+});
+it('current-token restoration prevents a stale status response from clearing the reference',async()=>{
+  storeReference(locator());await open();localStorage.setItem('token','fresh');
+  status=async(url,opts)=>({ok:true,status:200,json:async()=>{expect(opts.headers.Authorization).toBe('Bearer fresh');
+    localStorage.setItem('token','other');return savedReceipt();}});
+  await act(async()=>button('Check saved deletion status').click());expect(readReferences()).toEqual([locator()]);expect(deleteButton().disabled).toBe(true);
+});
+it('departing during restored status context prevents original-status transport and reentry stays held',async()=>{
+  storeReference(locator());await open();let finish;
+  contextReply=()=>new Promise(resolve=>{finish=()=>resolve(response(context));});
+  await act(async()=>button('Check saved deletion status').click());await act(async()=>button('← Campaigns').click());
+  await act(async()=>finish());await act(async()=>button('Browse winning templates').click());
+  expect(global.fetch.mock.calls.some(([url])=>url.includes('/template-deletions/'+request))).toBe(false);
+  expect(deleteButton().disabled).toBe(true);expect(readReferences()).toEqual([locator()]);
+});
+it('same-tab locator arriving after render is caught before a new deletion context is requested',async()=>{
+  await open();storeReference(locator());await act(async()=>deleteButton().click());
+  expect(posts()).toHaveLength(0);expect(deleteButton().disabled).toBe(true);
+  expect(global.fetch.mock.calls.some(([url])=>url.endsWith('/template-deletions/context'))).toBe(false);
+});
+it('a competing locator admitted during input hashing prevents another POST',async()=>{
+  global.crypto.subtle.digest=jest.fn(async()=>{storeReference({...locator(),request_id:'11111111-1111-1111-1111-111111111111'});
+    return new Uint8Array(32).buffer;});await open();await act(async()=>deleteButton().click());
+  expect(posts()).toHaveLength(0);expect(readReferences()[0].request_id).toBe('11111111-1111-1111-1111-111111111111');
+});
+it('storage failure prevents discarding a held in-view original on departure',async()=>{
+  post=async()=>{throw Error('lost');};await open();await act(async()=>deleteButton().click());
+  const native=Storage.prototype.setItem;const spy=jest.spyOn(Storage.prototype,'setItem').mockImplementation(function(key,value){
+    if(key===STORAGE_KEY)throw Error('blocked');return native.call(this,key,value);});
+  // Force a verified write instead of the identical-original no-op.
+  sessionStorage.removeItem(STORAGE_KEY);
+  try {await act(async()=>button('← Campaigns').click());expect(button('Check original deletion status')).toBeDefined();
+    expect(toast.error).toHaveBeenCalled();} finally {spy.mockRestore();}
+});
+it('stale inline cleanup preserves a newer saved deletion and departure lets it be recovered',async()=>{
+  post=async()=>{throw Error('lost');};await open();await act(async()=>deleteButton().click());
+  const later={...locator(),request_id:'11111111-1111-1111-1111-111111111111',input_digest:'1'.repeat(64)};
+  status=async()=>{sessionStorage.setItem(STORAGE_KEY,JSON.stringify({contract_version:1,references:[later]}));return response(savedReceipt());};
+  await act(async()=>button('Check original deletion status').click());
+  expect(readReferences()).toEqual([later]);expect(deleteButton().disabled).toBe(true);expect(toast.success).not.toHaveBeenCalled();
+  catalog=[row({deletion_review:{...row().deletion_review,identity_digest:'e'.repeat(64),review_digest:'d'.repeat(64)}})];
+  await act(async()=>button('← Campaigns').click());expect(button('Browse winning templates')).toBeDefined();
+  await act(async()=>button('Browse winning templates').click());expect(button('Check original deletion status')).toBeUndefined();
+  status=async()=>response({...savedReceipt(),...later});
+  await act(async()=>button('Check saved deletion status').click());expect(readReferences()).toEqual([]);
+  expect(global.fetch.mock.calls.at(-2)[0]).toContain(later.request_id);expect(posts()).toHaveLength(1);
+  expect(deleteButton().disabled).toBe(false);
 });

@@ -1,6 +1,8 @@
 const {test,expect}=require('@playwright/test');
 const {createHash}=require('crypto');
 const row=()=>({id:'tpl_custom_012345abcd',is_custom:true,name:'Starter',description:'Original',
+  workspace_access:{contract_version:1,workspace_id:'workspace',visibility:'workspace',created_by_you:false,
+    can_configure:true,can_edit:true,can_delete:true,execution_authorized:false},
   nodes:[{id:'root',type:'visit_profile',title:'Original visit ☕',delay_hours:5,config:{}}],edges:[],tree:[{id:'root',type:'visit_profile',title:'Original visit ☕',delay_hours:5,config:{}}],
   compatibility:{contract_version:1,valid:true,configuration_available:true,execution_authorized:false},
   graph_review:{contract_version:1,reviewable:true,update_authorized:false,execution_authorized:false,
@@ -68,6 +70,8 @@ test('missing original receipt remains held without POST replay or fresh update'
   await page.getByRole('button',{name:'Edit template sequence Starter',exact:true}).click();
   await page.getByRole('button',{name:'Save template sequence',exact:true}).click();
   await page.getByRole('button',{name:'Check original sequence update status',exact:true}).click();
+  await expect.poll(()=>checks).toBe(1);
+  await expect(page.getByRole('button',{name:'Check original sequence update status',exact:true})).toBeEnabled();
   await expect(page.getByRole('button',{name:'Save template sequence',exact:true})).toBeDisabled();
   await expect(page.getByRole('button',{name:'Cancel',exact:true})).toBeDisabled();
   await expect(page.getByRole('button',{name:'Use',exact:true})).toBeDisabled();
@@ -77,4 +81,38 @@ test('older catalogs without dedicated review cannot enable details editing',asy
   const record=row();delete record.graph_review;await setup(page,route=>json(route,[record]));
   await expect(page.getByRole('button',{name:'Edit template sequence Starter',exact:true})).toBeDisabled();
   await expect(page.getByRole('button',{name:'Use',exact:true})).toBeEnabled();
+});
+
+test('reload recovers only the original graph request while preserving a later template',async({page})=>{
+  let posts=0,checks=0,body;
+  await setup(page,route=>{
+    if(route.request().method()==='POST'){posts++;body=route.request().postDataJSON();return route.abort('failed');}
+    if(route.request().url().includes('/template-graph-updates/')){checks++;return json(route,receipt(body));}
+    return json(route,[checks?{...row(),name:'Replacement'}:row()]);
+  });
+  await page.getByRole('button',{name:'Edit template sequence Starter',exact:true}).click();
+  await page.getByRole('button',{name:'Save template sequence',exact:true}).click();
+  await expect(page.getByRole('alert')).toContainText('Earlier sequence update is unconfirmed');
+  const raw=await page.evaluate(()=>sessionStorage.getItem('unravler.outreach.templateGraphReferences.v1'));
+  expect(raw).not.toContain('nodes');expect(raw).not.toContain('Original visit');expect(JSON.parse(raw).references).toHaveLength(1);
+  await page.reload();await page.getByRole('button',{name:'Browse winning templates',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Use',exact:true})).toBeDisabled();expect(posts).toBe(1);expect(checks).toBe(0);
+  await page.getByRole('button',{name:'Check saved sequence update status',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Edit template sequence Replacement',exact:true})).toBeEnabled();
+  expect(posts).toBe(1);expect(checks).toBe(1);
+});
+
+test('graph locator written without POST remains held after reload and404',async({page})=>{
+  let posts=0,checks=0;await setup(page,route=>{
+    if(route.request().method()==='POST'){posts++;return route.abort('failed');}
+    if(route.request().url().includes('/template-graph-updates/')){checks++;return json(route,{},404);}
+    return json(route,[row()]);
+  });
+  await page.evaluate(()=>sessionStorage.setItem('unravler.outreach.templateGraphReferences.v1',JSON.stringify({contract_version:1,
+    references:[{contract_version:1,workspace_id:'workspace',scope_digest:'f'.repeat(64),
+      request_id:'01234567-89ab-cdef-0123-456789abcdef',input_digest:'a'.repeat(64)}]})));
+  await page.reload();await page.getByRole('button',{name:'Browse winning templates',exact:true}).click();
+  await page.getByRole('button',{name:'Check saved sequence update status',exact:true}).click();
+  await expect.poll(()=>checks).toBe(1);await expect(page.getByRole('button',{name:'Check saved sequence update status',exact:true})).toBeEnabled();
+  await expect(page.getByRole('button',{name:'Use',exact:true})).toBeDisabled();expect(posts).toBe(0);expect(checks).toBe(1);
 });

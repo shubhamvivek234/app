@@ -16,7 +16,7 @@ const receipt=body=>{const old=JSON.parse(body.content_json);return {contract_ve
 let container,root,saved,close,post,status,body,contextReply;
 const button=text=>[...container.querySelectorAll('button')].find(item=>item.textContent.trim()===text);
 const render=async(record=row())=>act(async()=>root.render(<TemplateMetadataEditor template={record} onSaved={saved} onClose={close}/>));
-beforeEach(()=>{global.IS_REACT_ACT_ENVIRONMENT=true;global.TextEncoder=TextEncoder;localStorage.clear();
+beforeEach(()=>{global.IS_REACT_ACT_ENVIRONMENT=true;global.TextEncoder=TextEncoder;localStorage.clear();sessionStorage.clear();
   Object.defineProperty(globalThis,'crypto',{configurable:true,value:{randomUUID:()=> '01234567-89ab-cdef-0123-456789abcdef',subtle:{digest:async()=>new Uint8Array(32).buffer}}});
   container=document.createElement('div');document.body.appendChild(container);root=createRoot(container);saved=jest.fn();close=jest.fn();
   contextReply=reply(context);post=async b=>reply(receipt(b));status=async()=>reply(receipt(body));body=null;

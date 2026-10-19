@@ -1,8 +1,9 @@
 """Reviewed, database-only custom-template name/description edits.
 
 The shared transaction writes current authority counters and the template row.
-The retained legacy PATCH creates no immutable history or durable receipt. The
-recoverable update service owns its separate atomic receipt. Unknown legacy
+The shared replacement appends minimal immutable revision checkpoints. The
+legacy PATCH has no durable outcome receipt; the recoverable update service
+owns its separate atomic receipt. Unknown legacy
 commits must be inspected, never automatically replayed with a newer review.
 """
 from __future__ import annotations
@@ -20,6 +21,7 @@ from outreach.core.authorization import canonical_hash
 from outreach.core.lead_tags import unique_resource
 from outreach.core.suppression import SuppressionUnavailable, mutate_suppression
 from outreach.core.workspace_scope import workspace_scope
+from outreach.core.template_revision_checkpoints import append_metadata_checkpoints
 
 
 def validate_metadata(name: str, description: str) -> tuple[str, str]:
@@ -110,6 +112,7 @@ async def _replace_metadata(current: Any, workspace: str, actor: str, authentica
     saved = await current.outreach_templates.find_one({**workspace_scope(workspace), '_id': row['_id']})
     if saved is None or BSON.encode(saved) != BSON.encode(expected):
         raise HTTPException(409, 'Could not verify updated template; reload before editing')
+    await append_metadata_checkpoints(current, row, saved, actor, timestamp)
     return {**original_review, 'status': 'updated', 'template_id': template_id,
         'name': operation['name'], 'description': operation['description'],
         'new_revision': operation['revision'] + 1, 'new_review_digest': raw_review['review_digest']}

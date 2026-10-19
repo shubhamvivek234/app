@@ -23,11 +23,15 @@ const receipt = (body) => ({ ...Object.fromEntries(['contract_version','workspac
   status: 'saved', template_id: 'tpl_custom_012345abcd', template_revision: 1,
   template_identity_digest: 'b'.repeat(64), template_review_digest: 'c'.repeat(64) });
 const response = (data, status = 200) => ({ ok: status === 200, status, json: async () => data });
-let container; let root; let post; let status; let captured; let contextResult;
+let container; let root; let post; let status; let captured; let contextResult; let digests;
 beforeEach(() => {
   global.IS_REACT_ACT_ENVIRONMENT = true;
   global.TextEncoder = TextEncoder;
-  Object.defineProperty(globalThis, 'crypto', { configurable: true, value: webcrypto });
+  digests = [];
+  Object.defineProperty(globalThis, 'crypto', { configurable: true, value: {
+    randomUUID: () => webcrypto.randomUUID(),
+    subtle: { digest: (...args) => { const pending = webcrypto.subtle.digest(...args); digests.push(pending); return pending; } },
+  } });
   localStorage.clear();
   sessionStorage.clear();
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
@@ -46,7 +50,8 @@ beforeEach(() => {
 afterEach(async () => { if (root) await act(async () => root.unmount()); root = null; container.remove(); delete global.fetch; delete globalThis.__templateSequenceSave; });
 const mount = async (props={}) => act(async () => root.render(<OutreachCampaignWizard campaignId="new" initialName="Café template" {...props} />));
 const button = (label) => [...container.querySelectorAll('button')].find((item) => item.textContent.trim() === label);
-const click = async (label) => act(async () => { button(label).click(); await new Promise((resolve) => setTimeout(resolve, 20)); });
+const finishDigests = async () => act(async () => { await Promise.all(digests); });
+const click = async (label) => { await act(async () => button(label).click()); await finishDigests(); };
 const posts = () => global.fetch.mock.calls.filter(([url, options]) => url.endsWith('/template-saves') && options?.method === 'POST');
 
 test('hashes exact Unicode bytes and confirms only a matching creation receipt', async () => {
@@ -87,7 +92,8 @@ test.each([{input_digest:'e'.repeat(64)},{request_id:'other'},{execution_authori
 });
 
 test('rapid duplicate clicks share one original request', async () => {
-  await mount(); await act(async () => { button('Save as template').click(); button('Save as template').click(); await new Promise((resolve) => setTimeout(resolve,20)); });
+  await mount(); await act(async () => { button('Save as template').click(); button('Save as template').click(); });
+  await finishDigests();
   expect(posts()).toHaveLength(1);
 });
 
@@ -207,7 +213,7 @@ test('a competing same-scope reference arriving during preparation blocks final 
   await act(async()=>button('Save as template').click());
   const other={contract_version:1,workspace_id:'workspace',scope_digest:context.scope_digest,request_id:'01234567-89ab-4cde-8fab-0123456789ab',input_digest:'e'.repeat(64)};
   sessionStorage.setItem(STORAGE_KEY,JSON.stringify({contract_version:1,references:[other]}));
-  await act(async()=>{release(true);await new Promise(resolve=>setTimeout(resolve,20));});
+  await act(async()=>release(true));await finishDigests();
   expect(posts()).toHaveLength(0);expect(readReferences()).toEqual([other]);expect(button('Save as template').disabled).toBe(true);
 });
 

@@ -1,15 +1,16 @@
 """Read-only gallery eligibility must never become execution authority."""
 from copy import deepcopy
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
 
 from outreach.api.sequences import get_sequence_templates
+from tests.test_outreach_template_access import database as authority_database
 
 
 def database(rows):
-    db = MagicMock()
+    db = authority_database()
     db.outreach_templates.find.return_value.sort.return_value.to_list = AsyncMock(return_value=rows)
     return db
 
@@ -31,7 +32,7 @@ async def test_supported_templates_configure_with_live_flags_off_without_mutatin
         row["nodes"][0]["config"] = {"condition_contract_version": 1, "field": "first_name", "operator": "has_value"}
         row["tree"][0]["config"] = deepcopy(row["nodes"][0]["config"])
     before = deepcopy(row)
-    result = await get_sequence_templates({"user_id": "actor", "default_workspace_id": "workspace"}, database([row]))
+    result = await get_sequence_templates({"user_id": "actor", "firebase_uid": "uid", "default_workspace_id": "workspace"}, database([row]))
     assert result[-1]["compatibility"]["configuration_available"] is True
     assert result[-1]["compatibility"]["execution_authorized"] is False
     assert result[-1]["nodes"] == before["nodes"]
@@ -50,7 +51,7 @@ async def test_uneditable_or_incompatible_graphs_remain_visible_for_review(chang
         row["tree"][0]["type"] = row["nodes"][0]["type"] = "inmail"
     else:
         row["tree"][0]["delay_hours"] = row["nodes"][0]["delay_hours"] = True
-    result = await get_sequence_templates({"user_id": "actor", "default_workspace_id": "workspace"}, database([row]))
+    result = await get_sequence_templates({"user_id": "actor", "firebase_uid": "uid", "default_workspace_id": "workspace"}, database([row]))
     assert result[-1]["id"] == row["id"]
     assert result[-1]["compatibility"]["configuration_available"] is False
     assert result[-1]["compatibility"]["execution_authorized"] is False
@@ -61,7 +62,7 @@ async def test_failed_workspace_catalog_read_is_unavailable_not_prebuilt_success
     db = database([])
     db.outreach_templates.find.return_value.sort.return_value.to_list.side_effect = RuntimeError("private database address")
     with pytest.raises(HTTPException) as caught:
-        await get_sequence_templates({"user_id": "actor", "default_workspace_id": "workspace"}, db)
+        await get_sequence_templates({"user_id": "actor", "firebase_uid": "uid", "default_workspace_id": "workspace"}, db)
     assert caught.value.status_code == 503
     assert "private" not in caught.value.detail
 

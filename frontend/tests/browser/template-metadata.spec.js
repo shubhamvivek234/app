@@ -1,6 +1,8 @@
 const {test,expect}=require('@playwright/test');
 const {createHash}=require('crypto');
 const row=()=>({id:'tpl_custom_012345abcd',is_custom:true,name:'Starter',description:'Original',
+  workspace_access:{contract_version:1,workspace_id:'workspace',visibility:'workspace',created_by_you:false,
+    can_configure:true,can_edit:true,can_delete:true,execution_authorized:false},
   nodes:[{id:'root',type:'visit_profile'}],edges:[],tree:[{id:'root',type:'visit_profile'}],
   compatibility:{contract_version:1,valid:true,configuration_available:true,execution_authorized:false},
   metadata_review:{contract_version:1,reviewable:true,update_authorized:false,execution_authorized:false,
@@ -63,6 +65,8 @@ test('missing original receipt remains held without POST replay or fresh update'
   await page.getByRole('button',{name:'Edit template details Starter',exact:true}).click();
   await page.getByRole('button',{name:'Save details',exact:true}).click();
   await page.getByRole('button',{name:'Check original update status',exact:true}).click();
+  await expect.poll(()=>checks).toBe(1);
+  await expect(page.getByRole('button',{name:'Check original update status',exact:true})).toBeEnabled();
   await expect(page.getByRole('button',{name:'Save details',exact:true})).toBeDisabled();
   await expect(page.getByRole('button',{name:'Cancel',exact:true})).toBeDisabled();
   await expect(page.getByRole('button',{name:'Use',exact:true})).toBeDisabled();
@@ -72,4 +76,45 @@ test('older catalogs without dedicated review cannot enable details editing',asy
   const record=row();delete record.metadata_review;await setup(page,route=>json(route,[record]));
   await expect(page.getByRole('button',{name:'Edit template details Starter',exact:true})).toBeDisabled();
   await expect(page.getByRole('button',{name:'Use',exact:true})).toBeEnabled();
+});
+
+test('reload retains only the original details locator and explicitly recovers a later replaced template',async({page})=>{
+  let posts=0,checks=0,body;
+  await setup(page,route=>{
+    if(route.request().method()==='POST'){posts++;body=route.request().postDataJSON();return route.abort('failed');}
+    if(route.request().url().includes('/template-metadata-updates/')){checks++;return json(route,receipt(body));}
+    return json(route,[checks?{...row(),name:'Replacement'}:row()]);
+  });
+  await page.getByRole('button',{name:'Edit template details Starter',exact:true}).click();
+  await page.getByLabel('Template name',{exact:true}).fill('Private unsaved name');
+  await page.getByRole('button',{name:'Save details',exact:true}).click();
+  await expect(page.getByRole('alert')).toContainText('Earlier update is unconfirmed');
+  const raw=await page.evaluate(()=>sessionStorage.getItem('unravler.outreach.templateMetadataReferences.v1'));
+  expect(raw).not.toContain('Private unsaved name');expect(raw).not.toContain('token');expect(JSON.parse(raw).references).toHaveLength(1);
+  await page.reload();await page.getByRole('button',{name:'Browse winning templates',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Use',exact:true})).toBeDisabled();expect(posts).toBe(1);expect(checks).toBe(0);
+  await page.getByRole('button',{name:'Check saved details update status',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Edit template details Replacement',exact:true})).toBeEnabled();
+  expect(posts).toBe(1);expect(checks).toBe(1);
+  expect(await page.evaluate(()=>JSON.parse(sessionStorage.getItem('unravler.outreach.templateMetadataReferences.v1')).references)).toEqual([]);
+});
+
+test('write-ahead locator without a completed POST stays held across reloads and missing status',async({page})=>{
+  let posts=0,checks=0;
+  await setup(page,route=>{
+    if(route.request().method()==='POST'){posts++;return route.abort('failed');}
+    if(route.request().url().includes('/template-metadata-updates/')){checks++;return json(route,{},404);}
+    return json(route,[row()]);
+  });
+  const locator={contract_version:1,workspace_id:context.workspace_id,scope_digest:context.scope_digest,
+    request_id:'01234567-89ab-cdef-0123-456789abcdef',input_digest:'a'.repeat(64)};
+  await page.evaluate(ref=>sessionStorage.setItem('unravler.outreach.templateMetadataReferences.v1',
+    JSON.stringify({contract_version:1,references:[ref]})),locator);
+  await page.reload();await page.getByRole('button',{name:'Browse winning templates',exact:true}).click();
+  await page.getByRole('button',{name:'Check saved details update status',exact:true}).click();
+  await expect.poll(()=>checks).toBe(1);
+  await expect(page.getByRole('button',{name:'Check saved details update status',exact:true})).toBeEnabled();
+  await expect(page.getByRole('button',{name:'Use',exact:true})).toBeDisabled();
+  await expect(page.getByRole('button',{name:'Edit template details Starter',exact:true})).toBeDisabled();
+  expect(posts).toBe(0);expect(checks).toBe(1);
 });

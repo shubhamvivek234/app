@@ -4,6 +4,7 @@ import {TextEncoder} from 'util';
 import TemplateMetadataEditor from './TemplateMetadataEditor';
 import {reviewedTemplateMetadata} from '../utils/templateMetadata';
 import {matchesMetadataUpdateReceipt} from '../utils/templateMetadataUpdates';
+import {STORAGE_KEY,readReferences,storeReference} from '../utils/templateMetadataReferences';
 
 const request='01234567-89ab-cdef-0123-456789abcdef';
 const context={contract_version:1,workspace_id:'workspace',scope_digest:'f'.repeat(64),execution_authorized:false};
@@ -39,7 +40,8 @@ it('freezes original reviewed input, uses one UUID and confirms only a minimal e
   expect(global.fetch.mock.calls.map(([url])=>url)).toEqual(['/api/v1/outreach/sequences/template-metadata-updates/context','/api/v1/outreach/sequences/template-metadata-updates']);
   expect(JSON.parse(original.content_json)).toEqual({...reviewedTemplateMetadata(row()),template_id:row().id,name:'Renamed ☕',description:''});
   expect(global.crypto.randomUUID).toHaveBeenCalledTimes(1);expect(saved).toHaveBeenCalledTimes(1);
-  expect(sessionStorage.length).toBe(0);expect(original.scope_digest).not.toBe(JSON.parse(original.content_json).scope_digest);
+  expect(readReferences()).toEqual([]);expect(sessionStorage.getItem(STORAGE_KEY)).not.toContain('Renamed');
+  expect(original.scope_digest).not.toBe(JSON.parse(original.content_json).scope_digest);
 });
 
 it.each(['network','202','201','wrong_input','wrong_native','wrong_revision','extra','malformed'])('unknown %s can recover only original status without POST replay',async(fault)=>{
@@ -91,6 +93,41 @@ it('receipt matcher denies missing native proof and invented content',()=>{
   expect(matchesMetadataUpdateReceipt(receipt(body),body,captured)).toBe(true);
   expect(matchesMetadataUpdateReceipt({...receipt(body),name:'Other'},body,captured)).toBe(false);
   expect(matchesMetadataUpdateReceipt({...receipt(body),review_scope_digest:'bad'},body,captured)).toBe(false);
+});
+
+it('persists and verifies the locator before POST without retaining original edit content',async()=>{
+  post=async body=>{expect(readReferences()).toEqual([{contract_version:1,workspace_id:body.workspace_id,
+    scope_digest:body.scope_digest,request_id:body.request_id,input_digest:body.input_digest}]);
+    expect(sessionStorage.getItem(STORAGE_KEY)).not.toContain('Starter');throw Error('lost');};
+  await mount();await act(async()=>button('Save details').click());
+  expect(readReferences()).toHaveLength(1);expect(button('Save details').disabled).toBe(true);
+});
+
+it('write failure before transport and cleanup failure after a receipt both retain a hold',async()=>{
+  const native=Storage.prototype.setItem;const writer=jest.spyOn(Storage.prototype,'setItem').mockImplementation(function(key,value){
+    if(key===STORAGE_KEY)throw Error('storage blocked');return native.call(this,key,value);});
+  try {
+    await mount();await act(async()=>button('Save details').click());expect(original).toBeNull();expect(saved).not.toHaveBeenCalled();
+    expect(button('Save details').disabled).toBe(true);
+  } finally {writer.mockRestore();}
+  // Explicit same-original status remains the only route out of the view hold.
+  expect(button('Check original update status')).toBeDefined();
+});
+
+it('a newer stored locator cannot be cleared by an older successful response',async()=>{
+  post=async body=>{sessionStorage.setItem(STORAGE_KEY,JSON.stringify({contract_version:1,references:[{
+    contract_version:1,workspace_id:body.workspace_id,scope_digest:body.scope_digest,
+    request_id:body.request_id,input_digest:'e'.repeat(64)}]}));return response(receipt(body));};
+  await mount();await act(async()=>button('Save details').click());
+  expect(saved).not.toHaveBeenCalled();expect(readReferences()[0].input_digest).toBe('e'.repeat(64));expect(button('Cancel').disabled).toBe(true);
+});
+
+it('a competing original admitted during hashing prevents a second POST',async()=>{
+  global.crypto.subtle.digest=jest.fn(async()=>{
+    storeReference({contract_version:1,workspace_id:context.workspace_id,scope_digest:context.scope_digest,
+      request_id:'11111111-1111-1111-1111-111111111111',input_digest:'a'.repeat(64)});
+    return new Uint8Array(32).buffer;});
+  await mount();await act(async()=>button('Save details').click());expect(original).toBeNull();expect(readReferences()).toHaveLength(1);
 });
 
 it('normal token refresh can check the same original scope using current credentials',async()=>{

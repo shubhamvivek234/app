@@ -2,6 +2,8 @@ const {test,expect}=require('@playwright/test');
 const {createHash}=require('crypto');
 const context={contract_version:1,workspace_id:'workspace☕',scope_digest:'f'.repeat(64),execution_authorized:false};
 const row=()=>({id:'tpl_custom_012345abcd',name:'Reviewed template ☕',is_custom:true,
+  workspace_access:{contract_version:1,workspace_id:context.workspace_id,visibility:'workspace',created_by_you:false,
+    can_configure:true,can_edit:true,can_delete:true,execution_authorized:false},
   nodes:[{id:'root',type:'visit_profile'}],edges:[],tree:[{id:'root',type:'visit_profile'}],
   compatibility:{contract_version:1,valid:true,configuration_available:true,execution_authorized:false},
   deletion_review:{contract_version:1,reviewable:true,revision:0,workspace_id:context.workspace_id,
@@ -63,6 +65,8 @@ test('missing original receipt remains held without another POST or absence conf
     return json(route,[row()]);
   });
   await deleteButton(page).click();await page.getByRole('button',{name:'Check original deletion status',exact:true}).click();
+  await expect.poll(()=>gets).toBe(1);
+  await expect(page.getByRole('button',{name:'Check original deletion status',exact:true})).toBeEnabled();
   await expect(page.getByRole('alert')).toContainText('Earlier deletion is unconfirmed');
   await expect(deleteButton(page)).toBeDisabled();await expect(page.getByRole('button',{name:'Use',exact:true})).toBeDisabled();
   expect(posts).toBe(1);expect(gets).toBe(1);
@@ -76,4 +80,45 @@ test('202 exact body cannot confirm deletion or unlock another request',async({p
   });
   await deleteButton(page).click();await expect(page.getByRole('alert')).toContainText('Earlier deletion is unconfirmed');
   await expect(deleteButton(page)).toBeDisabled();expect(posts).toBe(1);
+});
+
+test('reload checks only the saved original deletion and preserves a replacement template',async({page})=>{
+  let body,posts=0,checks=0,statusQuery;
+  const replacement={...row(),name:'Replacement template',deletion_review:{...row().deletion_review,identity_digest:'e'.repeat(64)}};
+  await setup(page,(route,url)=>{
+    if(route.request().method()==='POST'){posts++;body=route.request().postDataJSON();return route.abort('failed');}
+    if(url.pathname.includes('/template-deletions/')){checks++;statusQuery=url.searchParams;return json(route,receipt(body));}
+    return json(route,checks?[replacement]:[row()]);
+  });
+  await deleteButton(page).click();await expect(page.getByRole('alert')).toContainText('Earlier deletion is unconfirmed');
+  const raw=await page.evaluate(()=>sessionStorage.getItem('unravler.outreach.templateDeletionReferences.v1'));
+  expect(JSON.parse(raw)).toEqual({contract_version:1,references:[{contract_version:1,workspace_id:context.workspace_id,
+    scope_digest:context.scope_digest,request_id:body.request_id,input_digest:body.input_digest}]});
+  expect(raw).not.toContain('Reviewed template');expect(raw).not.toContain('template_id');expect(raw).not.toContain('content_json');
+  await page.reload();await page.getByRole('button',{name:'Browse winning templates',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Use',exact:true})).toBeDisabled();expect(posts).toBe(1);expect(checks).toBe(0);
+  await page.getByRole('button',{name:'Check saved deletion status',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Delete template Replacement template',exact:true})).toBeEnabled();
+  expect(posts).toBe(1);expect(checks).toBe(1);expect(statusQuery.get('input_digest')).toBe(body.input_digest);
+  expect(statusQuery.get('scope_digest')).toBe(body.scope_digest);
+  expect(await page.evaluate(()=>JSON.parse(sessionStorage.getItem('unravler.outreach.templateDeletionReferences.v1')).references)).toEqual([]);
+});
+
+test('write-ahead deletion locator with no POST remains held after reload and404',async({page})=>{
+  let posts=0,checks=0;
+  await setup(page,(route,url)=>{
+    if(route.request().method()==='POST'){posts++;return route.abort('failed');}
+    if(url.pathname.includes('/template-deletions/')){checks++;return json(route,{},404);}
+    return json(route,[row()]);
+  });
+  const original={contract_version:1,workspace_id:context.workspace_id,scope_digest:context.scope_digest,
+    request_id:'01234567-89ab-cdef-0123-456789abcdef',input_digest:'a'.repeat(64)};
+  await page.evaluate(ref=>sessionStorage.setItem('unravler.outreach.templateDeletionReferences.v1',
+    JSON.stringify({contract_version:1,references:[ref]})),original);
+  await page.reload();await page.getByRole('button',{name:'Browse winning templates',exact:true}).click();
+  await page.getByRole('button',{name:'Check saved deletion status',exact:true}).click();
+  await expect.poll(()=>checks).toBe(1);await expect(page.getByRole('button',{name:'Check saved deletion status',exact:true})).toBeEnabled();
+  await expect(deleteButton(page)).toBeDisabled();await expect(page.getByRole('button',{name:'Use',exact:true})).toBeDisabled();
+  expect(posts).toBe(0);expect(checks).toBe(1);
+  expect(await page.evaluate(()=>JSON.parse(sessionStorage.getItem('unravler.outreach.templateDeletionReferences.v1')).references)).toEqual([original]);
 });

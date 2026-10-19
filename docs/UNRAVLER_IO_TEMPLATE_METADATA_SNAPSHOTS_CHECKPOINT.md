@@ -1,0 +1,15 @@
+# v2.91 usage-stop checkpoint — 2026-10-19 IST
+
+Implementation stopped at actual2% short-term remaining. Actual reset:2026-10-19T10:29:08Z (15:59:08 IST). One continuation is scheduled16:01 IST. Keep all work local.
+
+Source and tests are finished and both independent reviews approve. Evidence: `/tmp/unravler-template-metadata-snapshots-7yswoc83/checkpoint-manifest.json`. Five frozen Python hashes are in reviewer-source-report.json and second-source-review.json. Do not redo finished implementation or native services.
+
+Final447pure/API pass7.78s with569optinskips; separate569native pass264.16s/0skip; same skipped identities, passingoverlap0→1016distinctselected.56new=30pure25replica1standalone. Independent79pure each pass0.97s/0.94s. Two-helper158/160statement32/36branch96.9388%combined; snapshot129/131+24/28=96.2264%,storage100%. Compile/scopedBandit/diff pass. Earlier43/144 runs are historical repeats. Root coverage remains exact backup SHA4b74da9b...; owned fixtures cleaned and4179closed.
+
+Pending: final independent docs/numerical/evidence audit, any numerical/doc corrections, final preservation manifest, regenerated final memory preview, then final session memory last. Current three specs/roadmap/report and8Desktop pairs are synchronized; initial manifest verifies363repo links13docs652Desktoplinks,10prememory source/document hashes and52evidence hashes. The report's final-audit/preservation language is provisional until that audit approves. The old planned-memory.md is an unapproved completion preview; regenerate it from the checkpoint memory, never apply it blindly.
+
+The baseline has1826regular files; source-only edits initially changed two existing runtime files plus four docs. Checkpoint memory adds the seventh intentional existing overlap. Preserve prior v2.83–v2.90 and all unrelated files/worktrees/services. New source helper, two tests, report and this checkpoint are owned additions. Rebuild final manifest using actual checkpoint memory as the existing intentional change; the older prepare_manifest.py asserts pre-checkpoint memory and must be adapted before reuse.
+
+Scope stays explicit: internal current-proof-only encrypted name/description capture; no HTTP/UI/automatic mutation integration, graph capture, public content-read or restore. Existing template metadata remains plaintext, typed allowlist text may contain sensitive information, history flags remain false. Explicit nonTTL index preparation, current authority/counters, matching ordinary checkpoint/full retained lineage, immutable ciphertext/readbacks, limits and actual erasure are verified. No whole-application/frontend/production/live/WORM/outside-backup claim.
+
+After final audit, finalize the bounded primitive and stop. Graph/security/retention and atomic mutation-path integration are subsequent implementation work. No commit/push/deploy/production migration/live flag/provider/AWS/grant/purchase actions. Check actual usage first; at<=2% reschedule after actual next reset and stop.

@@ -47,7 +47,9 @@ it('does not treat failed or unknown server template compatibility as ready', ()
   expect(isLaunchableTemplate(ready(template))).toBe(true);
 });
 
-const ready = (template) => ({ ...template, compatibility: { contract_version: 1, valid: true,
+const ready = (template) => ({ ...template, workspace_access:{contract_version:1,workspace_id:'workspace',
+  visibility:template.is_custom === true ? 'workspace' : 'builtin',created_by_you:false,can_configure:true,
+  can_edit:template.is_custom === true,can_delete:template.is_custom === true,execution_authorized:false}, compatibility: { contract_version: 1, valid: true,
   configuration_available: true, execution_authorized: false } });
 
 it.each(['send_email', 'find_email', 'if_email_available', 'has_data_in_column'])('allows server-reviewed %s templates for configuration', (type) => {

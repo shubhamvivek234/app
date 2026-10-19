@@ -3,6 +3,7 @@ import SequenceCanvas from './sequence/SequenceCanvas';
 import { reviewedTemplateGraph, browserGraphValues } from '../utils/templateGraph';
 import { validSaveContext, templateInputDigest } from '../hooks/useTemplateSave';
 import { matchesGraphUpdateReceipt } from '../utils/templateGraphUpdates';
+import { storeReference, clearReference } from '../utils/templateGraphReferences';
 
 export default function TemplateGraphEditor({template,onSaved,onClose}) {
   const tree=useRef(template.tree),snapshot=useRef(null);
@@ -45,7 +46,7 @@ export default function TemplateGraphEditor({template,onSaved,onClose}) {
       if(typeof requestId!=='string'||! /^(?:[0-9a-f]{8}-)(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(requestId))throw new Error('Invalid update reference');
       const reference={contract_version:1,workspace_id:context.workspace_id,scope_digest:context.scope_digest,
         request_id:requestId,input_digest:inputDigest};
-      operation.reference=reference;submitted=true;setPhase('pending');
+      operation.reference=reference;submitted=true;storeReference(reference);setPhase('pending');
       const response = await fetch('/api/v1/outreach/sequences/template-graph-updates',{
         ...options,method:'POST',body:JSON.stringify({...reference,content_json:frozen})});
       const data = await response.json();
@@ -54,6 +55,8 @@ export default function TemplateGraphEditor({template,onSaved,onClose}) {
         || !matchesGraphUpdateReceipt(data,reference,captured)) {
         setPhase('held');return;
       }
+      clearReference(reference);
+      if(!contextCurrent()){setPhase('held');return;}
       setPhase('confirmed');onSaved(original.current,data);
     } catch {if(current()){
       if(!submitted&&contextCurrent()){flight.current=null;setPhase('editing');setError('Could not prepare this update. Review the sequence and retry.');}
@@ -81,6 +84,8 @@ export default function TemplateGraphEditor({template,onSaved,onClose}) {
       const data=await response.json();
       if(!current() || response.ok!==true || response.status!==200
         || !matchesGraphUpdateReceipt(data,operation.reference,operation.captured))return;
+      clearReference(operation.reference);
+      if(!current())return;
       confirmed=true;setPhase('confirmed');onSaved(original.current,data,{historical:true});
     } catch { /* Unknown/missing status retains the original reference; no replay. */ }
     finally {refreshing.current=false;if(mounted.current&&!confirmed)setPhase('held');}
@@ -98,7 +103,7 @@ export default function TemplateGraphEditor({template,onSaved,onClose}) {
     {['held','checking'].includes(phase) && <div role="alert" className="mt-3 text-amber-800">
       <p>Earlier sequence update is unconfirmed. Check the original update status before another edit.</p>
       <p>This confirms the original update, not the current template. Missing status stays unconfirmed; your edit will not be replayed.</p>
-      <p>Keep this view open. This update reference is retained only in this view.</p>
+      <p>The request reference is retained in this browser tab when storage is available. After a reload, check its saved status in Templates. The edited sequence is not retained.</p>
       <button type="button" disabled={phase==='checking'||!flight.current?.reference} onClick={refresh} className="mt-2 font-semibold">Check original sequence update status</button>
     </div>}
     {phase==='preparing' && <p role="status" className="mt-3">Preparing reviewed template sequence…</p>}

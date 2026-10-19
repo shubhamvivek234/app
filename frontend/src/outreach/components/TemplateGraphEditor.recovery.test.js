@@ -4,6 +4,7 @@ import {TextEncoder} from 'util';
 import TemplateGraphEditor from './TemplateGraphEditor';
 import {reviewedTemplateGraph} from '../utils/templateGraph';
 import {matchesGraphUpdateReceipt} from '../utils/templateGraphUpdates';
+import {STORAGE_KEY,readReferences,storeReference} from '../utils/templateGraphReferences';
 
 jest.mock('./sequence/SequenceCanvas',()=>{const R=require('react');return ({templateTree,onRegisterTemplateSnapshot})=>{
   R.useEffect(()=>{onRegisterTemplateSnapshot(()=>global.__graphDraft||{nodes:templateTree,edges:[],tree:templateTree});return()=>onRegisterTemplateSnapshot(null);},[templateTree,onRegisterTemplateSnapshot]);
@@ -43,7 +44,7 @@ it('freezes original reviewed input, uses one UUID and confirms only a minimal e
   expect(global.fetch.mock.calls.map(([url])=>url)).toEqual(['/api/v1/outreach/sequences/template-graph-updates/context','/api/v1/outreach/sequences/template-graph-updates']);
   expect(JSON.parse(original.content_json)).toEqual({...reviewedTemplateGraph(row()),template_id:row().id,...global.__graphDraft});
   expect(global.crypto.randomUUID).toHaveBeenCalledTimes(1);expect(saved).toHaveBeenCalledTimes(1);
-  expect(sessionStorage.length).toBe(0);expect(original.scope_digest).not.toBe(JSON.parse(original.content_json).scope_digest);
+  expect(readReferences()).toEqual([]);expect(original.scope_digest).not.toBe(JSON.parse(original.content_json).scope_digest);
 });
 
 it.each(['network','202','201','wrong_input','wrong_native','wrong_revision','extra','malformed'])('unknown %s can recover only original status without POST replay',async(fault)=>{
@@ -95,6 +96,25 @@ it('receipt matcher denies missing native proof and invented content',()=>{
   expect(matchesGraphUpdateReceipt(receipt(body),body,captured)).toBe(true);
   expect(matchesGraphUpdateReceipt({...receipt(body),name:'Other'},body,captured)).toBe(false);
   expect(matchesGraphUpdateReceipt({...receipt(body),review_scope_digest:'bad'},body,captured)).toBe(false);
+});
+
+it('writes a locator before POST without retaining the graph',async()=>{
+  post=async body=>{expect(readReferences()[0].request_id).toBe(body.request_id);
+    expect(sessionStorage.getItem(STORAGE_KEY)).not.toContain('nodes');throw Error('lost');};
+  await mount();await act(async()=>button('Save template sequence').click());expect(readReferences()).toHaveLength(1);
+});
+it('blocked storage prevents graph transport',async()=>{
+  const native=Storage.prototype.setItem;const spy=jest.spyOn(Storage.prototype,'setItem').mockImplementation(function(key,value){
+    if(key===STORAGE_KEY)throw Error('blocked');return native.call(this,key,value);});
+  try {await mount();await act(async()=>button('Save template sequence').click());
+    expect(original).toBeNull();expect(saved).not.toHaveBeenCalled();expect(button('Cancel').disabled).toBe(true);
+  } finally {spy.mockRestore();}
+});
+it('competing original admitted during hashing prevents another graph POST',async()=>{
+  global.crypto.subtle.digest=jest.fn(async()=>{storeReference({contract_version:1,workspace_id:context.workspace_id,
+    scope_digest:context.scope_digest,request_id:'11111111-1111-1111-1111-111111111111',input_digest:'a'.repeat(64)});
+    return new Uint8Array(32).buffer;});
+  await mount();await act(async()=>button('Save template sequence').click());expect(original).toBeNull();expect(readReferences()).toHaveLength(1);
 });
 
 it('normal token refresh can check the same original scope using current credentials',async()=>{

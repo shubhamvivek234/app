@@ -20,6 +20,7 @@ from outreach.core.suppression import SuppressionUnavailable, mutate_suppression
 from outreach.core.template_governance import review_scope, template_review, authorize_create
 from outreach.core.lead_tags import unique_resource
 from outreach.core.workspace_scope import workspace_scope
+from outreach.core.template_revision_checkpoints import append_creation_checkpoint
 
 UUID_PATTERN = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 HEX_PATTERN = r'[0-9a-f]{64}'
@@ -145,12 +146,15 @@ the browser can explicitly read status without replaying this callback.
         await current.outreach_templates.insert_one(deepcopy(prepared))
         stored = await current.outreach_templates.find_one({**workspace_scope(workspace), '_id': prepared['_id']})
         review = template_review(stored, workspace)
-        if review != expected_review:
+        if stored is None or BSON.encode(stored) != BSON.encode(prepared) or review != expected_review:
             raise HTTPException(503, 'Stored template needs review; keep this save reference')
+        now = datetime.now(timezone.utc)
+        timestamp = now.replace(microsecond=now.microsecond // 1000 * 1000)
+        await append_creation_checkpoint(current, stored, actor, timestamp)
         row = {**scope, 'contract_version': 1, 'input_digest': digest, 'status': 'saved',
             'template_id': prepared['id'], 'template_revision': 1,
             'template_identity_digest': review['identity_digest'], 'template_review_digest': review['review_digest'],
-            'created_at': datetime.now(timezone.utc)}
+            'created_at': timestamp}
         await current.outreach_template_saves.insert_one(row)
         stored_receipt = await current.outreach_template_saves.find_one({**scope, **workspace_scope(workspace)})
         receipt = public_receipt(stored_receipt, scope)

@@ -1,5 +1,12 @@
 // Original-operation receipts establish a historical update, not current content.
+import { validHistoricalMetadataReceipt } from './templateMetadataUpdates';
 const digest=value=>typeof value==='string'&&/^[0-9a-f]{64}$/.test(value);
+export function validHistoricalGraphReceipt(receipt, reference) {
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt) || !digest(receipt.graph_digest)
+    || Object.keys(receipt).length !== 14) return false;
+  const { graph_digest, ...metadata } = receipt;
+  return validHistoricalMetadataReceipt(metadata, reference);
+}
 export function matchesGraphUpdateReceipt(receipt,reference,original) {
   if(!receipt || typeof receipt!=='object' || Array.isArray(receipt) || (!digest(receipt.new_review_digest)||!digest(receipt.graph_digest)))return false;
   const {content_json,...locator}=reference;

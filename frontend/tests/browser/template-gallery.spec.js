@@ -1,6 +1,8 @@
 const { test, expect } = require('@playwright/test');
 
 const template = () => ({ id: 'custom-email', name: 'Email follow-up', description: 'Synthetic email starter',
+  workspace_access:{contract_version:1,workspace_id:'workspace',visibility:'builtin',created_by_you:false,
+    can_configure:true,can_edit:false,can_delete:false,execution_authorized:false},
   nodes: [{ id: 'email', type: 'send_email', delay_hours: 24, config: { subject: 'Hello', body: 'Hello {{first_name}}' } }],
   edges: [], tree: [{ id: 'email', type: 'send_email', delay_hours: 24, config: { subject: 'Hello', body: 'Hello {{first_name}}' } }],
   compatibility: { contract_version: 1, valid: true, configuration_available: true, execution_authorized: false } });
@@ -47,4 +49,45 @@ test('claimed compatibility cannot substitute a missing visual graph', async ({p
   await expect(page.getByRole('button',{name:'Unavailable',exact:true})).toBeDisabled();
   await expect(page.getByRole('cell').filter({hasText:'Graph needs review'})).toBeVisible();
   expect(writes).toEqual([]);
+});
+
+const shared = () => {
+  const row = template();
+  const review={contract_version:1,reviewable:true,revision:0,workspace_id:'workspace',review_digest:'a'.repeat(64),
+    identity_digest:'b'.repeat(64),scope_digest:'c'.repeat(64),update_authorized:false,deletion_authorized:false,execution_authorized:false};
+  return {...row,id:'tpl_custom_012345abcd',is_custom:true,metadata_review:{...review},graph_review:{...review},deletion_review:{...review},
+    workspace_access:{...row.workspace_access,visibility:'workspace',created_by_you:true,can_edit:true}};
+};
+
+test('editor sees workspace creator attribution without administrator deletion controls',async({page})=>{
+  const row=shared();const writes=await setup(page,route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify([row])}));
+  await expect(page.getByText('Workspace template · Saved by you',{exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Use',exact:true})).toBeEnabled();
+  await expect(page.getByRole('button',{name:'Edit template sequence Email follow-up',exact:true})).toBeEnabled();
+  await expect(page.getByRole('button',{name:'Delete template Email follow-up',exact:true})).toBeDisabled();
+  await page.getByRole('button',{name:'Edit template details Email follow-up',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Save details',exact:true})).toBeVisible();expect(writes).toEqual([]);
+});
+
+test('viewer inspects workspace catalog while all template mutation controls remain disabled',async({page})=>{
+  const row=shared();Object.assign(row.workspace_access,{can_configure:false,can_edit:false});
+  const writes=await setup(page,route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify([row])}));
+  await expect(page.getByText('Workspace template · Saved by you',{exact:true})).toBeVisible();
+  await expect(page.getByText('Ready to configure',{exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'View only',exact:true})).toBeDisabled();
+  for(const action of ['Edit template sequence','Edit template details','Delete template']) {
+    await expect(page.getByRole('button',{name:action+' Email follow-up',exact:true})).toBeDisabled();
+  }
+  expect(writes).toEqual([]);
+  Object.assign(row.workspace_access,{can_configure:true,can_edit:true});
+  await page.getByRole('button',{name:'Reload templates',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Use',exact:true})).toBeEnabled();
+  await expect(page.getByRole('button',{name:'Delete template Email follow-up',exact:true})).toBeDisabled();expect(writes).toEqual([]);
+});
+
+test('older catalog without role observation stays visible but cannot start a draft',async({page})=>{
+  const row=template();delete row.workspace_access;
+  const writes=await setup(page,route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify([row])}));
+  await expect(page.getByText('Access needs review',{exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'View only',exact:true})).toBeDisabled();expect(writes).toEqual([]);
 });

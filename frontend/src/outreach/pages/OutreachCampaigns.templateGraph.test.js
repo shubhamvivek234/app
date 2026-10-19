@@ -3,8 +3,12 @@ import {createRoot} from 'react-dom/client';
 import {TextEncoder} from 'util';
 import {toast} from 'sonner';
 import OutreachCampaigns from './OutreachCampaigns';
+import {STORAGE_KEY,storeReference,readReferences} from '../utils/templateGraphReferences';
+import {storeReference as storeMetadataReference,readReferences as readMetadataReferences} from '../utils/templateMetadataReferences';
 jest.mock('sonner',()=>({toast:{success:jest.fn(),error:jest.fn()}}));
 const record=()=>({id:'tpl_custom_012345abcd',is_custom:true,name:'Starter',description:'Original',
+  workspace_access:{contract_version:1,workspace_id:'workspace',visibility:'workspace',created_by_you:false,
+    can_configure:true,can_edit:true,can_delete:true,execution_authorized:false},
   nodes:[{id:'root',type:'visit_profile',title:'Original visit',delay_hours:5,config:{}}],edges:[],tree:[{id:'root',type:'visit_profile',title:'Original visit',delay_hours:5,config:{}}],
   compatibility:{contract_version:1,valid:true,configuration_available:true,execution_authorized:false},
   deletion_review:{contract_version:1,reviewable:true,deletion_authorized:false,execution_authorized:false,
@@ -81,4 +85,43 @@ it('actual latest canvas delay edits are frozen into whole-operation nodes and t
   const frozen=JSON.parse(body.content_json);
   expect(frozen.tree[0].delay_hours).toBe(9);expect(frozen.nodes[0].delay_hours).toBe(9);
   expect(toast.success).toHaveBeenCalledWith('Template sequence updated');
+});
+
+const locator=()=>({contract_version:1,workspace_id:context.workspace_id,scope_digest:context.scope_digest,
+  request_id:'01234567-89ab-cdef-0123-456789abcdef',input_digest:'0'.repeat(64)});
+const storedReceipt=()=>({...locator(),status:'updated',template_id:record().id,revision:0,
+  review_digest:'a'.repeat(64),identity_digest:'b'.repeat(64),review_scope_digest:'c'.repeat(64),new_revision:1,
+  new_review_digest:'d'.repeat(64),graph_digest:'e'.repeat(64)});
+it('lost graph update survives remount with explicit current-context GET only',async()=>{
+  post=async()=>{throw Error('lost');};await open();await save();expect(readReferences()).toEqual([locator()]);
+  expect(sessionStorage.getItem(STORAGE_KEY)).not.toContain('Original visit');
+  await act(async()=>root.unmount());root=createRoot(container);await open();expect(button('Use').disabled).toBe(true);
+  catalog=async()=>reply([{...record(),name:'Replacement'}]);
+  await act(async()=>{button('Check saved sequence update status').click();button('Check saved sequence update status').click();});
+  expect(readReferences()).toEqual([]);expect(toast.success).toHaveBeenCalledWith('Original template sequence update confirmed');
+  expect(container.querySelector('[aria-label="Edit template sequence Replacement"]').disabled).toBe(false);
+  expect(global.fetch.mock.calls.filter(([,opts])=>opts.method==='POST')).toHaveLength(1);
+});
+it.each([404,403,202,503])('saved graph status%s holds all template mutations',async(code)=>{
+  storeReference(locator());status=async()=>reply({},code);await open();
+  await act(async()=>button('Check saved sequence update status').click());
+  expect(readReferences()).toEqual([locator()]);expect(edit().disabled).toBe(true);expect(button('Use').disabled).toBe(true);
+  expect(container.querySelector('[aria-label="Delete template Starter"]').disabled).toBe(true);
+  expect(global.fetch.mock.calls.every(([,opts])=>opts.method!=='POST')).toBe(true);
+});
+it('metadata and graph locators recover independently and cannot clear each other',async()=>{
+  storeReference(locator());const metadata={...locator(),scope_digest:'2'.repeat(64)};storeMetadataReference(metadata);
+  status=async()=>reply(storedReceipt());await open();await act(async()=>button('Check saved sequence update status').click());
+  expect(readReferences()).toEqual([]);expect(readMetadataReferences()).toEqual([metadata]);expect(button('Use').disabled).toBe(true);
+});
+it('corrupt graph storage denies actions without clearing the original bytes',async()=>{
+  sessionStorage.setItem(STORAGE_KEY,'bad');await open();await act(async()=>button('Check saved sequence update status').click());
+  expect(edit().disabled).toBe(true);expect(sessionStorage.getItem(STORAGE_KEY)).toBe('bad');
+});
+it('a newer same-scope UUID is preserved and recoverable after a stale receipt',async()=>{
+  storeReference(locator());const later={...locator(),request_id:'11111111-1111-1111-1111-111111111111',input_digest:'1'.repeat(64)};
+  status=async()=>{sessionStorage.setItem(STORAGE_KEY,JSON.stringify({contract_version:1,references:[later]}));return reply(storedReceipt());};
+  await open();await act(async()=>button('Check saved sequence update status').click());expect(readReferences()).toEqual([later]);
+  status=async()=>reply({...storedReceipt(),...later});await act(async()=>button('Check saved sequence update status').click());
+  expect(readReferences()).toEqual([]);expect(global.fetch.mock.calls.at(-2)[0]).toContain(later.request_id);
 });
