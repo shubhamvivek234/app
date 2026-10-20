@@ -86,7 +86,10 @@ const normalizeSchedule = (scheduleData) => {
     });
   }
   if (Array.isArray(days)) {
-    return defaults.map((day, index) => ({ ...day, enabled: days.includes(index === 0 ? 6 : index - 1) }));
+    return defaults.map((day, index) => ({
+      ...day, enabled: days.includes(index === 0 ? 6 : index - 1),
+      ranges: [{ start: formatTimeLabel(scheduleData.start_time || '09:00'), end: formatTimeLabel(scheduleData.end_time || '17:00') }],
+    }));
   }
   if (scheduleData?.start_time || scheduleData?.end_time) {
     return defaults.map((day, index) => ({
@@ -379,7 +382,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
             if (data.schedule) setSchedule(normalizeSchedule(data.schedule));
             if (data.schedule?.timezone) setTimezone(data.schedule.timezone);
             if (data.limits) setLimits(data.limits);
-            if (data.sender_account_ids?.length) setSelectedSenders(data.sender_account_ids);
+            setSelectedSenders(Array.isArray(data.sender_account_ids) ? data.sender_account_ids : []);
             if (initialStep) setCurrentStep(initialStep);
             else if (data.draft_step) setCurrentStep(data.draft_step);
           }
@@ -544,6 +547,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
 
   useEffect(() => {
     // Fetch available senders
+    let cancelled = false;
     const fetchSenders = async () => {
       setSenderError('');
       try {
@@ -553,23 +557,26 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
           headers: { Authorization: token ? `Bearer ${token}` : '' },
         });
         const data = await res.json().catch(() => ({}));
+        if (cancelled || localStorage.getItem('token') !== token) return;
         if (!res.ok) throw new Error(data.detail || 'LinkedIn senders could not be loaded.');
         if (!Array.isArray(data)) throw new Error('LinkedIn senders returned an invalid response.');
         setSenders(data);
         const activeAccounts = data.filter((account) => account.status === 'active');
-        const activeIds = new Set(activeAccounts.map((account) => account.id));
         setSelectedSenders((current) => {
-          const stillActive = current.filter((id) => activeIds.has(id));
-          return stillActive.length || !activeAccounts.length ? stillActive : [activeAccounts[0].id];
+          // Existing assignments require an explicit change, even if a sender is unavailable.
+          if (campaignId && !['new', 'new_campaign'].includes(campaignId)) return current;
+          return current.length || !activeAccounts.length ? current : [activeAccounts[0].id];
         });
       } catch (err) {
+        if (cancelled) return;
         console.error('Failed to fetch senders:', err);
         setSenderError(err.message || 'LinkedIn senders could not be loaded.');
       }
     };
     fetchSenders();
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [senderRetryKey]);
+  }, [senderRetryKey, campaignId]);
 
   const handleSaveAsTemplate = async () => {
     const intendedCampaignId = activeCampaignId;
@@ -976,6 +983,16 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
 
                 {/* Accounts Card */}
                 <div className="rounded-2xl border border-gray-200 bg-white p-7 shadow-xs">
+                  {selectedSenders.some((id) => !senders.some((sender) => sender.id === id && sender.status === 'active')) && (
+                    <div role="alert" className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                      Previously selected senders are unavailable. Reconnect them or explicitly change the selection before launching.
+                      {selectedSenders.filter((id) => !senders.some((sender) => sender.id === id)).map((id) => (
+                        <button key={id} type="button" aria-label={`Remove unavailable sender ${id}`}
+                          onClick={() => setSelectedSenders((current) => current.filter((senderId) => senderId !== id))}
+                          className="ml-2 font-semibold underline">Remove unavailable sender</button>
+                      ))}
+                    </div>
+                  )}
                   {senderError && (
                     <div role="alert" className="mb-4 flex items-center justify-between gap-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
                       <span>{senderError}</span>
@@ -1013,7 +1030,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                               <input
                                 type="checkbox"
                                 checked={isChecked}
-                                disabled={!isActive}
+                                disabled={!isActive && !isChecked}
                                 onChange={(e) => {
                                   if (e.target.checked) setSelectedSenders((current) => [...new Set([...current, s.id])]);
                                   else setSelectedSenders((current) => current.filter((id) => id !== s.id));

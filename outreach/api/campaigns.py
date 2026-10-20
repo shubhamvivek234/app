@@ -345,10 +345,24 @@ async def auto_draft_campaign(
     workspace_id = _workspace_id(current_user)
 
     if req.campaign_id:
-        existing = await db.outreach_campaigns.find_one(_campaign_filter(req.campaign_id, current_user))
+        draft_filter = {**_campaign_filter(req.campaign_id, current_user),
+                        **workspace_scope(workspace_id), 'id.0': {'$exists': False}}
+        existing = await db.outreach_campaigns.find_one(draft_filter)
         if existing:
-            if existing.get("status") in {CampaignStatus.ACTIVE, CampaignStatus.WARMING_UP}:
-                raise HTTPException(status_code=409, detail="Pause the campaign before editing its draft settings")
+            if existing.get('status') not in {CampaignStatus.DRAFT, CampaignStatus.PAUSED}:
+                raise HTTPException(status_code=409, detail="Only draft or paused campaigns can be edited")
+            revision = existing.get('authorization_revision', 0)
+            if type(revision) is not int or revision < 0:
+                raise HTTPException(status_code=409, detail="Campaign authorization requires review before editing")
+            claim_until = existing.get('launch_claim_expires_at')
+            if claim_until is not None:
+                if not isinstance(claim_until, datetime):
+                    raise HTTPException(status_code=409, detail="Campaign activation ownership requires review before editing")
+                deadline = claim_until if claim_until.tzinfo else claim_until.replace(tzinfo=timezone.utc)
+                if deadline > datetime.now(timezone.utc):
+                    raise HTTPException(status_code=409, detail="Wait for the current campaign launch outcome before editing")
+            elif existing.get('launch_claim_token'):
+                raise HTTPException(status_code=409, detail="Campaign activation ownership requires review before editing")
             updates: dict[str, Any] = {
                 "updated_at": datetime.now(timezone.utc),
             }
@@ -367,8 +381,20 @@ async def auto_draft_campaign(
             if req.limits is not None:
                 updates["limits"] = req.limits if isinstance(req.limits, dict) else req.limits.model_dump()
 
-            await db.outreach_campaigns.update_one(_campaign_filter(req.campaign_id, current_user), {"$set": updates})
-            doc = await db.outreach_campaigns.find_one(_campaign_filter(req.campaign_id, current_user))
+            # The UI uses auto-draft for settings too. Match the observed native
+            # record and authority so a suspended save cannot edit a later active
+            # campaign or race an intake/sequence change and retain its revision.
+            observed = {**draft_filter, 'status': existing['status']}
+            if '_id' in existing:
+                observed['_id'] = existing['_id']
+            for field in ('authorization_revision', 'lead_admission_revision',
+                          'launch_claim_token', 'launch_claim_expires_at'):
+                observed[field] = existing[field] if field in existing else {'$exists': False}
+            result = await db.outreach_campaigns.update_one(
+                observed, {'$set': updates, '$inc': {'authorization_revision': 1}})
+            if getattr(result, 'matched_count', 0) != 1:
+                raise HTTPException(status_code=409, detail="Campaign changed while editing; reload it before saving")
+            doc = await db.outreach_campaigns.find_one(draft_filter)
             if doc:
                 doc.pop("_id", None)
                 return doc
@@ -387,6 +413,7 @@ async def auto_draft_campaign(
         "user_id": user_id,
         "name": default_name,
         "status": CampaignStatus.DRAFT.value,
+        "authorization_revision": 0,
         "sender_account_ids": req.sender_account_ids or [],
         "schedule": schedule_data,
         "limits": limits_data,

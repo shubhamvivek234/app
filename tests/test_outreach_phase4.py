@@ -83,7 +83,9 @@ async def test_sequence_api_endpoints():
     mock_db.outreach_sequences.update_one = AsyncMock()
     mock_db.outreach_campaigns.find_one = AsyncMock(return_value={"id": "camp_xyz", "workspace_id": "u1", "status": "draft"})
 
-    user = {"user_id": "u1"}
+    user = {"user_id": "u1", "firebase_uid": "synthetic-u1"}
+    from tests.template_access_fixtures import seed_catalog_access
+    seed_catalog_access(mock_db, user['user_id'], 'u1', user['firebase_uid'])
 
     # 1. Get templates
     cursor = MagicMock()

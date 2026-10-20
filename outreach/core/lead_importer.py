@@ -166,6 +166,44 @@ def extract_candidate_keys(ident: LeadIdentifiers) -> set[str]:
     return keys
 
 
+def intake_identifiers(lead: dict[str, Any]) -> tuple[LeadIdentifiers, set[str], LeadIdentifiers]:
+    """Keep saved aliases and canonical current identities distinct through storage."""
+    current = build_lead_identifiers(
+        raw_url=lead.get("linkedin_url") or lead.get("raw_url"), email=lead.get("email"),
+        member_urn=lead.get("member_urn") or lead.get("linkedin_urn"),
+        sales_lead_urn=lead.get("sales_lead_urn"), vanity_name=lead.get("vanity_name"))
+    saved = lead.get("identifiers")
+    if isinstance(saved, dict):
+        saved = LeadIdentifiers(**saved)
+    if not isinstance(saved, LeadIdentifiers):
+        saved = LeadIdentifiers()
+    saved = LeadIdentifiers(**{
+        key: (normalize_linkedin_url(value) or None) if key == "normalized_url" else
+        (value.strip().lower() or None) if key in {"email", "vanity_name"} else (value.strip() or None)
+        for key, value in saved.model_dump().items() if value
+    })
+    # Saved identities can still be useful after profile discovery changes a URL.
+    # Empty/partial saved values must not erase the current URL/email identity.
+    identifiers = LeadIdentifiers(**{key: value or current.model_dump()[key]
+        for key, value in saved.model_dump().items()})
+    keys = extract_candidate_keys(identifiers) | extract_candidate_keys(current)
+    for field, argument in (("vanity_name", "vanity_name"), ("linkedin_urn", "member_urn")):
+        if isinstance(lead.get(field), str) and lead[field].strip():
+            keys.update(extract_candidate_keys(build_lead_identifiers(**{argument: lead[field]})))
+    return identifiers, keys, current
+
+
+def intake_names(lead: dict[str, Any]) -> tuple[str, str, str]:
+    """An explicit empty edited name must not resurrect its original value."""
+    first = (lead.get("first_name") or "").strip()
+    raw = lead.get("raw_first_name")
+    raw = raw if isinstance(raw, str) else first
+    edited = lead.get("cleaned_first_name")
+    cleaned = edited.strip() if isinstance(edited, str) else clean_first_name(raw)
+    effective = cleaned if isinstance(edited, str) else cleaned or first
+    return raw, cleaned, effective
+
+
 async def check_compound_suppression(
     workspace_id: str,
     candidates: list[dict[str, Any] | LeadIdentifiers],
@@ -190,10 +228,8 @@ async def check_compound_suppression(
         if isinstance(c, LeadIdentifiers):
             candidate_ids.append(c)
         elif isinstance(c, dict):
-            if "identifiers" in c and isinstance(c["identifiers"], dict):
-                candidate_ids.append(LeadIdentifiers(**c["identifiers"]))
-            elif "identifiers" in c and isinstance(c["identifiers"], LeadIdentifiers):
-                candidate_ids.append(c["identifiers"])
+            if isinstance(c.get("identifiers"), (dict, LeadIdentifiers)):
+                candidate_ids.append(intake_identifiers(c)[0])
             else:
                 candidate_ids.append(build_lead_identifiers(
                     raw_url=c.get("linkedin_url") or c.get("raw_url"),
@@ -718,19 +754,17 @@ class LeadImporter:
             )
 
         # 3. Fetch Do-Not-Contact records (compound)
-        dnc_matches = {}
-        if skip_do_not_contact:
-            dnc_matches = await check_compound_suppression(
-                workspace_id=workspace_id,
-                candidates=leads,
-                db=db,
-                collection_name="outreach_do_not_contact",
-                max_matches=_match_limit,
-            )
+        dnc_matches = await check_compound_suppression(
+            workspace_id=workspace_id,
+            candidates=leads,
+            db=db,
+            collection_name="outreach_do_not_contact",
+            max_matches=_match_limit,
+        )
 
         email_matches = await check_compound_suppression(
             workspace_id=workspace_id, candidates=leads, db=db, collection_name="outreach_email_suppressions",
-            max_matches=_match_limit) if _match_limit is not None else {}
+            max_matches=_match_limit)
 
         # 4. Fetch Withdrawn Invites within 21-day reinvite block window (compound)
         now_dt = datetime.now(timezone.utc)
@@ -749,24 +783,10 @@ class LeadImporter:
         for idx, lead in enumerate(leads, start=1):
             raw_url = lead.get("raw_url") or lead.get("linkedin_url") or ""
             cleaned_url = normalize_linkedin_url(lead.get("linkedin_url") or raw_url)
-            first_name = (lead.get("first_name") or "").strip()
-            raw_first = lead.get("raw_first_name") or first_name
-            cleaned_first = lead.get("cleaned_first_name") or clean_first_name(raw_first)
-            vanity = lead.get("vanity_name") or extract_vanity_name(cleaned_url)
+            raw_first, cleaned_first, first_name = intake_names(lead)
+            vanity = (lead.get("vanity_name") or extract_vanity_name(cleaned_url)).strip().lower()
 
-            # Build candidate identifiers
-            if "identifiers" in lead and isinstance(lead["identifiers"], dict):
-                ident = LeadIdentifiers(**lead["identifiers"])
-            else:
-                ident = build_lead_identifiers(
-                    raw_url=cleaned_url or raw_url,
-                    email=lead.get("email"),
-                    member_urn=lead.get("member_urn") or lead.get("linkedin_urn"),
-                    sales_lead_urn=lead.get("sales_lead_urn"),
-                    vanity_name=vanity,
-                )
-
-            cand_keys = extract_candidate_keys(ident)
+            ident, cand_keys, current_ident = intake_identifiers(lead)
 
             status = "valid"
             rejection_code = None
@@ -776,7 +796,7 @@ class LeadImporter:
                 status = "rejected"
                 rejection_code = "invalid_url"
                 error_reason = f"Invalid LinkedIn profile URL '{raw_url}'. Expected format: https://linkedin.com/in/username"
-            elif require_name and not (cleaned_first or first_name):
+            elif require_name and not first_name:
                 status = "rejected"
                 rejection_code = "missing_name"
                 error_reason = "First name is required. Specify 'URL, First, Last' or supply a fallback name."
@@ -794,7 +814,7 @@ class LeadImporter:
                 rejection_code = "duplicate_contacted"
                 match_info = cross_campaign_dupes[idx - 1]
                 error_reason = f"Lead was already contacted in another workspace campaign (matched by {match_info.get('matched_by', 'identifier')})"
-            elif skip_do_not_contact and (idx - 1) in dnc_matches:
+            elif (idx - 1) in dnc_matches:
                 status = "rejected"
                 rejection_code = "do_not_contact"
                 match_info = dnc_matches[idx - 1]
@@ -818,17 +838,21 @@ class LeadImporter:
                 "vanity_name": vanity,
                 "raw_first_name": raw_first,
                 "cleaned_first_name": cleaned_first,
-                "first_name": cleaned_first or raw_first,
+                "first_name": first_name,
                 "last_name": lead.get("last_name", ""),
                 "company_name": lead.get("company_name", ""),
                 "job_title": lead.get("job_title", ""),
-                "email": lead.get("email"),
+                "location": lead.get("location", ""),
+                "email": (lead.get("email") or "").strip().lower() or None,
                 "phone": lead.get("phone"),
                 "status": status,
                 "rejection_code": rejection_code,
                 "error_reason": error_reason,
                 "custom_variables": lead.get("custom_variables", {}),
                 "identifiers": ident.model_dump(),
+                "member_urn": current_ident.member_urn,
+                "linkedin_urn": (lead.get("linkedin_urn") or current_ident.member_urn or "").strip() or None,
+                "sales_lead_urn": current_ident.sales_lead_urn,
             })
 
         valid_count = sum(1 for r in rows if r["status"] == "valid")
@@ -1037,23 +1061,10 @@ class LeadImporter:
         for idx, lead in enumerate(leads):
             raw_url = lead.get("raw_url") or lead.get("linkedin_url") or ""
             url = normalize_linkedin_url(lead.get("linkedin_url", "") or raw_url)
-            first_name = (lead.get("first_name") or "").strip()
-            raw_first = lead.get("raw_first_name") or first_name
-            cleaned_first = lead.get("cleaned_first_name") or clean_first_name(raw_first)
-            vanity = lead.get("vanity_name") or extract_vanity_name(url)
+            raw_first, cleaned_first, first_name = intake_names(lead)
+            vanity = (lead.get("vanity_name") or extract_vanity_name(url)).strip().lower()
 
-            if "identifiers" in lead and isinstance(lead["identifiers"], dict):
-                ident = LeadIdentifiers(**lead["identifiers"])
-            else:
-                ident = build_lead_identifiers(
-                    raw_url=url or raw_url,
-                    email=lead.get("email"),
-                    member_urn=lead.get("member_urn") or lead.get("linkedin_urn"),
-                    sales_lead_urn=lead.get("sales_lead_urn"),
-                    vanity_name=vanity,
-                )
-
-            cand_keys = extract_candidate_keys(ident)
+            ident, cand_keys, current_ident = intake_identifiers(lead)
 
             if not url:
                 skipped_count += 1
@@ -1065,7 +1076,7 @@ class LeadImporter:
                 })
                 continue
 
-            if require_name and not (cleaned_first or first_name):
+            if require_name and not first_name:
                 skipped_count += 1
                 reject({
                     "linkedin_url": url,
@@ -1156,16 +1167,16 @@ class LeadImporter:
                 current_node_id=root_node_id,
                 next_action_due_at=root_due,
                 linkedin_url=url,
-                linkedin_urn=ident.member_urn or lead.get("linkedin_urn"),
+                linkedin_urn=(lead.get("linkedin_urn") or current_ident.member_urn or ident.member_urn or "").strip() or None,
                 identifiers=ident,
                 raw_first_name=raw_first,
                 cleaned_first_name=cleaned_first,
-                first_name=cleaned_first or raw_first or first_name,
+                first_name=first_name,
                 last_name=lead.get("last_name", ""),
                 company_name=lead.get("company_name", ""),
                 job_title=lead.get("job_title", ""),
                 location=lead.get("location", ""),
-                email=lead.get("email"),
+                email=(lead.get("email") or "").strip().lower() or None,
                 phone=lead.get("phone"),
                 source=source,
                 source_metadata=meta,
@@ -1173,6 +1184,10 @@ class LeadImporter:
                 execution_state=LeadExecutionState.QUEUED,
                 created_at=datetime.now(timezone.utc),
             ).model_dump()
+            # The existing compound lookup reads these current fields separately
+            # from identifiers, which retains saved aliases after profile changes.
+            lead_doc.update({"member_urn": current_ident.member_urn,
+                "sales_lead_urn": current_ident.sales_lead_urn, "vanity_name": vanity or None})
 
             if active_senders:
                 lead_doc["authorized_revision"] = revision

@@ -1507,16 +1507,19 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
             {selectedStep.type === 'voice_note' && (
               <div className="space-y-4 pt-2 border-t border-gray-100">
                 <div className="flex items-center gap-2">
-                  <button className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-indigo-600 text-white shadow-2xs">
-                    Voice cloner
-                  </button>
-                  <button className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-gray-200 text-gray-600 hover:bg-gray-50">
+                  <span className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-indigo-50 text-indigo-800">
+                    Voice script
+                  </span>
+                  <button type="button" disabled title="Recording audio in the sequence editor is not available."
+                    className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-gray-50 border border-gray-200 text-gray-400 cursor-not-allowed">
                     Record audio
                   </button>
-                  <button className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-gray-200 text-gray-600 hover:bg-gray-50">
+                  <button type="button" disabled title="Audio uploads in the sequence editor are not available."
+                    className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-gray-50 border border-gray-200 text-gray-400 cursor-not-allowed">
                     Upload MP3
                   </button>
                 </div>
+                <p className="text-xs text-gray-600">Recording and uploads are unavailable here. A script alone does not create sendable audio; voice delivery needs a prepared and approved audio artifact.</p>
 
                 <div>
                   {renderEditorToolbar()}
@@ -1549,9 +1552,10 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
 
                 <div>
                   <label className="block text-xs font-bold text-gray-900 mb-1">
-                    Fallback if a variable is missing (490 characters)
+                    Fallback text (not applied by the current voice runner)
                   </label>
                   <textarea
+                    disabled
                     rows={2}
                     maxLength={490}
                     value={selectedStep.config?.fallback || ''}
@@ -1562,7 +1566,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
                         })
                       )
                     }
-                    placeholder="A version with no variables, always safe to send"
+                    placeholder="Voice fallback is unavailable; review missing variables before preparing audio."
                     className="w-full rounded-xl border border-gray-200 p-2.5 text-xs focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 resize-none"
                   />
                 </div>
@@ -1776,7 +1780,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
             {selectedStep.type === 'visit_profile' && (
               <div className="space-y-4 pt-2 border-t border-gray-100">
                 <div className="p-3 bg-indigo-50/70 border border-indigo-100 rounded-xl text-xs text-indigo-900 leading-relaxed">
-                  <strong>Profile Visit:</strong> Simulates a natural visit to the prospect's profile, triggering a notification in their LinkedIn feed and warming them up.
+                  <strong>Profile visit:</strong> Requests the lead&apos;s profile when this step runs. Browsing duration and repeat-visit skipping are unavailable; saved values below are not applied.
                 </div>
 
                 <div>
@@ -1784,6 +1788,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
                     Dwell Time & Browsing Depth
                   </label>
                   <select
+                    disabled
                     value={selectedStep.config?.dwell_mode || 'realistic'}
                     onChange={(e) =>
                       setTree((prev) =>
@@ -1794,18 +1799,19 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
                     }
                     className="w-full text-xs rounded-xl border border-gray-200 px-3 py-2 bg-white text-gray-800 font-medium focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
                   >
-                    <option value="realistic">Realistic (20–40s scroll + scan, recommended)</option>
-                    <option value="quick">Quick glance (10–15s view)</option>
-                    <option value="deep">Deep engagement (45–60s full profile & skills scan)</option>
+                    <option value="realistic">Realistic — unavailable</option>
+                    <option value="quick">Quick glance — unavailable</option>
+                    <option value="deep">Deep engagement — unavailable</option>
                   </select>
                 </div>
 
                 <div className="flex items-center justify-between p-3 rounded-xl border border-gray-100 bg-gray-50/60">
                   <div>
                     <p className="text-xs font-semibold text-gray-900">Skip if already visited</p>
-                    <p className="text-[11px] text-gray-500">Don't re-visit if viewed within the past 30 days</p>
+                    <p className="text-[11px] text-gray-500">Unavailable: the runner does not skip visits based on past activity.</p>
                   </div>
                   <input
+                    disabled
                     type="checkbox"
                     checked={selectedStep.config?.skip_if_visited ?? true}
                     onChange={(e) =>

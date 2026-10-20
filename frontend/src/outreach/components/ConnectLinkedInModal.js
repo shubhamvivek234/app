@@ -16,11 +16,17 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
   ));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [pendingJobId, setPendingJobId] = useState(null);
   const inFlight = useRef(false);
+  const contextVersion = useRef(0);
   const dialogRef = useRef(null);
   const previousFocus = useRef(null);
 
   useEffect(() => {
+    contextVersion.current += 1;
+    inFlight.current = false;
+    setLoading(false);
+    setPendingJobId(null);
     setCookieValue('');
     setLiAValue('');
     setJsessionId('');
@@ -35,6 +41,7 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
       previousFocus.current.focus();
       previousFocus.current = null;
     }
+    return () => { contextVersion.current += 1; };
   }, [isOpen, reconnectAccount?.id, reconnectAccount?.country_code]);
 
   if (!isOpen) return null;
@@ -69,76 +76,92 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
   const handleConnectCookie = async (event) => {
     event.preventDefault();
     if (inFlight.current) return;
-    if (!cookieValue.trim()) {
+    if (!pendingJobId && !cookieValue.trim()) {
       setError('Please enter your li_at session cookie.');
       return;
     }
-    if (!jsessionId.trim()) {
+    if (!pendingJobId && !jsessionId.trim()) {
       setError('Please enter your JSESSIONID cookie.');
       return;
     }
-    if (!/^[A-Z]{2}$/.test(proxyCountry)) {
+    if (!pendingJobId && !/^[A-Z]{2}$/.test(proxyCountry)) {
       setError('Enter the two-letter country code approved for your sender seat.');
       return;
     }
 
-    inFlight.current = true;
+    const version = contextVersion.current;
+    const token = localStorage.getItem('token');
+    const current = () => contextVersion.current === version && localStorage.getItem('token') === token;
+    inFlight.current = version;
     setLoading(true);
     setError(null);
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('/api/v1/outreach/accounts/connect-cookie', {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: token ? `Bearer ${token}` : '',
-        },
-        body: JSON.stringify({
-          li_at: cookieValue.trim(),
-          jsession_id: jsessionId.trim(),
-          li_a: liAValue.trim(),
-          premium_product: premiumProduct,
-          user_agent: userAgent.trim(),
-          country_code: proxyCountry,
-          ...(reconnectAccount?.id ? { reconnect_account_id: reconnectAccount.id } : {}),
-        }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(typeof data?.detail === 'string' ? data.detail : 'LinkedIn session verification failed. Please try again.');
+      let jobId = pendingJobId;
+      if (!jobId) {
+        const response = await fetch('/api/v1/outreach/accounts/connect-cookie', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: token ? `Bearer ${token}` : '',
+          },
+          body: JSON.stringify({
+            li_at: cookieValue.trim(),
+            jsession_id: jsessionId.trim(),
+            li_a: liAValue.trim(),
+            premium_product: premiumProduct,
+            user_agent: userAgent.trim(),
+            country_code: proxyCountry,
+            ...(reconnectAccount?.id ? { reconnect_account_id: reconnectAccount.id } : {}),
+          }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!current()) return;
+        if (!response.ok) {
+          throw new Error(typeof data?.detail === 'string' ? data.detail : 'LinkedIn session verification failed. Please try again.');
+        }
+        const savedStatuses = ['queued', 'running', 'finalizing', 'repairing', 'completed', 'failed', 'storage_stopped', 'repaired_stopped', 'cancelled'];
+        if (typeof data?.job_id !== 'string' || !data.job_id || !savedStatuses.includes(data.status)) {
+          throw new Error('Connection status could not be confirmed. Check your sender account before retrying.');
+        }
+        jobId = data.job_id;
+        setPendingJobId(jobId);
+        // Secrets are no longer needed in the browser after the encrypted job is saved.
+        setCookieValue('');
+        setJsessionId('');
+        setLiAValue('');
       }
-      if (!data?.job_id || data.status !== 'queued') {
-        throw new Error('LinkedIn connection was not queued. Please try again.');
-      }
-      // Secrets are no longer needed in the browser after the encrypted job is saved.
-      setCookieValue('');
-      setJsessionId('');
-      setLiAValue('');
       for (let attempt = 0; attempt < 45; attempt += 1) {
         if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 2000));
-        const jobResponse = await fetch(`/api/v1/outreach/accounts/connection-jobs/${encodeURIComponent(data.job_id)}`, {
+        if (!current()) return;
+        const jobResponse = await fetch(`/api/v1/outreach/accounts/connection-jobs/${encodeURIComponent(jobId)}`, {
           credentials: 'include',
           headers: { Authorization: token ? `Bearer ${token}` : '' },
         });
         const job = await jobResponse.json().catch(() => ({}));
-        if (!jobResponse.ok) throw new Error(job.detail || 'Could not read sender verification status.');
-        if (job.status === 'failed') throw new Error(job.error || 'LinkedIn session verification failed.');
-        if (['storage_stopped', 'repaired_stopped', 'cancelled'].includes(job.status)) {
+        if (!current()) return;
+        if (!jobResponse.ok) throw new Error(typeof job?.detail === 'string' ? job.detail : 'Could not read sender verification status.');
+        if (job?.status === 'failed') {
+          setPendingJobId(null);
+          throw new Error(typeof job.error === 'string' ? job.error : 'LinkedIn session verification failed.');
+        }
+        if (['storage_stopped', 'repaired_stopped', 'cancelled'].includes(job?.status)) {
           throw new Error('Sender verification was stopped. Contact support before reconnecting.');
         }
-        if (job.status === 'completed' && job.account?.id) {
+        if (job?.status === 'completed' && job.account?.id) {
           onAccountConnected?.(job.account);
           closeModal(true);
           return;
         }
       }
-      setError('Verification is still running. Close this dialog and check your sender account in a moment.');
+      setError('Verification is still running. Check verification status again, or close this dialog and refresh your sender accounts.');
     } catch (connectionError) {
-      setError(connectionError.message || 'LinkedIn session verification failed. Please try again.');
+      if (current()) setError(connectionError.message || 'LinkedIn session verification failed. Please try again.');
     } finally {
-      inFlight.current = false;
-      setLoading(false);
+      if (contextVersion.current === version) {
+        inFlight.current = false;
+        setLoading(false);
+      }
     }
   };
 
@@ -314,7 +337,7 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
               className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-[#8280f6] py-2.5 text-sm font-semibold text-white hover:bg-[#7270e6] disabled:opacity-50"
             >
               {loading && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-              {loading ? 'Verifying...' : (reconnectAccount ? 'Verify & Reconnect' : 'Verify & Connect')}
+              {loading ? 'Verifying...' : pendingJobId ? 'Check verification status' : (reconnectAccount ? 'Verify & Reconnect' : 'Verify & Connect')}
             </button>
           </div>
         </form>

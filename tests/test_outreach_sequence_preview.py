@@ -158,7 +158,9 @@ async def test_template_compatibility_inspects_without_rewriting_saved_graphs():
     row={'id':'legacy-template','nodes':nodes,'edges':edges,'workspace_id':'workspace'}
     before=deepcopy(row)
     db=MagicMock();db.outreach_templates.find.return_value.sort.return_value.to_list=AsyncMock(return_value=[row])
-    templates=await get_sequence_templates({'user_id':'actor','default_workspace_id':'workspace'},db)
+    from tests.template_access_fixtures import seed_catalog_access
+    seed_catalog_access(db, 'actor', 'workspace', 'synthetic-uid')
+    templates=await get_sequence_templates({'user_id':'actor','default_workspace_id':'workspace','firebase_uid':'synthetic-uid'},db)
     assert templates[-1]['compatibility']['valid'] is False
     assert templates[-1]['compatibility']['execution_authorized'] is False
     assert row==before and any(item['compatibility']['valid'] for item in templates[:-1])

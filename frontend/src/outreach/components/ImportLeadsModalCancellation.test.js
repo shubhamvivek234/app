@@ -107,6 +107,27 @@ describe('Search cancellation confirmation and recovery', () => {
     } else expect(container.textContent).toContain('1001 leads saved in this attempt');
   });
 
+  it.each(['Edited name', ''])('keeps staged-search edits on the job commit contract, including explicit name %p', async (name) => {
+    let committed;
+    job = { ...job, status: 'completed', leads_imported: 1 };
+    global.fetch.mockImplementation(async (url, options) => {
+      if (url.endsWith('/staged')) return response({ leads: [{ id: 'lead-1', first_name: 'Original', linkedin_url: 'https://linkedin.com/in/synthetic' }] });
+      if (url.endsWith('/commit')) { committed = JSON.parse(options.body); return response({ enrolled_count: 1 }); }
+      return response(job);
+    });
+    await act(async () => jest.advanceTimersByTime(2000));
+    await act(async () => button('Review 1').click());
+    const input = container.querySelector('input[aria-label="First name for lead #1"]');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, name);
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(button('Validate Changes')).toBeUndefined();
+    expect(button('Confirm & Ingest').disabled).toBe(false);
+    await act(async () => button('Confirm & Ingest').click());
+    expect(committed.name_overrides).toEqual({ 'lead-1': name });
+  });
+
   it('does not continue an earlier batch after the modal closes and reopens', async () => {
     const rows = Array.from({ length: 1001 }, (_, index) => ({ id: String(index), first_name: 'Person' }));
     let resolveFirst;

@@ -396,6 +396,7 @@ def concrete_routes(router):
 
 async def test_route_graph_covers_every_ordinary_route_and_preserves_auth_exceptions():
     from outreach.api import integrations, mailboxes
+    from outreach.api import sequences
     from outreach.api.dependencies import get_outreach_user
     from outreach.api.sequences import router as sequence_router
 
@@ -406,18 +407,60 @@ async def test_route_graph_covers_every_ordinary_route_and_preserves_auth_except
         r.endpoint.__name__ for r in integrations.public_router.routes
     }
     assert len(exempt) == 9
+    # These exact readers own their permission/UID/erasure transaction rather
+    # than taking an ordinary sequential outreach-context snapshot first.
+    snapshot_readers = {
+        sequences.get_template_history: '/outreach/sequences/templates/{template_id}/revision-checkpoints',
+        sequences.get_template_snapshot_content: '/outreach/sequences/templates/{template_id}/revision-checkpoints/{checkpoint_id}/content',
+    }
     for route in routes:
         calls = list(dependency_calls(route.dependant))
         guarded = any(call and call.__module__ == 'outreach.api.dependencies' for call in calls)
         if route.endpoint.__name__ in exempt:
             assert not guarded, route.path  # OAuth/state and API-key auth stay independent.
             assert get_current_user not in calls, route.path
+        elif route.endpoint in snapshot_readers:
+            assert route.path == snapshot_readers[route.endpoint] and route.methods == {'GET'}
+            assert not guarded and get_current_user in calls, route.path
         else:
             assert guarded and get_current_user in calls, route.path
     callback = next(r for r in mailboxes.router.routes if r.endpoint.__name__ == 'mailbox_oauth_callback')
     assert get_outreach_user not in list(dependency_calls(callback.dependant))
     validator = next(r for r in sequence_router.routes if r.endpoint.__name__ == 'validate_sequence')
     assert any(c and c.__module__ == 'outreach.api.dependencies' for c in dependency_calls(validator.dependant))
+
+
+@pytest.mark.parametrize('kind', ['history', 'content'])
+@pytest.mark.parametrize('signed_in', [False, True])
+async def test_snapshot_readers_keep_auth_and_delegate_to_current_guard(monkeypatch, kind, signed_in):
+    from unittest.mock import AsyncMock, MagicMock
+    from fastapi import HTTPException
+    from outreach.api import sequences
+
+    db = MagicMock()
+    reader = AsyncMock(side_effect=HTTPException(409, 'Synthetic owning-authority hold'))
+    service = sequences.template_history if kind == 'history' else sequences.template_snapshot_reads
+    monkeypatch.setattr(service, 'read_history' if kind == 'history' else 'read_content', reader)
+    current_user = {**deepcopy(USER), 'firebase_uid': 'synthetic-snapshot-reader-uid'}
+
+    async def authenticate():
+        if not signed_in:
+            raise HTTPException(401, 'Synthetic authentication required')
+        return current_user
+
+    suffix = '/checkpoint/content' if kind == 'content' else ''
+    query = {'identity_digest': 'a' * 64}
+    if kind == 'content':
+        query['history_digest'] = 'b' * 64
+    async with client_for(app_for(db, sequences.router, authenticate)) as client:
+        response = await client.get('/sequences/templates/template/revision-checkpoints' + suffix, params=query)
+    assert response.status_code == (409 if signed_in else 401)
+    if signed_in:
+        reader.assert_awaited_once()
+        assert reader.await_args.args[:5] == (db, WORKSPACE, USER_ID, current_user['firebase_uid'], 'template')
+        assert response.json()['detail'] == 'Synthetic owning-authority hold'
+    else:
+        reader.assert_not_awaited()
 
 
 @pytest.mark.parametrize('method,path', [('GET', '/outreach/overview'), ('POST', '/outreach/sequences/validate')])

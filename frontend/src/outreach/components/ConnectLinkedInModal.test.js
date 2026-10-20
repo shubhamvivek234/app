@@ -121,6 +121,55 @@ describe('LinkedIn sender session connection', () => {
     expect(container.querySelector('#linkedin-li-at').value).toBe('');
   });
 
+  it.each(['running', 'finalizing', 'repairing', 'completed'])('recovers an acknowledged %s job using its original status endpoint', async (status) => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ job_id: 'original-job', status }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', account: { id: 'sender-1' } }) });
+    const onAccountConnected = jest.fn();
+    await renderModal({ onAccountConnected });
+    await enterValue('linkedin-li-at', 'li_at=AQvalid; JSESSIONID="ajax:123"');
+    await enterValue('linkedin-proxy-country', 'IN');
+    await submit();
+    expect(onAccountConnected).toHaveBeenCalledWith({ id: 'sender-1' });
+    expect(global.fetch.mock.calls[1][0]).toBe('/api/v1/outreach/accounts/connection-jobs/original-job');
+    expect(global.fetch.mock.calls.filter(([, options]) => options.method === 'POST')).toHaveLength(1);
+  });
+
+  it('checks the same saved job after a status-read failure instead of submitting the cookies again', async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ job_id: 'saved-job', status: 'queued' }) })
+      .mockRejectedValueOnce(new Error('Status temporarily unavailable'))
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', account: { id: 'sender-1' } }) });
+    const onAccountConnected = jest.fn();
+    await renderModal({ onAccountConnected });
+    await enterValue('linkedin-li-at', 'li_at=AQvalid; JSESSIONID="ajax:123"');
+    await enterValue('linkedin-proxy-country', 'IN');
+    await submit();
+    expect(container.querySelector('button[type="submit"]').textContent).toContain('Check verification status');
+    await submit();
+    expect(onAccountConnected).toHaveBeenCalledWith({ id: 'sender-1' });
+    expect(global.fetch.mock.calls.filter(([, options]) => options.method === 'POST')).toHaveLength(1);
+    expect(global.fetch.mock.calls[2][0]).toBe('/api/v1/outreach/accounts/connection-jobs/saved-job');
+  });
+
+  it('ignores a saved connection response after the dialog context is closed', async () => {
+    let resolveConnection;
+    global.fetch = jest.fn(() => new Promise((resolve) => { resolveConnection = resolve; }));
+    const onAccountConnected = jest.fn();
+    const onClose = jest.fn();
+    await renderModal({ onClose, onAccountConnected });
+    await enterValue('linkedin-li-at', 'li_at=AQvalid; JSESSIONID="ajax:123"');
+    await enterValue('linkedin-proxy-country', 'IN');
+    await submit();
+    await renderModal({ isOpen: false, onClose, onAccountConnected });
+    await act(async () => resolveConnection({ ok: true, json: async () => ({ job_id: 'old-job', status: 'queued' }) }));
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(onAccountConnected).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    await renderModal({ onClose, onAccountConnected });
+    expect(container.querySelector('button[type="submit"]').disabled).toBe(false);
+  });
+
   it('submits the purchased proxy country instead of forcing US', async () => {
     global.fetch = jest.fn(() => Promise.resolve({ ok: true, json: async () => ({ id: 'sender-in' }) }));
     await renderModal();
@@ -186,7 +235,7 @@ describe('LinkedIn sender session connection', () => {
     await enterValue('linkedin-li-at', 'li_at=AQvalid; JSESSIONID="ajax:123"');
     await enterValue('linkedin-proxy-country', 'IN');
     await submit();
-    expect(container.querySelector('[role="alert"]').textContent).toContain('not queued');
+    expect(container.querySelector('[role="alert"]').textContent).toContain('status could not be confirmed');
     expect(onAccountConnected).not.toHaveBeenCalled();
   });
 

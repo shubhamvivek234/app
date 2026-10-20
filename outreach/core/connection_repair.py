@@ -14,6 +14,7 @@ from outreach.models import OutreachAccount
 PENDING_SECRETS = {key: "" for key in ("li_at_enc", "jsession_id_enc", "li_a_enc")}
 ACCOUNT_SECRETS = {key: "" for key in ("session_cookie_enc", "encrypted_session_cookie", "jsession_id", "li_a_enc", "li_at_enc", "jsession_id_enc")}
 ACTIVE_JOBS = ["queued", "running", "finalizing", "repairing"]
+RECONNECT_COOLDOWN_REASONS = frozenset({"rate_limited_429", "commercial_limit", "proxy_unhealthy"})
 logger = logging.getLogger(__name__)
 
 
@@ -28,6 +29,30 @@ def credential_deadline(job: dict) -> datetime | None:
         return captured  # Legacy missing custody metadata is expired by the sweep.
     deadline = start + timedelta(minutes=15)
     return min(deadline, captured) if captured else deadline
+
+
+def captured_after_disconnect(account: dict, job: dict) -> bool:
+    """Only a fresh, explicit reconnect can follow a recorded disconnect."""
+    if "connection_disconnected_at" not in account:
+        return True
+    stopped, captured = account.get("connection_disconnected_at"), job.get("custody_started_at") or job.get("created_at")
+    if not isinstance(stopped, datetime) or not isinstance(captured, datetime):
+        return False
+    return _utc(captured) > _utc(stopped)
+
+
+def verified_connection_state(account: dict, now: datetime) -> dict:
+    """A new session proves authentication, never overrides a platform hold."""
+    reason, raw_deadline = account.get("stop_reason"), account.get("cooldown_until")
+    deadline = _utc(raw_deadline) if isinstance(raw_deadline, (datetime, str)) else None
+    valid_deadline = raw_deadline is None or deadline is not None
+    elapsed = deadline is not None and deadline <= now
+    clearable = (reason is None or type(reason) is str and (
+        reason == "session_expired" or reason in RECONNECT_COOLDOWN_REASONS and elapsed))
+    if valid_deadline and (raw_deadline is None or elapsed) and clearable:
+        return {"status": "active", "stop_reason": None, "stopped_at": None,
+                "cooldown_until": None, "error_details": None}
+    return {"status": "checkpoint_detected"}
 
 
 class ConnectionRepair:
@@ -57,6 +82,8 @@ class ConnectionRepair:
             raise ValueError("Connection owner changed")
         account_scope = self.account_scope(job)
         account = await self.db.outreach_accounts.find_one(account_scope)
+        if account and not captured_after_disconnect(account, job):
+            raise ValueError("Sender was disconnected after verification was captured")
         base = account.get("credential_generation") if account else None
         if account and (account.get("is_deleted") or (job.get("reconnect") and (
                 account.get("linkedin_urn") != profile.get("linkedin_urn")
@@ -79,7 +106,8 @@ class ConnectionRepair:
             raise ValueError("Connection owner changed")
         if account:
             query = {**account_scope, "credential_generation": base, "is_deleted": {"$ne": True},
-                "connection_finalization": prior_fence if prior_fence else {"$exists": False}}
+                "connection_finalization": prior_fence if prior_fence else {"$exists": False},
+                "connection_disconnected_at": account.get("connection_disconnected_at", {"$exists": False})}
             for key in ACCOUNT_SECRETS:
                 query[key] = account[key] if key in account else {"$exists": False}
             changed = await self.db.outreach_accounts.update_one(query, {"$set": {"connection_finalization": fence}})
@@ -171,6 +199,8 @@ class ConnectionRepair:
         if not deadline or deadline <= now:
             return False
         account = await self.db.outreach_accounts.find_one(self.account_scope(job))
+        if account and not captured_after_disconnect(account, current):
+            return False
         fence = (account or {}).get("connection_finalization") or {}
         if (fence.get("job_id") != job["id"] or fence.get("owner_token") != owner
                 or fence.get("generation") != generation or fence.get("state") != "prepared"):
@@ -181,7 +211,8 @@ class ConnectionRepair:
             "$expr": {"$gt": ["$connection_finalization.custody_expires_at", "$$NOW"]}}
         await positive(self.db, job['workspace_id'], captured=epoch.captured)
         changed = await self.db.outreach_accounts.update_one(query, {"$set": {
-            **updates, "credential_generation": generation, "connection_finalization.state": "installed",
+            **updates, **verified_connection_state(account or {}, now),
+            "credential_generation": generation, "connection_finalization.state": "installed",
             "connection_finalization.ever_installed": True, "connection_finalization.installed_at": now,
             "connection_finalization.installed_credential_digest": installed_digest({**account, **updates})},
             "$unset": {"encrypted_session_cookie": "", "li_at_enc": "", "jsession_id_enc": "", "proxy_config": ""}})
@@ -204,7 +235,7 @@ class ConnectionRepair:
         changes = {"connection_finalization.state": "closed", "connection_finalization.closed_at": now}
         update = {"$set": changes}
         if installed:
-            changes.update(status="reauth_required", updated_at=now)
+            changes.update(status="disconnected" if fence.get("completion") == "disconnected" else "reauth_required", updated_at=now)
             update["$unset"] = ACCOUNT_SECRETS
         changed = await self.db.outreach_accounts.update_one({**account_scope, "connection_finalization": fence,
             "credential_generation": expected_generation}, update)

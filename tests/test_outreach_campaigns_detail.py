@@ -4,6 +4,7 @@ Unit tests for Outreach Campaigns Auto-Drafting, Forensic Detail, and Reversible
 import pytest
 from fastapi import HTTPException
 from unittest.mock import AsyncMock
+from types import SimpleNamespace
 from outreach.models import (
     CampaignStatus,
     DailyLimits,
@@ -62,8 +63,10 @@ class MockCollection:
             if id(item) in matched_ids:
                 if "$set" in update:
                     item.update(update["$set"])
-                return True
-        return False
+                for key, value in update.get('$inc', {}).items():
+                    item[key] = item.get(key, 0) + value
+                return SimpleNamespace(matched_count=1, modified_count=1)
+        return SimpleNamespace(matched_count=0, modified_count=0)
 
     @staticmethod
     def _matches(item, query):
@@ -73,6 +76,8 @@ class MockCollection:
                     return False
                 continue
             if isinstance(value, dict):
+                if '$exists' in value and (key in item) != value['$exists']:
+                    return False
                 if "$ne" in value and item.get(key) == value["$ne"]:
                     return False
                 if "$in" in value and item.get(key) not in value["$in"]:

@@ -86,6 +86,7 @@ class ImportCSVRequest(BaseModel):
     default_company_name: str | None = None
     skip_already_contacted: bool = True
     skip_do_not_contact: bool = True
+    require_name: bool = Field(default=False, strict=True)
     consent_basis: str = Field(default="user_provided", description="Consent or source basis")
 
 
@@ -102,7 +103,7 @@ class ImportURLsRequest(BaseModel):
 
 class ImportStagedRequest(BaseModel):
     campaign_id: str
-    leads: list[dict[str, Any]] = Field(..., description="Staged lead objects from preview")
+    leads: list[dict[str, Any]] = Field(..., min_length=1, max_length=1000, description="Staged lead objects from preview")
     skip_already_contacted: bool = True
     skip_do_not_contact: bool = True
     require_name: bool = False
@@ -292,6 +293,21 @@ async def preview_leads_intake(
     )
 
 
+@router.post("/preview-staged")
+async def preview_edited_leads(
+    req: ImportStagedRequest,
+    current_user: dict = _lead_permission("lead:create"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Recheck edited rows against current exclusions before confirming intake."""
+    await _require_campaign(req.campaign_id, current_user, db)
+    from outreach.core.search_sources import ensure_intake_provenance
+    await ensure_intake_provenance(db, _workspace_id(current_user), req.leads, "staged_preview")
+    return await LeadImporter.preview_leads(req.leads, req.campaign_id, _workspace_id(current_user), db,
+        skip_already_contacted=req.skip_already_contacted, skip_do_not_contact=True,
+        require_name=req.require_name)
+
+
 @router.post("/import-urls")
 async def import_leads_urls(
     req: ImportURLsRequest,
@@ -394,6 +410,7 @@ async def import_leads_csv(
         custom_mapping=req.custom_mapping,
         default_first_name=req.default_first_name,
         default_company_name=req.default_company_name,
+        include_invalid=True,
     )
     if not parsed_leads:
         raise HTTPException(
@@ -411,6 +428,7 @@ async def import_leads_csv(
         campaign=campaign,
         source="csv",
         source_metadata={"source_type": "csv", "consent_basis": req.consent_basis},
+        require_name=req.require_name,
         include_rejections=True,
     )
 

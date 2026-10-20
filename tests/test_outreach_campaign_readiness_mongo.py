@@ -1,7 +1,9 @@
 """Read-only readiness and frozen-state launch parity on owned MongoDB."""
+import asyncio
 from datetime import datetime, timedelta, timezone
 import os
 from unittest.mock import AsyncMock
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -328,3 +330,270 @@ async def test_email_only_launch_uses_its_own_capability_and_mailbox_gates(repli
         with pytest.raises(HTTPException) as failure:
             await campaigns._launch_campaign_impl('campaign', None, USER, replica_db)
         assert failure.value.detail == report['blockers'][0]
+
+
+@pytest.mark.parametrize('change', [
+    {'assigned_account_id': 'removed-sender'},
+    {'assigned_account_id': ['sender']},
+    {'current_node_id': 'removed-step'},
+    {'current_node_id': ''},
+    {'current_node_id': ['root']},
+    {'current_node_id': None, 'last_action_taken': 'connection_request'},
+    {'current_node_id': None, 'waiting_for_connection_at': datetime.now(timezone.utc)},
+])
+async def test_resume_holds_incompatible_lead_progress_without_reassignment_or_restart(replica_db, change):
+    await seed(replica_db)
+    await replica_db.outreach_campaigns.update_one({}, {'$set': {'status': 'paused'}})
+    await replica_db.outreach_leads.update_one({}, {'$set': change})
+    before = await replica_db.outreach_leads.find_one({})
+    report = await preflight(replica_db)
+    assert not report['can_launch']
+    with pytest.raises(HTTPException) as failure:
+        await campaigns._launch_campaign_impl('campaign', None, USER, replica_db)
+    assert failure.value.detail == report['blockers'][0]
+    assert await replica_db.outreach_leads.find_one({}) == before
+    assert (await replica_db.outreach_campaigns.find_one({}))['status'] == 'paused'
+    assert await replica_db.outreach_sequence_versions.count_documents({}) == 0
+
+
+@pytest.mark.parametrize('state', ['staged', 'replied', 'finished', 'bounced', 'failed'])
+async def test_terminal_or_staged_progress_does_not_block_other_launchable_leads(replica_db, state):
+    await seed(replica_db)
+    await replica_db.outreach_leads.insert_one({'id': 'historical', 'workspace_id': 'workspace',
+        'campaign_id': 'campaign', 'execution_state': state, 'assigned_account_id': 'removed',
+        'current_node_id': 'removed', 'last_action_taken': 'send_message'})
+    assert (await preflight(replica_db))['can_launch'] is True
+
+
+async def test_resume_preserves_valid_sender_step_and_due_time(replica_db):
+    await seed(replica_db)
+    due = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=5)
+    await replica_db.outreach_campaigns.update_one({}, {'$set': {'status': 'paused'}})
+    await replica_db.outreach_leads.update_one({}, {'$set': {'assigned_account_id': 'sender',
+        'current_node_id': 'root', 'execution_state': 'waiting_delay', 'next_action_due_at': due}})
+    assert (await preflight(replica_db))['can_launch'] is True
+    assert (await campaigns._launch_campaign_impl('campaign', None, USER, replica_db))['status'] == 'launched'
+    lead = await replica_db.outreach_leads.find_one({})
+    assert lead['assigned_account_id'] == 'sender' and lead['current_node_id'] == 'root'
+    assert lead['execution_state'] == 'waiting_delay' and lead['next_action_due_at'] == due
+
+
+@pytest.mark.parametrize('missing_field', [False, True])
+@pytest.mark.parametrize('marker,value', [
+    ('last_action_at', datetime.now(timezone.utc)),
+    ('last_action_taken', 'connection_request'),
+    ('waiting_for_connection_at', datetime.now(timezone.utc)),
+    ('waiting_for_reply_at', datetime.now(timezone.utc)),
+    ('last_action_taken', [None, 'connection_request']),
+])
+async def test_missing_sender_with_prior_progress_requires_review(replica_db, missing_field, marker, value):
+    await seed(replica_db)
+    await replica_db.outreach_campaigns.update_one({}, {'$set': {'status': 'paused'}})
+    await replica_db.outreach_leads.update_one({}, {'$set': {
+        'assigned_account_id': None, 'current_node_id': 'root', marker: value}})
+    if missing_field:
+        await replica_db.outreach_leads.update_one({}, {'$unset': {'assigned_account_id': ''}})
+    before = await replica_db.outreach_leads.find_one({})
+    report = await preflight(replica_db)
+    assert not report['can_launch']
+    assert next(item for item in report['checklist'] if item['id'] == 'lead_senders')['passed'] is False
+    with pytest.raises(HTTPException) as failure:
+        await campaigns._launch_campaign_impl('campaign', None, USER, replica_db)
+    assert failure.value.status_code == 409
+    assert await replica_db.outreach_leads.find_one({}) == before
+    assert (await replica_db.outreach_campaigns.find_one({}))['status'] == 'paused'
+    assert await replica_db.outreach_sequence_versions.count_documents({}) == 0
+
+
+@pytest.mark.parametrize('missing_field', [False, True])
+@pytest.mark.parametrize('state', ['waiting_delay', 'waiting_trigger', 'paused', ['queued']])
+async def test_unassigned_nonfresh_state_holds_even_without_optional_action_markers(replica_db, missing_field, state):
+    await seed(replica_db)
+    due = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=5)
+    await replica_db.outreach_campaigns.update_one({}, {'$set': {'status': 'paused'}})
+    await replica_db.outreach_leads.update_one({}, {'$set': {
+        'assigned_account_id': None, 'current_node_id': None,
+        'execution_state': state, 'next_action_due_at': due}})
+    if missing_field:
+        await replica_db.outreach_leads.update_one({}, {'$unset': {'assigned_account_id': ''}})
+    before = await replica_db.outreach_leads.find_one({})
+    report = await preflight(replica_db)
+    assert not report['can_launch']
+    assert next(item for item in report['checklist'] if item['id'] == 'lead_senders')['passed'] is False
+    with pytest.raises(HTTPException) as failure:
+        await campaigns._launch_campaign_impl('campaign', None, USER, replica_db)
+    assert failure.value.status_code == 409
+    assert await replica_db.outreach_leads.find_one({}) == before
+
+
+@pytest.mark.parametrize('missing_field', [False, True])
+async def test_unacted_unassigned_root_still_receives_first_sender(replica_db, missing_field):
+    await seed(replica_db)
+    due = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=5)
+    await replica_db.outreach_leads.update_one({}, {'$set': {
+        'assigned_account_id': None, 'current_node_id': 'root', 'next_action_due_at': due}})
+    if missing_field:
+        await replica_db.outreach_leads.update_one({}, {'$unset': {'assigned_account_id': ''}})
+    assert (await preflight(replica_db))['can_launch'] is True
+    assert (await campaigns._launch_campaign_impl('campaign', None, USER, replica_db))['status'] == 'launched'
+    lead = await replica_db.outreach_leads.find_one({})
+    assert lead['assigned_account_id'] == 'sender' and lead['current_node_id'] == 'root'
+    assert lead['next_action_due_at'] == due
+
+
+@pytest.mark.parametrize('state,replied', [
+    ('staged', False), ('replied', False), ('finished', False),
+    ('bounced', False), ('failed', False), ('queued', True),
+])
+async def test_no_outstanding_prospects_cannot_activate_an_idle_campaign(replica_db, state, replied):
+    await seed(replica_db)
+    await replica_db.outreach_campaigns.update_one({}, {'$set': {'status': 'paused'}})
+    await replica_db.outreach_leads.update_one({}, {'$set': {
+        'execution_state': state, 'has_replied': replied, 'assigned_account_id': 'sender',
+        'current_node_id': 'root'}})
+    # Neither another tenant nor another campaign supplies an actionable lead.
+    await replica_db.outreach_leads.insert_many([
+        {'id': 'foreign', 'workspace_id': 'foreign', 'campaign_id': 'campaign', 'execution_state': 'queued'},
+        {'id': 'other-campaign', 'workspace_id': 'workspace', 'campaign_id': 'other', 'execution_state': 'queued'},
+    ])
+    before = await replica_db.outreach_leads.find({}).sort('id', 1).to_list(length=10)
+    report = await preflight(replica_db)
+    assert report['can_launch'] is False
+    assert not next(item for item in report['checklist'] if item['id'] == 'actionable_leads')['passed']
+    with pytest.raises(HTTPException):
+        await campaigns._launch_campaign_impl('campaign', None, USER, replica_db)
+    assert await replica_db.outreach_leads.find({}).sort('id', 1).to_list(length=10) == before
+    assert (await replica_db.outreach_campaigns.find_one({}))['status'] == 'paused'
+    assert await replica_db.outreach_sequence_versions.count_documents({}) == 0
+
+
+async def test_unassigned_nonroot_without_optional_markers_requires_review(replica_db):
+    await seed(replica_db)
+    await replica_db.outreach_sequences.update_one({}, {'$set': {
+        'nodes': [{'id': 'root', 'type': 'visit_profile', 'config': {}},
+                  {'id': 'later', 'type': 'visit_profile', 'config': {}}],
+        'edges': [{'source': 'root', 'target': 'later'}]}})
+    await replica_db.outreach_leads.update_one({}, {'$set': {
+        'assigned_account_id': None, 'current_node_id': 'later'}})
+    report = await preflight(replica_db)
+    assert report['can_launch'] is False
+    assert not next(item for item in report['checklist'] if item['id'] == 'lead_senders')['passed']
+    with pytest.raises(HTTPException):
+        await campaigns._launch_campaign_impl('campaign', None, USER, replica_db)
+
+
+@pytest.mark.parametrize('change', [
+    {'status': 'active'}, {'status': 'warming_up'}, {'status': 'completed'},
+    {'authorization_revision': 1}, {'lead_admission_revision': 1},
+    {'launch_claim_token': 'preparing', 'launch_claim_expires_at': datetime.now(timezone.utc) + timedelta(minutes=5)},
+])
+async def test_auto_draft_compare_and_set_cannot_overwrite_a_concurrent_campaign_change(replica_db, change):
+    await seed(replica_db)
+    original = replica_db.outreach_campaigns.update_one
+    changed = False
+
+    async def interleave(query, update, *args, **kwargs):
+        nonlocal changed
+        if not changed:
+            changed = True
+            await original({'id': 'campaign'}, {'$set': change})
+        return await original(query, update, *args, **kwargs)
+
+    # Motor returns a fresh collection wrapper on each attribute lookup. Keep
+    # this one injected boundary so the interleaving really reaches MongoDB.
+    observed_db = SimpleNamespace(outreach_campaigns=SimpleNamespace(
+        find_one=replica_db.outreach_campaigns.find_one, update_one=interleave))
+    request = campaigns.AutoDraftRequest(campaign_id='campaign', name='Stale edit',
+        sender_account_ids=[], limits={'messages': 100})
+    with pytest.raises(HTTPException) as failure:
+        await campaigns.auto_draft_campaign(request, USER, observed_db)
+    assert changed
+    assert failure.value.status_code == 409
+    stored = await replica_db.outreach_campaigns.find_one({})
+    assert stored.get('name') != 'Stale edit' and stored['sender_account_ids'] == ['sender']
+    assert stored.get('limits') != {'messages': 100}
+    assert all(stored[key] == value for key, value in change.items() if not isinstance(value, datetime))
+
+
+@pytest.mark.parametrize('change', [
+    {'status': 'completed'}, {'authorization_revision': True}, {'authorization_revision': 'unproven'},
+    {'launch_claim_token': 'preparing'},
+    {'launch_claim_expires_at': 'unproven'},
+    {'launch_claim_token': 'preparing', 'launch_claim_expires_at': datetime.now(timezone.utc) + timedelta(minutes=5)},
+])
+async def test_auto_draft_requires_current_editable_authority(replica_db, change):
+    await seed(replica_db)
+    await replica_db.outreach_campaigns.update_one({}, {'$set': change})
+    before = await replica_db.outreach_campaigns.find_one({})
+    with pytest.raises(HTTPException) as failure:
+        await campaigns.auto_draft_campaign(campaigns.AutoDraftRequest(campaign_id='campaign', name='Denied'), USER, replica_db)
+    assert failure.value.status_code == 409
+    assert await replica_db.outreach_campaigns.find_one({}) == before
+
+
+@pytest.mark.parametrize('revision', [None, 3])
+async def test_auto_draft_success_advances_authorization_revision(replica_db, revision):
+    await seed(replica_db)
+    if revision is None:
+        await replica_db.outreach_campaigns.update_one({}, {'$unset': {'authorization_revision': ''}})
+    else:
+        await replica_db.outreach_campaigns.update_one({}, {'$set': {'authorization_revision': revision}})
+    saved = await campaigns.auto_draft_campaign(campaigns.AutoDraftRequest(campaign_id='campaign', name='Current'), USER, replica_db)
+    assert saved['name'] == 'Current' and saved['authorization_revision'] == (revision or 0) + 1
+
+
+async def test_auto_draft_cannot_adopt_a_replacement_native_campaign(replica_db):
+    await seed(replica_db)
+    collection = replica_db.outreach_campaigns
+    original = await collection.find_one({})
+
+    async def replace_before_update(query, update):
+        replacement = {**original, '_id': 'replacement', 'name': 'Replacement'}
+        await collection.delete_one({'_id': original['_id']})
+        await collection.insert_one(replacement)
+        return await collection.update_one(query, update)
+
+    observed = SimpleNamespace(outreach_campaigns=SimpleNamespace(
+        find_one=collection.find_one, update_one=replace_before_update))
+    with pytest.raises(HTTPException) as failure:
+        await campaigns.auto_draft_campaign(campaigns.AutoDraftRequest(campaign_id='campaign', name='Stale'), USER, observed)
+    assert failure.value.status_code == 409
+    stored = await collection.find_one({})
+    assert stored['_id'] == 'replacement' and stored['name'] == 'Replacement'
+    assert stored['authorization_revision'] == 0
+
+
+async def test_concurrent_draft_saves_publish_only_one_observed_revision(replica_db):
+    await seed(replica_db)
+    collection = replica_db.outreach_campaigns
+    both_read = asyncio.Event()
+    reads = 0
+
+    async def observe(query):
+        nonlocal reads
+        doc = await collection.find_one(query)
+        reads += 1
+        if reads <= 2:
+            if reads == 2:
+                both_read.set()
+            await asyncio.wait_for(both_read.wait(), timeout=3)
+        return doc
+
+    observed = SimpleNamespace(outreach_campaigns=SimpleNamespace(
+        find_one=observe, update_one=collection.update_one))
+    results = await asyncio.gather(*(campaigns.auto_draft_campaign(
+        campaigns.AutoDraftRequest(campaign_id='campaign', name=name), USER, observed)
+        for name in ['First', 'Second']), return_exceptions=True)
+    assert sum(isinstance(result, dict) for result in results) == 1
+    errors = [result for result in results if isinstance(result, HTTPException)]
+    assert len(errors) == 1 and errors[0].status_code == 409
+    assert (await collection.find_one({}))['authorization_revision'] == 1
+
+
+async def test_expired_observed_launch_claim_allows_an_edit_without_releasing_new_ownership(replica_db):
+    await seed(replica_db)
+    await replica_db.outreach_campaigns.update_one({}, {'$set': {
+        'launch_claim_token': 'expired', 'launch_claim_expires_at': datetime.now(timezone.utc) - timedelta(minutes=1)}})
+    saved = await campaigns.auto_draft_campaign(campaigns.AutoDraftRequest(campaign_id='campaign', name='Current'), USER, replica_db)
+    assert saved['name'] == 'Current' and saved['authorization_revision'] == 1
+    assert saved['launch_claim_token'] == 'expired'

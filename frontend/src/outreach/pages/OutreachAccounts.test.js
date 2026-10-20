@@ -42,4 +42,25 @@ describe('LinkedIn sender accounts', () => {
     expect(container.textContent).toContain('Unauthorized');
     expect(container.textContent).toContain('Retry');
   });
+
+  it('refreshes an existing sender after background verification finishes', async () => {
+    let complete = false;
+    global.fetch = jest.fn(() => Promise.resolve({ ok: true, json: async () => [{
+      id: 'sender-1', account_name: 'Alex', status: complete ? 'active' : 'session_expired',
+    }] }));
+    await act(async () => root.render(<OutreachAccounts />));
+    complete = true;
+    const refresh = container.querySelector('button[aria-label="Refresh sender accounts"]');
+    expect(refresh).not.toBeNull();
+    await act(async () => refresh.click());
+    expect(container.textContent).toContain('Active');
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not describe a malformed successful response as having no senders', async () => {
+    global.fetch = jest.fn(() => Promise.resolve({ ok: true, json: async () => ({ accounts: [] }) }));
+    await act(async () => root.render(<OutreachAccounts />));
+    expect(container.textContent).toContain('invalid response');
+    expect(container.textContent).not.toContain('No accounts connected yet');
+  });
 });

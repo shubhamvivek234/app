@@ -218,6 +218,45 @@ async def _assess(db: Any, workspace: str, campaign: dict, warmup_reader: Any,
         'execution_state': {'$ne': 'staged'}, **SEARCH_PROVENANCE_QUERY})
     check('lead_sources', 'Prospect Source Review', not source_hold,
           'No retained unverified search provenance found', UNVERIFIED_LEAD, 409)
+    # A new revision cannot silently migrate a conversation to another sender
+    # or restart progress at the root after its old step was removed. Terminal
+    # and staged records do not participate in the resumed sequence.
+    outstanding = {**campaign_scope, 'has_replied': {'$ne': True},
+                   'execution_state': {'$nin': ['staged', 'replied', 'finished', 'bounced', 'failed']}}
+    actionable = await db.outreach_leads.find_one(outstanding)
+    check('actionable_leads', 'Actionable Prospects', bool(actionable),
+          'At least one prospect has outstanding campaign work',
+          'Enroll at least one new prospect with outstanding work before launching', 400)
+    progress_fields = ('last_action_at', 'last_action_taken',
+                       'waiting_for_connection_at', 'waiting_for_reply_at')
+    root_ids = list(compiled['root_node_ids']) if compiled else []
+    sender_conflict = await db.outreach_leads.find_one({**outstanding, '$or': [
+        {'assigned_account_id': {'$type': 'array'}},
+        {'assigned_account_id': {'$nin': [None, *senders]}},
+        {'assigned_account_id': None, '$or': [
+            # Only a queued, unacted root can receive its first sender. Missing
+            # optional audit fields alone do not prove a later/waiting lead fresh.
+            {'execution_state': {'$type': 'array'}},
+            {'execution_state': {'$ne': 'queued'}},
+            {'current_node_id': {'$nin': [None, *root_ids]}},
+            *[{field: {'$type': 'array'}} for field in progress_fields],
+            *[{field: {'$ne': None}} for field in progress_fields],
+        ]},
+    ]})
+    check('lead_senders', 'Prospect Sender Continuity', not sender_conflict,
+          'Outstanding prospects retain a selected sender or await their first assignment',
+          'Outstanding prospects are assigned to a removed or invalid sender; restore the original sender or request a reviewed migration')
+    node_ids = list(compiled['nodes']) if compiled else []
+    progress_conflict = await db.outreach_leads.find_one({**outstanding, '$or': [
+        {'current_node_id': {'$type': 'array'}},
+        {'current_node_id': {'$nin': [None, *node_ids]}},
+        {'current_node_id': None, '$or': [
+            {field: {'$ne': None}} for field in progress_fields
+        ]},
+    ]})
+    check('lead_progress', 'Prospect Sequence Continuity', not progress_conflict,
+          'Outstanding prospect steps still exist in this sequence',
+          'Outstanding prospects reference missing or invalid sequence progress; restore the original steps or request a reviewed migration')
     check('schedule', 'Working Schedule Window', OutboundRateLimiter.has_valid_working_window(campaign.get('schedule')),
           'A valid working-hours window is configured; execution waits for that window', 'Configure a valid working-hours schedule window', 400)
     try:

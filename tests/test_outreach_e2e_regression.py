@@ -110,6 +110,8 @@ async def test_custom_templates_lifecycle(monkeypatch):
     monkeypatch.setattr('outreach.api.sequences.create_template', persist_create)
     monkeypatch.setattr('outreach.api.sequences.delete_template', persist_delete)
     user = {"user_id": "test_user_regression", "workspace_id": "ws_regression", "firebase_uid": "synthetic-uid"}
+    from tests.template_access_fixtures import seed_catalog_access
+    seed_catalog_access(mock_db, user['user_id'], user['workspace_id'], user['firebase_uid'])
 
     # 1. List templates (initially only prebuilt)
     initial_tpls = await get_sequence_templates(current_user=user, db=mock_db)

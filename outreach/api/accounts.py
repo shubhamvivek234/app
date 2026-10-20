@@ -12,6 +12,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from db.mongo import get_db
 from outreach.api.dependencies import get_outreach_user, require_outreach_permission
+from outreach.core import suppression
 from outreach.core.suppression import SuppressionUnavailable
 from outreach.models import (
     AccountStatus,
@@ -172,38 +173,48 @@ async def disconnect_account(
     """Disconnect session; retain the sender's paid-term IP for same-sender reuse."""
     user_id = current_user.get("user_id")
     ws_id = current_user.get("default_workspace_id") or user_id
-    account = await db.outreach_accounts.find_one({
-        "id": account_id,
-        "workspace_id": ws_id,
-    })
-    if not account:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
-
-    now = datetime.now(timezone.utc)
-    # Disable the sender first: a failed database update must not leave an active
-    # account pointing at a proxy we have already released.
-    await db.outreach_accounts.update_one(
-        {"id": account_id, "workspace_id": ws_id},
-        {"$set": {"status": AccountStatus.DISCONNECTED, "updated_at": now},
-         "$unset": {"session_cookie_enc": "", "encrypted_session_cookie": "",
-                    "jsession_id": "", "li_a_enc": "", "li_at_enc": "", "jsession_id_enc": ""}},
-    )
-    # Relational Cascade: Unbind account from campaign sender pools
-    await db.outreach_campaigns.update_many(
-        {"workspace_id": ws_id, "sender_account_ids": account_id},
-        {"$pull": {"sender_account_ids": account_id}, "$set": {"updated_at": now, "status": "paused"},
-         "$inc": {"authorization_revision": 1}, "$addToSet": {"pause_reasons": "sender_unavailable"}}
-    )
-
-    # Relational Cascade: Cancel queued/pending tasks scheduled on this account
-    await db.outreach_tasks.update_many(
-        {"workspace_id": ws_id, "account_id": account_id, "status": {"$in": ["queued", "pending", "scheduled"]}},
-        {"$set": {
-            "status": "cancelled",
-            "cancellation_reason": f"Sender account {account_id} was disconnected",
-            "updated_at": now,
-        }}
-    )
+    async def apply(current):
+        account = await current.outreach_accounts.find_one({"id": account_id, "workspace_id": ws_id})
+        if not account:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+        now = datetime.now(timezone.utc)
+        changes = {"status": AccountStatus.DISCONNECTED, "updated_at": now,
+                   "connection_disconnected_at": now}
+        fence = account.get("connection_finalization")
+        if isinstance(fence, dict) and fence:
+            changes["connection_finalization"] = {**fence, "state": "closed",
+                "closed_at": now, "completion": "disconnected"}
+        # Installation and disconnect share the workspace transaction guard.
+        # The timestamp also rejects a captured job which has not prepared yet.
+        await current.outreach_accounts.update_one(
+            {"id": account_id, "workspace_id": ws_id}, {"$set": changes,
+             "$unset": {"session_cookie_enc": "", "encrypted_session_cookie": "",
+                        "jsession_id": "", "li_a_enc": "", "li_at_enc": "", "jsession_id_enc": ""}})
+        await current.outreach_connection_jobs.update_many(
+            {"workspace_id": ws_id, "sender_id": account_id,
+             "status": {"$in": ["queued", "running", "finalizing", "repairing"]}},
+            {"$set": {"custody_expires_at": now, "custody_expired_at": now,
+                      "error": "Sender was disconnected. Verification has stopped.", "updated_at": now},
+             "$unset": {"li_at_enc": "", "jsession_id_enc": "", "li_a_enc": ""}})
+        await current.outreach_connection_jobs.update_many(
+            {"workspace_id": ws_id, "sender_id": account_id,
+             "status": {"$in": ["queued", "running"]}, "finalization_prepared": {"$ne": True}},
+            {"$set": {"status": "failed", "pending_cleanup_complete": False}})
+        # Keep locks, original generations, leases and uncertain request evidence.
+        # Existing custody cleanup/explicit drained repair owns their release.
+        await current.outreach_campaigns.update_many(
+            {"workspace_id": ws_id, "sender_account_ids": account_id},
+            {"$pull": {"sender_account_ids": account_id},
+             "$set": {"updated_at": now, "status": "paused", "auto_launch_enabled": False},
+             "$inc": {"authorization_revision": 1}, "$addToSet": {"pause_reasons": "sender_unavailable"}})
+        await current.outreach_tasks.update_many(
+            {"workspace_id": ws_id, "$or": [{"account_id": account_id}, {"assigned_account_id": account_id}],
+             "status": {"$in": ["queued", "pending", "scheduled"]}},
+            {"$set": {"status": "cancelled", "cancellation_reason": "Sender was disconnected", "updated_at": now}})
+    try:
+        await suppression.mutate_suppression(db, ws_id, apply)
+    except SuppressionUnavailable:
+        raise HTTPException(status_code=503, detail="Sender disconnect could not be confirmed; reload its current state") from None
 
     logger.info("Account %s disconnected; paid-term IP retained for user %s", account_id, user_id)
     return {"status": "success", "message": "Sender disconnected and campaigns paused. Its IP remains reserved through the paid provider term for this sender only."}

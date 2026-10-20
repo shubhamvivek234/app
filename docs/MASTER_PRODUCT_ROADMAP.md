@@ -1,5 +1,7 @@
 # Unravler — Master Product Roadmap & Feature Blueprint
 
+Local outreach v2.95 (2026-10-20): [Authenticated Prosp flow audit and bounded repairs](UNRAVLER_IO_PROSP_FLOW_AUDIT_AND_REPAIRS_RELEASE.md) corrects intake identity/name/exclusion parity, concurrent draft saves, resume continuity, working-hours/sender preservation, disconnect/install ordering and original-job UI retry. Live collection/execution remains disabled. Next priorities are atomic sender identity claims, durable sender job discovery and a supported lead-source adapter with provenance/pagination/cancellation/concurrency checks. Sequence capability expansion and reviewed progress migration remain separate work; template history viewer/restore and operational cutover/pilot gates are still open. The report distinguishes observed Prosp UI from partial static client inference and inaccessible paid execution paths.
+
 This master roadmap outlines the end-to-end technical specifications, data schemas, API contracts, and user flows for expanding **Unravler** into a market-leading social media management platform.
 
 ---

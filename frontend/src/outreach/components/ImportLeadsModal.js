@@ -35,12 +35,14 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
   const openRef = useRef(isOpen);
   openRef.current = isOpen;
   const importGenerationRef = useRef(0);
+  const previewGenerationRef = useRef(0);
 
   // Preview & Ingest state
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewResult, setPreviewResult] = useState(null);
   const [stagedRows, setStagedRows] = useState([]);
   const [hasEdits, setHasEdits] = useState(false);
+  const [reviewRequired, setReviewRequired] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [sourceCapabilities, setSourceCapabilities] = useState(null);
@@ -74,7 +76,10 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
   const [importResult, setImportResult] = useState(null);
   useEffect(() => {
     importGenerationRef.current += 1;
+    previewGenerationRef.current += 1;
     setLoading(false);
+    setPreviewLoading(false);
+    setPreviewResult(null); setStagedRows([]); setHasEdits(false); setReviewRequired(false); setImportResult(null); setStep(1);
     return () => { importGenerationRef.current += 1; };
   }, [isOpen, campaignId]);
 
@@ -189,12 +194,15 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
       return;
     }
     setCsvFileName(file.name);
+    const generation = ++previewGenerationRef.current;
+    const isCurrent = () => openRef.current && jobScopeRef.current === campaignId && previewGenerationRef.current === generation;
     const reader = new FileReader();
     reader.onload = (event) => {
+      if (!isCurrent()) return;
       setCsvContent(event.target.result);
       setError(null);
     };
-    reader.onerror = () => setError('Could not read the CSV file. Please try again.');
+    reader.onerror = () => { if (isCurrent()) setError('Could not read the CSV file. Please try again.'); };
     reader.readAsText(file);
   };
 
@@ -211,6 +219,8 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
 
     setPreviewLoading(true);
     setError(null);
+    const generation = ++previewGenerationRef.current;
+    const isCurrent = () => openRef.current && jobScopeRef.current === campaignId && previewGenerationRef.current === generation;
     try {
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/leads/preview', {
@@ -236,14 +246,16 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
       if (!res.ok) {
         throw new Error(data.detail || 'Failed to preview leads.');
       }
+      if (!isCurrent()) return;
       setPreviewResult(data);
       setStagedRows(data.rows || []);
       setHasEdits(false);
+      setReviewRequired(false);
       setStep(3);
     } catch (err) {
-      setError(err.message);
+      if (isCurrent()) setError(err.message);
     } finally {
-      setPreviewLoading(false);
+      if (isCurrent()) setPreviewLoading(false);
     }
   };
 
@@ -262,23 +274,38 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
       })
     );
     setHasEdits(true);
+    // Search-job commits revalidate their original staged records on the server.
+    // Direct CSV/profile edits use the separate preview-staged contract.
+    setReviewRequired(sourceType !== 'search');
   };
 
   const handleRevertName = (rowNumber) => {
-    setStagedRows((prev) =>
-      prev.map((r) => {
-        if (r.row_number === rowNumber) {
-          const original = r.raw_first_name || '';
-          return {
-            ...r,
-            cleaned_first_name: original,
-            first_name: original,
-            is_custom_edited: false,
-          };
-        }
-        return r;
-      })
-    );
+    const original = stagedRows.find((row) => row.row_number === rowNumber)?.raw_first_name || '';
+    handleNameChange(rowNumber, original);
+  };
+
+  const handleValidateChanges = async () => {
+    if (previewLoading || loading || sourceType === 'search') return;
+    setPreviewLoading(true); setError(null);
+    const generation = ++previewGenerationRef.current;
+    const isCurrent = () => openRef.current && jobScopeRef.current === campaignId && previewGenerationRef.current === generation;
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch('/api/v1/outreach/leads/preview-staged', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ campaign_id: campaignId, leads: stagedRows, require_name: requireName,
+          skip_already_contacted: skipContacted, skip_do_not_contact: true }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.detail || 'Could not validate the edited contacts.');
+      if (!isCurrent()) return;
+      setPreviewResult(body); setStagedRows(body.rows || []); setReviewRequired(false);
+    } catch (failure) {
+      if (isCurrent()) setError(failure.message || 'Could not validate the edited contacts.');
+    } finally {
+      if (isCurrent()) setPreviewLoading(false);
+    }
   };
 
   const handleStartSearchCrawl = async () => {
@@ -404,6 +431,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
   };
 
   const handleExecuteImport = async () => {
+    if (reviewRequired || previewLoading) { setError('Validate the changed contacts before confirming this import.'); return; }
     if (sourceType === 'search' && !searchAvailable) { setError(searchUnavailableReason); return; }
     if (!campaignId) {
       setError('Select a campaign before importing contacts.');
@@ -419,7 +447,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
       if (sourceType === 'search' && activeJob) {
         const nameOverrides = {};
         stagedRows.forEach((r) => {
-          if (r.is_custom_edited && r.cleaned_first_name) {
+          if (r.is_custom_edited && typeof r.cleaned_first_name === 'string') {
             nameOverrides[r.id] = r.cleaned_first_name;
           }
         });
@@ -432,7 +460,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
             method: 'POST', credentials: 'include',
             headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
             body: JSON.stringify({ selected_lead_ids: batch.map((row) => row.id),
-              name_overrides: Object.fromEntries(batch.filter((row) => nameOverrides[row.id])
+              name_overrides: Object.fromEntries(batch.filter((row) => Object.prototype.hasOwnProperty.call(nameOverrides, row.id))
                 .map((row) => [row.id, nameOverrides[row.id]])) }),
           });
           const data = await res.json();
@@ -451,7 +479,6 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
       }
 
       if (hasEdits) {
-        const validStaged = stagedRows.filter((r) => r.status === 'valid');
         res = await fetch('/api/v1/outreach/leads/import-staged', {
           method: 'POST',
           credentials: 'include',
@@ -461,7 +488,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
           },
           body: JSON.stringify({
             campaign_id: campaignId,
-            leads: validStaged,
+            leads: stagedRows,
             skip_already_contacted: skipContacted,
             skip_do_not_contact: true,
             require_name: requireName,
@@ -502,6 +529,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
             default_company_name: defaultCompanyName.trim() || null,
             skip_already_contacted: skipContacted,
             skip_do_not_contact: true,
+            require_name: requireName,
             consent_basis: 'user_provided',
           }),
         });
@@ -511,7 +539,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
       if (!res.ok) {
         throw new Error(data.detail || 'Import failed.');
       }
-
+      if (!openRef.current || jobScopeRef.current !== campaignId || importGenerationRef.current !== importGeneration) return;
       setImportResult(data);
       if (onLeadsImported) onLeadsImported(data);
     } catch (err) {
@@ -539,6 +567,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
     setPreviewResult(null);
     setStagedRows([]);
     setHasEdits(false);
+    setReviewRequired(false);
     setImportResult(null);
     setError(null);
   };
@@ -716,6 +745,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                 </p>
                 <textarea
                   rows={7}
+                  disabled={previewLoading}
                   value={urlsText}
                   onChange={(e) => setUrlsText(e.target.value)}
                   placeholder={`https://www.linkedin.com/in/williamhgates, Bill Gates, Breakthrough Energy\nhttps://linkedin.com/in/satyanadella, Satya, Nadella, Microsoft\nhttps://linkedin.com/in/sundarpichai, Sundar Pichai`}
@@ -731,6 +761,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                   <input
                     type="text"
                     value={defaultFirstName}
+                    disabled={previewLoading}
                     onChange={(e) => setDefaultFirstName(e.target.value)}
                     placeholder="e.g. there, Colleague, Founder"
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
@@ -745,6 +776,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                   <input
                     type="text"
                     value={defaultCompanyName}
+                    disabled={previewLoading}
                     onChange={(e) => setDefaultCompanyName(e.target.value)}
                     placeholder="e.g. Your Company"
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
@@ -758,6 +790,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                   <input
                     type="checkbox"
                     checked={requireName}
+                    disabled={previewLoading}
                     onChange={(e) => setRequireName(e.target.checked)}
                     className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                   />
@@ -769,6 +802,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                 <button
                   type="button"
                   onClick={() => setStep(1)}
+                  disabled={previewLoading}
                   className="text-xs text-gray-500 hover:text-gray-800 font-medium cursor-pointer"
                 >
                   ← Back to Sources
@@ -806,6 +840,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                 <input
                   type="file"
                   accept=".csv"
+                  disabled={previewLoading}
                   onChange={handleFileUpload}
                   className="mt-3 block w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
                 />
@@ -819,6 +854,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                   <input
                     type="text"
                     value={defaultFirstName}
+                    disabled={previewLoading}
                     onChange={(e) => setDefaultFirstName(e.target.value)}
                     placeholder="e.g. there"
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
@@ -831,6 +867,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                   <input
                     type="text"
                     value={defaultCompanyName}
+                    disabled={previewLoading}
                     onChange={(e) => setDefaultCompanyName(e.target.value)}
                     placeholder="e.g. Tech"
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
@@ -838,10 +875,16 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                 </div>
               </div>
 
+              <label className="flex items-center gap-2 text-xs font-medium text-gray-700">
+                <input type="checkbox" checked={requireName} disabled={previewLoading}
+                  onChange={(e) => setRequireName(e.target.checked)} className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+                Require name for outreach personalization
+              </label>
               <div className="flex items-center justify-between pt-3 border-t border-gray-100">
                 <button
                   type="button"
                   onClick={() => setStep(1)}
+                  disabled={previewLoading}
                   className="text-xs text-gray-500 hover:text-gray-800 font-medium cursor-pointer"
                 >
                   ← Back to Sources
@@ -1161,7 +1204,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                     <div className="p-4 text-center text-gray-400">No leads parsed from source.</div>
                   ) : (
                     stagedRows.slice(0, 50).map((row) => {
-                      const currentName = row.cleaned_first_name || row.first_name || '';
+                      const currentName = row.cleaned_first_name ?? row.first_name ?? '';
                       const rawName = row.raw_first_name || '';
                       const isModified = rawName && currentName !== rawName;
 
@@ -1174,12 +1217,13 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                                 <span className="font-medium text-gray-900 truncate">
                                   {currentName || row.last_name ? `${currentName} ${row.last_name || ''}`.trim() : (row.vanity_name || 'No name')}
                                 </span>
-                                {row.status === 'valid' && (
+                                {(row.status === 'valid' || row.rejection_code === 'missing_name') && (
                                   <div className="flex items-center gap-1">
                                     <input
                                       type="text"
                                       value={currentName}
                                       aria-label={`First name for lead #${row.row_number}`}
+                                      disabled={loading || previewLoading}
                                       onChange={(e) => handleNameChange(row.row_number, e.target.value)}
                                       placeholder="First name"
                                       className="px-1.5 py-0.5 border border-gray-300 rounded text-xs font-medium text-gray-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 w-24 bg-white"
@@ -1239,12 +1283,15 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                   <input
                     type="checkbox"
                     checked={skipContacted}
-                    onChange={(e) => setSkipContacted(e.target.checked)}
+                    disabled={loading || previewLoading || sourceType === 'search'}
+                    onChange={(e) => { setSkipContacted(e.target.checked); setHasEdits(true); setReviewRequired(true); }}
                     className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                   />
                   <div>
                     <span className="font-semibold text-gray-800">Skip leads already contacted in another campaign</span>
-                    <span className="text-gray-500 block text-[11px]">Prevents duplicate touches across separate campaigns in this workspace.</span>
+                    <span className="text-gray-500 block text-[11px]">{sourceType === 'search'
+                      ? 'Staged search enrollment always rechecks contacted and excluded leads on the server.'
+                      : 'Prevents duplicate touches across separate campaigns in this workspace.'}</span>
                   </div>
                 </label>
 
@@ -1255,10 +1302,20 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
               </div>
 
               {/* Bottom Actions */}
+              {reviewRequired && (
+                <div role="status" className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                  <span>Names or exclusions changed. Validate Changes to refresh the contact counts before importing.</span>
+                  <button type="button" disabled={previewLoading || loading} onClick={handleValidateChanges}
+                    className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-2 font-semibold disabled:opacity-50">
+                    {previewLoading ? 'Validating…' : 'Validate Changes'}
+                  </button>
+                </div>
+              )}
               <div className="flex items-center justify-between pt-3 border-t border-gray-100">
                 <button
                   type="button"
-                  onClick={() => setStep(2)}
+                  disabled={loading}
+                  onClick={() => { previewGenerationRef.current += 1; setPreviewLoading(false); setStep(2); }}
                   className="text-xs text-gray-500 hover:text-gray-800 font-medium cursor-pointer"
                 >
                   ← Edit Source Input
@@ -1266,7 +1323,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                 <button
                   type="button"
                   onClick={handleExecuteImport}
-                  disabled={loading || (sourceType === 'search' && !searchAvailable) || previewResult.valid_count === 0}
+                  disabled={loading || previewLoading || reviewRequired || (sourceType === 'search' && !searchAvailable) || previewResult.valid_count === 0}
                   className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 shadow-sm disabled:opacity-50 cursor-pointer"
                 >
                   {loading ? (

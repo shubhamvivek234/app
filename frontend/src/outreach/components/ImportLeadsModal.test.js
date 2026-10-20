@@ -211,6 +211,12 @@ describe('ImportLeadsModal', () => {
         }));
       }
 
+      if (url === '/api/v1/outreach/leads/preview-staged') {
+        const body = JSON.parse(opts.body);
+        return Promise.resolve(response({ total_submitted: body.leads.length, valid_count: body.leads.length,
+          duplicate_count: 0, contacted_count: 0, dnc_count: 0, invalid_count: 0, rows: body.leads }));
+      }
+
       return Promise.reject(new Error(`Unexpected request: ${url}`));
     });
 
@@ -267,6 +273,9 @@ describe('ImportLeadsModal', () => {
       nameInput.dispatchEvent(new Event('change', { bubbles: true }));
     });
     expect(nameInput.value).toBe('Alex');
+
+    const validateBtn = [...container.querySelectorAll('button')].find((b) => b.textContent.includes('Validate Changes'));
+    await act(async () => validateBtn.click());
 
     // Confirm & Ingest with custom edits
     const ingestBtn = [...container.querySelectorAll('button')].find((b) =>

@@ -222,6 +222,7 @@ async def test_disconnect_pauses_sender_and_retains_paid_term_proxy():
     })
     operations = []
     db.outreach_accounts.update_one = AsyncMock(side_effect=lambda *args: operations.append("deactivate"))
+    db.outreach_connection_jobs.update_many = AsyncMock()
     db.outreach_campaigns.update_many = AsyncMock(side_effect=lambda *args: operations.append("pause"))
     db.outreach_tasks.update_many = AsyncMock(side_effect=lambda *args: operations.append("cancel"))
     result = await disconnect_account("account_a", current_user=USER, db=db)

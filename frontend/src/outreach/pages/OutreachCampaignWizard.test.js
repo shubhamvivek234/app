@@ -86,6 +86,34 @@ describe('First campaign wizard', () => {
     expect(container.querySelector('[data-testid="sequence-canvas"]')).toBeNull();
   });
 
+  it('preserves numeric-weekday working hours and timezone when reopening and saving a draft', async () => {
+    const saved = { id: 'campaign-saved', name: 'Early hours', status: 'paused', sender_account_ids: ['sender-a'],
+      schedule: { days: [0, 2, 4], start_time: '07:00', end_time: '11:00', timezone: 'Asia/Kolkata' } };
+    global.fetch = jest.fn((url) => Promise.resolve({ ok: true, json: async () => url.endsWith('/accounts')
+      ? [{ id: 'sender-a', status: 'active' }] : url.endsWith('/preflight') ? ready
+      : url.includes('/leads') ? { leads: [], total: 0 } : saved }));
+    await act(async () => root.render(<OutreachCampaignWizard campaignId="campaign-saved" initialStep={3} />));
+    await act(async () => container.querySelector('button[title="Back to campaigns"]').click());
+    const payload = JSON.parse(global.fetch.mock.calls.find(([url]) => url.endsWith('/auto-draft'))[1].body);
+    expect(payload.schedule.timezone).toBe('Asia/Kolkata');
+    expect(payload.schedule.days.filter(day => day.enabled).map(day => day.day)).toEqual(['Monday', 'Wednesday', 'Friday']);
+    expect(payload.schedule.days.every(day => day.ranges[0].start === '07:00 AM' && day.ranges[0].end === '11:00 AM')).toBe(true);
+  });
+
+  it('retains an unavailable saved sender when account loading completes later', async () => {
+    let finishAccounts;
+    const saved = { id: 'campaign-saved', name: 'Paused', status: 'paused', sender_account_ids: ['old-sender'] };
+    global.fetch = jest.fn((url) => url.endsWith('/accounts') ? new Promise(resolve => { finishAccounts = resolve; })
+      : Promise.resolve({ ok: true, json: async () => url.endsWith('/preflight') ? ready : url.includes('/leads') ? { leads: [], total: 0 } : saved }));
+    await act(async () => root.render(<OutreachCampaignWizard campaignId="campaign-saved" initialStep={3} />));
+    await act(async () => finishAccounts({ ok: true, json: async () => [{ id: 'other-sender', account_name: 'Other', status: 'active' }] }));
+    expect(container.textContent).toContain('Previously selected senders are unavailable');
+    await act(async () => container.querySelector('button[title="Back to campaigns"]').click());
+    const payload = JSON.parse(global.fetch.mock.calls.find(([url]) => url.endsWith('/auto-draft'))[1].body);
+    expect(payload.sender_account_ids).toEqual(['old-sender']);
+    expect(container.querySelector('input[type="checkbox"]').checked).toBe(false);
+  });
+
   it('stays on Leads when Proceed cannot save the draft', async () => {
     let draftSaves = 0;
     global.fetch = jest.fn((url) => Promise.resolve({
