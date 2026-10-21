@@ -355,6 +355,14 @@ async def test_outreach_analytics():
     assert len(res["daily_chart"]) == 14
     assert res["daily_chart"][0]["sent"] >= 0
     assert res["daily_chart"][0]["accepted"] >= 0
+    assert "benchmarks" in res
+    assert "recommendations" in res
+    assert isinstance(res["recommendations"], list)
+
+    # Verify 90d timeframe support
+    res_90 = await get_outreach_analytics(campaign_id="all", timeframe="90d", current_user=USER, db=db)
+    assert len(res_90["daily_chart"]) == 90
+    assert res_90["timeframe"] == "90d"
 
 
 @pytest.mark.asyncio

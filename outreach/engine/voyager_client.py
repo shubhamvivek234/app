@@ -1145,5 +1145,169 @@ class VoyagerClient:
                 "status_code": 502,
             }
 
+    async def fetch_first_degree_connections(
+        self,
+        start: int = 0,
+        count: int = 40,
+        keywords: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Fetches 1st-degree network connections ("My Network") from LinkedIn Voyager.
+        Returns normalized lead dictionaries suitable for staged review or campaign ingestion.
+        """
+        from outreach.core.lead_importer import normalize_linkedin_url, extract_vanity_name
+
+        if self.is_mock:
+            return []
+
+        endpoint = f"{VOYAGER_BASE_URL}/relationships/dash/connections"
+        params: dict[str, Any] = {
+            "decorationId": "com.linkedin.voyager.dash.deco.web.mynetwork.ConnectionListWithProfile-16",
+            "count": min(max(int(count), 1), 100),
+            "q": "search",
+            "sortType": "RECENTLY_ADDED",
+            "start": max(int(start), 0),
+        }
+        try:
+            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15.0) as client:
+                resp = await self._request(client, "GET", endpoint, headers=self._get_headers(), params=params)
+                if resp.status_code != 200:
+                    return []
+                data = resp.json()
+                elements = data.get("elements") if isinstance(data, dict) else []
+                if not isinstance(elements, list):
+                    return []
+                results: list[dict[str, Any]] = []
+                kw_lower = keywords.strip().lower() if isinstance(keywords, str) and keywords.strip() else ""
+                for el in elements:
+                    if not isinstance(el, dict):
+                        continue
+                    profile = el.get("connectedMemberResolutionResult") or el.get("miniProfile") or el
+                    first_name = str(profile.get("firstName") or "").strip()
+                    last_name = str(profile.get("lastName") or "").strip()
+                    headline = str(profile.get("headline") or profile.get("occupation") or "").strip()
+                    public_id = str(profile.get("publicIdentifier") or "").strip()
+                    entity_urn = str(profile.get("entityUrn") or el.get("connectedMember") or "").strip()
+                    if not public_id and not entity_urn:
+                        continue
+                    profile_url = normalize_linkedin_url(f"https://www.linkedin.com/in/{public_id}") if public_id else ""
+                    if kw_lower:
+                        haystack = f"{first_name} {last_name} {headline} {public_id}".lower()
+                        if kw_lower not in haystack:
+                            continue
+                    job_title = headline.split(" at ")[0].strip() if " at " in headline else headline
+                    company_name = headline.split(" at ")[1].strip() if " at " in headline else ""
+                    results.append({
+                        "first_name": first_name,
+                        "last_name": last_name,
+                        "headline": headline,
+                        "job_title": job_title,
+                        "company_name": company_name,
+                        "linkedin_url": profile_url,
+                        "vanity_name": extract_vanity_name(profile_url) if profile_url else public_id,
+                        "member_urn": entity_urn,
+                        "is_connected": True,
+                    })
+                return results
+        except Exception as exc:
+            logger.error("Voyager fetch_first_degree_connections error: %s", type(exc).__name__)
+            return []
+
+    async def fetch_post_engagers(
+        self,
+        post_url: str,
+        include_likes: bool = True,
+        include_comments: bool = True,
+        max_leads: int = 50,
+    ) -> list[dict[str, Any]]:
+        """
+        Extracts post likers and commenters from a LinkedIn activity/post URL via Voyager.
+        """
+        from outreach.core.lead_importer import normalize_linkedin_url, extract_vanity_name
+
+        if self.is_mock:
+            return []
+
+        m = re.search(r"(?:activity-|urn:li:activity:|urn:li:ugcPost:)(\d+)", post_url or "")
+        if not m:
+            return []
+        activity_id = m.group(1)
+        activity_urn = f"urn:li:activity:{activity_id}"
+        results: list[dict[str, Any]] = []
+        seen_keys: set[str] = set()
+
+        try:
+            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15.0) as client:
+                if include_likes and len(results) < max_leads:
+                    likes_url = f"{VOYAGER_BASE_URL}/feed/reactions"
+                    resp = await self._request(
+                        client,
+                        "GET",
+                        likes_url,
+                        headers=self._get_headers(),
+                        params={"q": "reactionType", "threadUrn": activity_urn, "count": min(max_leads, 50)},
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        for el in (data.get("elements") or []):
+                            actor = el.get("actor") or el.get("miniProfile") or {}
+                            public_id = str(actor.get("publicIdentifier") or "").strip()
+                            if not public_id or public_id in seen_keys:
+                                continue
+                            seen_keys.add(public_id)
+                            first_name = str(actor.get("firstName") or "").strip()
+                            last_name = str(actor.get("lastName") or "").strip()
+                            headline = str(actor.get("occupation") or actor.get("headline") or "").strip()
+                            profile_url = normalize_linkedin_url(f"https://www.linkedin.com/in/{public_id}")
+                            results.append({
+                                "first_name": first_name,
+                                "last_name": last_name,
+                                "headline": headline,
+                                "job_title": headline.split(" at ")[0].strip() if " at " in headline else headline,
+                                "company_name": headline.split(" at ")[1].strip() if " at " in headline else "",
+                                "linkedin_url": profile_url,
+                                "vanity_name": extract_vanity_name(profile_url) or public_id,
+                                "engagement_type": "like",
+                            })
+                            if len(results) >= max_leads:
+                                break
+
+                if include_comments and len(results) < max_leads:
+                    comments_url = f"{VOYAGER_BASE_URL}/feed/comments"
+                    resp = await self._request(
+                        client,
+                        "GET",
+                        comments_url,
+                        headers=self._get_headers(),
+                        params={"q": "comments", "updateId": activity_urn, "count": min(max_leads - len(results), 50)},
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        for el in (data.get("elements") or []):
+                            commenter = el.get("commenter") or el.get("miniProfile") or {}
+                            public_id = str(commenter.get("publicIdentifier") or "").strip()
+                            if not public_id or public_id in seen_keys:
+                                continue
+                            seen_keys.add(public_id)
+                            first_name = str(commenter.get("firstName") or "").strip()
+                            last_name = str(commenter.get("lastName") or "").strip()
+                            headline = str(commenter.get("occupation") or commenter.get("headline") or "").strip()
+                            profile_url = normalize_linkedin_url(f"https://www.linkedin.com/in/{public_id}")
+                            results.append({
+                                "first_name": first_name,
+                                "last_name": last_name,
+                                "headline": headline,
+                                "job_title": headline.split(" at ")[0].strip() if " at " in headline else headline,
+                                "company_name": headline.split(" at ")[1].strip() if " at " in headline else "",
+                                "linkedin_url": profile_url,
+                                "vanity_name": extract_vanity_name(profile_url) or public_id,
+                                "engagement_type": "comment",
+                            })
+                            if len(results) >= max_leads:
+                                break
+        except Exception as exc:
+            logger.error("Voyager fetch_post_engagers error: %s", type(exc).__name__)
+        return results
+
 
 LinkedInVoyagerClient = VoyagerClient

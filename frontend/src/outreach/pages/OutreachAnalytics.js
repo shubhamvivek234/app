@@ -252,6 +252,7 @@ export default function OutreachAnalytics() {
               <option value="7d">Last 7 days</option>
               <option value="14d">Last 14 days</option>
               <option value="30d">Last 30 days</option>
+              <option value="90d">Last 90 days</option>
             </select>
           </div>
 
@@ -689,6 +690,113 @@ export default function OutreachAnalytics() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* Prosp Parity: Peer Benchmarks & "What to Fix" AI Diagnostic Recommendations */}
+      {(analytics?.benchmarks || (Array.isArray(analytics?.recommendations) && analytics.recommendations.length > 0)) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+          {/* Peer Benchmarks Panel */}
+          {analytics?.benchmarks && (
+            <div className="bg-white rounded-2xl border border-gray-200/90 p-6 shadow-2xs">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="w-4 h-4 text-indigo-600" />
+                  <h2 className="text-xs font-bold text-gray-900 uppercase tracking-wider">
+                    Benchmarks Against Teams Like Yours
+                  </h2>
+                </div>
+                <span className="text-[11px] text-gray-500">B2B LinkedIn Outbound Cohorts</span>
+              </div>
+              <div className="space-y-4">
+                {[
+                  {
+                    label: 'Connection Acceptance Rate',
+                    data: analytics.benchmarks.acceptance_rate,
+                  },
+                  {
+                    label: 'Message Reply Rate',
+                    data: analytics.benchmarks.reply_rate,
+                  },
+                ].map((item, idx) => {
+                  const d = item.data || {};
+                  const statusLabel =
+                    d.status === 'top_tier'
+                      ? 'Top 25% Performer'
+                      : d.status === 'above_average'
+                      ? 'Above Peer Median'
+                      : d.status === 'below_average'
+                      ? 'Below Peer Median'
+                      : 'Gathering Cohort Data';
+                  const badgeColor =
+                    d.status === 'top_tier'
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : d.status === 'above_average'
+                      ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                      : d.status === 'below_average'
+                      ? 'bg-amber-50 text-amber-800 border-amber-200'
+                      : 'bg-gray-100 text-gray-600 border-gray-200';
+                  return (
+                    <div key={idx} className="rounded-xl border border-gray-100 bg-gray-50/70 p-4">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-xs font-bold text-gray-900">{item.label}</span>
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${badgeColor}`}>
+                          {statusLabel}
+                        </span>
+                      </div>
+                      <div className="flex items-baseline gap-4 text-xs text-gray-600 mt-2">
+                        <div>
+                          Your Cohort:{' '}
+                          <strong className="text-gray-900 text-sm">
+                            {Number.isFinite(d.your_rate) ? `${d.your_rate}%` : 'Not available'}
+                          </strong>
+                        </div>
+                        <div>
+                          Peer Median: <strong className="text-gray-700">{d.peer_median}%</strong>
+                        </div>
+                        <div>
+                          Top 25%: <strong className="text-indigo-600">{d.top_quartile}%+</strong>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* What to Fix: AI Recommendations Panel */}
+          {Array.isArray(analytics?.recommendations) && analytics.recommendations.length > 0 && (
+            <div className="bg-white rounded-2xl border border-gray-200/90 p-6 shadow-2xs">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-purple-600" />
+                  <h2 className="text-xs font-bold text-gray-900 uppercase tracking-wider">
+                    What to Fix: AI Recommendations
+                  </h2>
+                </div>
+                <span className="text-[11px] text-gray-500">Next best actions</span>
+              </div>
+              <div className="space-y-3">
+                {analytics.recommendations.map((rec) => {
+                  const borderStyle =
+                    rec.severity === 'high'
+                      ? 'border-rose-200 bg-rose-50/40'
+                      : rec.severity === 'medium'
+                      ? 'border-amber-200 bg-amber-50/40'
+                      : rec.severity === 'healthy'
+                      ? 'border-emerald-200 bg-emerald-50/40'
+                      : 'border-indigo-100 bg-indigo-50/30';
+                  return (
+                    <div key={rec.id} className={`rounded-xl border p-3.5 ${borderStyle}`}>
+                      <p className="text-xs font-bold text-gray-900">{rec.title}</p>
+                      <p className="text-[11px] text-gray-600 mt-1 leading-relaxed">{rec.action}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -172,10 +172,18 @@ class LeadFinderEnrollRequest(BaseModel):
 class ImportPostEngagersRequest(BaseModel):
     campaign_id: str
     post_url: str
+    sender_account_id: str | None = None
     push_option: str = Field(default="Only existing comments/likes", description="Push option")
     export_likes: bool = True
     export_comments: bool = True
     max_leads: int = Field(default=50, le=500)
+
+
+class ImportNetworkConnectionsRequest(BaseModel):
+    campaign_id: str
+    sender_account_id: str
+    keywords: str | None = Field(default=None, max_length=200)
+    max_leads: int = Field(default=50, ge=1, le=200)
 
 
 class UpdateLeadStageRequest(BaseModel):
@@ -1246,17 +1254,119 @@ async def import_post_engagers(
     current_user: dict = _lead_permission("lead:create"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    """Reject unsupported extraction instead of inventing post-engager profiles."""
-    await _require_campaign(req.campaign_id, current_user, db)
+    """
+    Extracts likers and commenters from a LinkedIn post URL via the selected active sender account
+    and ingests them into the target campaign (or rejects with 501 if no live sender is selected).
+    """
+    ws_id = _workspace_id(current_user)
+    campaign = await _require_campaign(req.campaign_id, current_user, db)
 
     clean_url = req.post_url.strip()
     if not clean_url or "linkedin.com" not in clean_url:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Must be a valid LinkedIn post URL")
 
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="LinkedIn post-engager extraction is not connected yet. Import verified prospects from a CSV instead.",
+    if not req.sender_account_id:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="LinkedIn post-engager extraction requires a connected active sender account (`sender_account_id`).",
+        )
+
+    sender = await db.outreach_accounts.find_one({
+        "id": req.sender_account_id,
+        **workspace_scope(ws_id),
+        "status": "active",
+    }) if hasattr(db, "outreach_accounts") else None
+    if not sender or not (sender.get("session_cookie_enc") or sender.get("encrypted_session_cookie")):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Selected sender account is not active or has no valid LinkedIn session cookie.",
+        )
+
+    from outreach.engine.voyager_client import VoyagerClient
+    from outreach.core.crypto import decrypt_secret
+
+    enc_cookie = sender.get("session_cookie_enc") or sender.get("encrypted_session_cookie")
+    try:
+        li_at = decrypt_secret(enc_cookie)
+    except Exception:
+        li_at = enc_cookie
+    client = VoyagerClient(li_at_cookie=li_at, proxy_url=sender.get("proxy_url"))
+    candidates = await client.fetch_post_engagers(
+        post_url=clean_url,
+        include_likes=req.export_likes,
+        include_comments=req.export_comments,
+        max_leads=req.max_leads,
     )
+    if not candidates:
+        return {"status": "completed", "imported_count": 0, "skipped_duplicates": 0, "leads": []}
+
+    result = await LeadImporter.ingest_leads(
+        leads=candidates,
+        campaign_id=req.campaign_id,
+        workspace_id=ws_id,
+        db=db,
+        campaign=campaign,
+        source="post_engagers",
+        source_metadata={"source_type": "post_engagers", "post_url": clean_url},
+        include_rejections=True,
+    )
+    return result
+
+
+@router.post("/import-network")
+async def import_first_degree_network(
+    req: ImportNetworkConnectionsRequest,
+    current_user: dict = _lead_permission("lead:create"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Imports 1st-degree connections ("My Network" source on Prosp) from a connected active
+    LinkedIn sender account into a campaign with duplicate and DNC suppression checks.
+    """
+    ws_id = _workspace_id(current_user)
+    campaign = await _require_campaign(req.campaign_id, current_user, db)
+    if campaign.get("status") == "warming_up":
+        raise HTTPException(status_code=409, detail="Pause conditional launch before changing its lead cohort")
+
+    sender = await db.outreach_accounts.find_one({
+        "id": req.sender_account_id,
+        **workspace_scope(ws_id),
+        "status": "active",
+    }) if hasattr(db, "outreach_accounts") else None
+    if not sender or not (sender.get("session_cookie_enc") or sender.get("encrypted_session_cookie")):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Active sender account not found in workspace.",
+        )
+
+    from outreach.engine.voyager_client import VoyagerClient
+    from outreach.core.crypto import decrypt_secret
+
+    enc_cookie = sender.get("session_cookie_enc") or sender.get("encrypted_session_cookie")
+    try:
+        li_at = decrypt_secret(enc_cookie)
+    except Exception:
+        li_at = enc_cookie
+    client = VoyagerClient(li_at_cookie=li_at, proxy_url=sender.get("proxy_url"))
+    candidates = await client.fetch_first_degree_connections(
+        start=0,
+        count=req.max_leads,
+        keywords=req.keywords,
+    )
+    if not candidates:
+        return {"status": "completed", "imported_count": 0, "skipped_duplicates": 0, "leads": []}
+
+    result = await LeadImporter.ingest_leads(
+        leads=candidates,
+        campaign_id=req.campaign_id,
+        workspace_id=ws_id,
+        db=db,
+        campaign=campaign,
+        source="my_network",
+        source_metadata={"source_type": "my_network", "sender_account_id": req.sender_account_id},
+        include_rejections=True,
+    )
+    return result
 
 
 @router.patch("/{lead_id}/stage")

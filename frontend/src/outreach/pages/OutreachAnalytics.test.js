@@ -313,4 +313,36 @@ describe('OutreachAnalytics component', () => {
     expect(container.textContent).toContain('18 / 75');
     expect(container.textContent).toContain('42 / 150');
   });
+
+  it('renders 90d timeframe option, peer benchmarks, and What to Fix AI recommendations', async () => {
+    const benchmarkedData = {
+      ...mockAnalyticsData,
+      benchmarks: {
+        acceptance_rate: { your_rate: 45.0, peer_median: 28.0, top_quartile: 42.0, status: 'top_tier' },
+        reply_rate: { your_rate: 8.5, peer_median: 12.0, top_quartile: 24.0, status: 'below_average' },
+      },
+      recommendations: [
+        {
+          id: 'low_reply_rate',
+          severity: 'high',
+          title: 'Message reply rate (8.5%) is below the 12% peer benchmark',
+          action: 'Enable A/B/C message variants in your sequence or add a personalized AI Voice Note follow-up.',
+        },
+      ],
+    };
+
+    global.fetch = jest.fn((url) => {
+      if (url.includes('/campaigns')) return Promise.resolve(ok([]));
+      if (url.includes('/accounts')) return Promise.resolve(ok([]));
+      return Promise.resolve(ok(benchmarkedData));
+    });
+
+    await act(async () => root.render(<OutreachAnalytics />));
+    expect(container.textContent).toContain('Last 90 days');
+    expect(container.textContent).toContain('Benchmarks Against Teams Like Yours');
+    expect(container.textContent).toContain('Top 25% Performer');
+    expect(container.textContent).toContain('Below Peer Median');
+    expect(container.textContent).toContain('What to Fix: AI Recommendations');
+    expect(container.textContent).toContain('Message reply rate (8.5%) is below the 12% peer benchmark');
+  });
 });

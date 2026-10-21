@@ -30,7 +30,7 @@ router = APIRouter(prefix="/analytics", tags=["LinkedIn Outreach Analytics"])
 async def get_outreach_analytics(
     campaign_id: str | None = None,
     sender_account_id: str | None = None,
-    timeframe: str = Query("30d", description="'7d' | '14d' | '30d'"),
+    timeframe: str = Query("30d", description="'7d' | '14d' | '30d' | '90d'"),
     current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
@@ -38,7 +38,7 @@ async def get_outreach_analytics(
     Returns aggregated outreach KPIs (Requests, Messages, Engagement, Email)
     and daily Sent vs Accepted timeline for bar chart visualization.
     """
-    if timeframe not in {"7d", "14d", "30d"}:
+    if timeframe not in {"7d", "14d", "30d", "90d"}:
         raise HTTPException(status_code=422, detail="Invalid analytics timeframe")
     workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
     scope = {"workspace_id": workspace_id}
@@ -47,7 +47,7 @@ async def get_outreach_analytics(
         if not campaign:
             raise HTTPException(status_code=404, detail="Campaign not found")
 
-    num_days = {"7d": 7, "14d": 14, "30d": 30}[timeframe]
+    num_days = {"7d": 7, "14d": 14, "30d": 30, "90d": 90}[timeframe]
     now = datetime.now(timezone.utc)
     period_start = (now - timedelta(days=num_days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -274,6 +274,86 @@ async def get_outreach_analytics(
         "variants_breakdown": ab_variants_breakdown,
     }
 
+    # Prosp Parity: Peer Benchmarks ("Benchmarks against teams like yours")
+    acc_rate = linkedin_cohorts["requests"]["acceptance_rate"]
+    rep_rate = linkedin_cohorts["messages"]["reply_rate"]
+    benchmarks = {
+        "acceptance_rate": {
+            "your_rate": acc_rate,
+            "peer_median": 28.0,
+            "top_quartile": 42.0,
+            "status": (
+                "insufficient_data" if acc_rate is None or linkedin_cohorts["requests"]["denominator"] < 5
+                else "top_tier" if acc_rate >= 42.0
+                else "above_average" if acc_rate >= 28.0
+                else "below_average"
+            ),
+        },
+        "reply_rate": {
+            "your_rate": rep_rate,
+            "peer_median": 12.0,
+            "top_quartile": 24.0,
+            "status": (
+                "insufficient_data" if rep_rate is None or linkedin_cohorts["messages"]["denominator"] < 5
+                else "top_tier" if rep_rate >= 24.0
+                else "above_average" if rep_rate >= 12.0
+                else "below_average"
+            ),
+        },
+    }
+
+    # Prosp Parity: "What to Fix: AI recommendations on what to change next"
+    recommendations: list[dict[str, str]] = []
+    if not has_connected_account:
+        recommendations.append({
+            "id": "connect_sender",
+            "severity": "high",
+            "title": "Connect an active LinkedIn sender account",
+            "action": "Go to Settings → Accounts to connect a sender and dedicated residential/ISP proxy so sequences can run.",
+        })
+    if any(m.get("weekly_invite_limit_reached") for m in team_performance):
+        recommendations.append({
+            "id": "weekly_invite_cap",
+            "severity": "medium",
+            "title": "Weekly invitation limit reached on at least one sender",
+            "action": "Invites are automatically isolated until Monday UTC while direct messages and warm-up visits continue. Add a second sender slot to distribute invite volume.",
+        })
+    if acc_rate is not None and linkedin_cohorts["requests"]["denominator"] >= 5 and acc_rate < 25.0:
+        recommendations.append({
+            "id": "low_acceptance_rate",
+            "severity": "high",
+            "title": f"Acceptance rate ({acc_rate}%) is below the 28% peer benchmark",
+            "action": "Add a 'Visit profile' and 'Like last post' warm-up step before your Connection Request, or test a blank connection note.",
+        })
+    if rep_rate is not None and linkedin_cohorts["messages"]["denominator"] >= 5 and rep_rate < 10.0:
+        recommendations.append({
+            "id": "low_reply_rate",
+            "severity": "high",
+            "title": f"Message reply rate ({rep_rate}%) is below the 12% peer benchmark",
+            "action": "Enable A/B/C message variants in your sequence or add a personalized AI Voice Note follow-up to lift response rates.",
+        })
+    if requests_sent >= 10 and profile_visits == 0 and post_engagements == 0:
+        recommendations.append({
+            "id": "missing_pre_warming",
+            "severity": "medium",
+            "title": "Zero pre-warming actions recorded before connection invites",
+            "action": "Sequences that view profiles or engage with a post prior to connecting convert 18–25% better. Add pre-warm steps to your sequence.",
+        })
+    if messages_sent >= 10 and len(ab_variants_breakdown) <= 1:
+        recommendations.append({
+            "id": "enable_ab_testing",
+            "severity": "low",
+            "title": "No active A/B message split detected",
+            "action": "Add Variant B in the Sequence Builder to test a shorter question-led opener against your current copy.",
+        })
+    if not recommendations:
+        recommendations.append({
+            "id": "healthy_funnel",
+            "severity": "healthy",
+            "title": "Campaign metrics are tracking at or above peer benchmarks",
+            "action": "Continue monitoring sender Activity Control levels and scale daily limits gradually.",
+        })
+
     return {
         "has_connected_account": has_connected_account,
         "kpis": {
@@ -310,6 +390,8 @@ async def get_outreach_analytics(
         "linkedin_cohorts": linkedin_cohorts,
         "team_performance": team_performance,
         "sequence_funnel": sequence_funnel,
+        "benchmarks": benchmarks,
+        "recommendations": recommendations,
         "timeframe": timeframe,
         "campaign_id": campaign_id or "all",
         "sender_account_id": sender_account_id or "all",
@@ -320,7 +402,7 @@ async def get_outreach_analytics(
 async def export_outreach_analytics(
     campaign_id: str | None = None,
     sender_account_id: str | None = None,
-    timeframe: str = Query("30d", description="'7d' | '14d' | '30d'"),
+    timeframe: str = Query("30d", description="'7d' | '14d' | '30d' | '90d'"),
     current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
