@@ -120,7 +120,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
   const [draftRetryKey, setDraftRetryKey] = useState(0);
   const [currentStep, setCurrentStep] = useState(initialStep || 1);
   const [campaignName, setCampaignName] = useState(initialName || '');
-  const hasUserEditedName = React.useRef(Boolean(initialName));
+  const hasUserEditedName = React.useRef(false);
   const [senders, setSenders] = useState([]);
   const [senderError, setSenderError] = useState('');
   const [senderRetryKey, setSenderRetryKey] = useState(0);
@@ -661,7 +661,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                   toast.error('Sequence could not be saved. Please try again before leaving.');
                   return;
                 }
-                if (onBack) onBack();
+                if (onBack) onBack(saved);
               }}
               title="Back to campaigns"
               className="p-2 rounded-xl border border-gray-200 text-gray-500 hover:text-gray-900 hover:bg-gray-50 transition-colors shadow-2xs"

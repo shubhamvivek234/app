@@ -159,4 +159,58 @@ describe('Server-reviewed gallery selection', () => {
     expect(global.fetch).toHaveBeenCalledTimes(3);
     expect(opened).not.toHaveBeenCalled();
   });
+
+  it('handles row menu actions Resume draft, Edit sequence, Duplicate, and View details', async () => {
+    const draft = {
+      id: 'camp-draft-1',
+      workspace_id: 'ws-1',
+      name: 'Connect and follow up',
+      status: 'draft',
+      draft_step: 2,
+      draft_progress: 60,
+    };
+    const cloned = { ...draft, id: 'camp-draft-copy', name: 'Connect and follow up (Copy)' };
+    global.fetch = jest.fn((url, opts) => {
+      if (url.endsWith('/duplicate') && opts?.method === 'POST') {
+        return Promise.resolve(response(cloned));
+      }
+      if (url.endsWith('/camp-draft-1')) {
+        return Promise.resolve(response(draft));
+      }
+      return Promise.resolve(response([draft]));
+    });
+    const onSelectCampaign = jest.fn();
+    await act(async () => root.render(<OutreachCampaigns onOpenWizard={opened} onSelectCampaign={onSelectCampaign} />));
+
+    const openRowMenu = async () => {
+      const row = container.querySelector('tbody tr');
+      const menuBtn = row.querySelector('td:last-child button');
+      await act(async () => menuBtn.click());
+    };
+
+    // 1. Resume draft from row menu passes id, draft_step, and name
+    await openRowMenu();
+    const resumeMenuBtn = [...container.querySelectorAll('tbody tr td:last-child button')].find((b) => b.textContent.includes('Resume draft'));
+    await act(async () => resumeMenuBtn.click());
+    expect(opened).toHaveBeenCalledWith('camp-draft-1', 2, 'Connect and follow up');
+
+    // 2. Edit sequence from row menu passes id, step 2, and name
+    opened.mockClear();
+    await openRowMenu();
+    const editSeqBtn = [...container.querySelectorAll('tbody tr td:last-child button')].find((b) => b.textContent.includes('Edit sequence'));
+    await act(async () => editSeqBtn.click());
+    expect(opened).toHaveBeenCalledWith('camp-draft-1', 2, 'Connect and follow up');
+
+    // 3. View details from row menu selects campaign
+    await openRowMenu();
+    const viewDetailsBtn = [...container.querySelectorAll('tbody tr td:last-child button')].find((b) => b.textContent.includes('View details'));
+    await act(async () => viewDetailsBtn.click());
+    expect(onSelectCampaign).toHaveBeenCalledWith('camp-draft-1');
+
+    // 4. Duplicate from row menu posts to /duplicate
+    await openRowMenu();
+    const duplicateBtn = [...container.querySelectorAll('tbody tr td:last-child button')].find((b) => b.textContent.includes('Duplicate'));
+    await act(async () => duplicateBtn.click());
+    expect(global.fetch.mock.calls.some(([url, opts]) => url.endsWith('/camp-draft-1/duplicate') && opts?.method === 'POST')).toBe(true);
+  });
 });

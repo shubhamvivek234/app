@@ -137,6 +137,7 @@ class MockDB:
         self.outreach_leads = MockCollection()
         self.outreach_accounts = MockCollection()
         self.outreach_sequences = MockCollection()
+        self.outreach_sequence_versions = MockCollection()
         self.outreach_tasks = MockCollection()
         self.outreach_entitlements = MockCollection()
 
@@ -365,18 +366,22 @@ async def test_duplicate_campaign():
     assert duplicated["id"] != "camp_source_1"
     assert duplicated["name"] == "Q4 Enterprise Founders (Copy)"
     assert duplicated["status"] == "draft"
+    assert duplicated["authorization_revision"] == 0
     assert duplicated["draft_step"] == 1
     assert duplicated["sender_account_ids"] == ["acc_1", "acc_2"]
     assert duplicated["limits"]["connection_invites"] == 25
     assert duplicated["leads_count"] == 0
     assert duplicated["leads_contacted"] == 0
     assert duplicated["acceptances_count"] == 0
+    assert duplicated.get("sequence_version_id") is not None
 
     # Ensure sequence was also duplicated
     cloned_seq = await db.outreach_sequences.find_one({"campaign_id": duplicated["id"]})
     assert cloned_seq is not None
     assert len(cloned_seq["nodes"]) == 1
     assert cloned_seq["nodes"][0]["type"] == "connection_request"
+    assert cloned_seq["version"] == 1
+    assert cloned_seq["compiler_contract_version"] == 1
 
 
 @pytest.mark.asyncio

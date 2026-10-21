@@ -633,10 +633,11 @@ async def duplicate_campaign(
 
     new_campaign_doc = {
         "id": new_id,
-        "workspace_id": campaign.get("workspace_id", "default_ws"),
+        "workspace_id": campaign.get("workspace_id", _workspace_id(current_user)),
         "user_id": user_id,
         "name": copy_name,
         "status": CampaignStatus.DRAFT.value,
+        "authorization_revision": 0,
         "sender_account_ids": list(campaign.get("sender_account_ids", [])),
         "schedule": dict(campaign.get("schedule", {})),
         "limits": dict(campaign.get("limits", {})),
@@ -656,6 +657,7 @@ async def duplicate_campaign(
     # If original campaign has an associated sequence, clone it for the new campaign
     seq = await load_sequence(db, _workspace_id(current_user), campaign_id, campaign=campaign)
     if seq:
+        pointer = generate_uuid()
         new_seq_doc = {
             "campaign_id": new_id,
             "id": generate_uuid(),
@@ -665,10 +667,17 @@ async def duplicate_campaign(
             "edges": seq.get("edges", []),
             "tree": seq.get("tree"),
             "compiled_dag": seq.get("compiled_dag"),
+            "compiler_contract_version": 1,
+            "version": 1,
+            "is_deleted": False,
             "created_at": now,
             "updated_at": now,
         }
-        await db.outreach_sequences.insert_one(new_seq_doc)
+        seq_versions = getattr(db, "outreach_sequence_versions", None)
+        if seq_versions is not None:
+            await seq_versions.insert_one({**new_seq_doc, "_id": pointer})
+            new_campaign_doc["sequence_version_id"] = pointer
+        await db.outreach_sequences.insert_one(dict(new_seq_doc))
 
     await db.outreach_campaigns.insert_one(new_campaign_doc)
     new_campaign_doc.pop("_id", None)

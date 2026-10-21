@@ -72,4 +72,13 @@ describe('Campaign deletion recovery', () => {
     finally { spy.mockRestore(); }
     expect(global.fetch.mock.calls.some(([, options]) => options?.method === 'DELETE')).toBe(false);
   });
+
+  it('clears a stale deletion reference when the server returns 404 on Finish deletion', async () => {
+    global.fetch = jest.fn((url) => Promise.resolve(url.includes('?')
+      ? { ok: false, status: 404, json: async () => ({ detail: 'Campaign not found' }) } : response([])));
+    await mount();
+    await click('Finish deletion');
+    expect(sessionStorage.getItem(KEY)).toBe('{}');
+    expect(container.textContent).not.toContain('deletion needs confirmation');
+  });
 });

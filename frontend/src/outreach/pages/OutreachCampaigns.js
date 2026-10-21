@@ -448,6 +448,18 @@ export default function OutreachCampaigns({
   const [searchQuery, setSearchQuery] = useState('');
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [activeCampaignId, setActiveCampaignId] = useState(null);
+  const [activeWizardStep, setActiveWizardStep] = useState(1);
+  const [activeWizardName, setActiveWizardName] = useState('');
+  const openCampaignWizard = (id, step = 2, name = '') => {
+    if (onOpenWizard) {
+      onOpenWizard(id, step, name);
+    } else {
+      setActiveCampaignId(id);
+      setActiveWizardStep(step);
+      setActiveWizardName(name || '');
+      setIsWizardOpen(true);
+    }
+  };
   const [internalSelectedId, setInternalSelectedId] = useState(null);
   const selectedCampaignId = propSelectedCampaignId !== undefined ? propSelectedCampaignId : internalSelectedId;
   const setSelectedCampaignId = (id) => {
@@ -512,6 +524,13 @@ export default function OutreachCampaigns({
   const [newCampaignModalOpen, setNewCampaignModalOpen] = useState(false);
   const [scratchCampaignName, setScratchCampaignName] = useState('');
   const [isCreatingCampaign, setIsCreatingCampaign] = useState(false);
+
+  useEffect(() => {
+    if (!menuOpenId) return undefined;
+    const handleOutsideClick = () => setMenuOpenId(null);
+    document.addEventListener('click', handleOutsideClick);
+    return () => document.removeEventListener('click', handleOutsideClick);
+  }, [menuOpenId]);
 
   // Optimistically reflect newly saved campaign from wizard with 0ms latency
   useEffect(() => {
@@ -764,11 +783,7 @@ export default function OutreachCampaigns({
       if (!currentUse()) return false;
       setIsTemplatesOpen(false);
       toast.success(`Template loaded: “${fullTpl.name}”`);
-      if (onOpenWizard) onOpenWizard(draft.id, 2, fullTpl.name);
-      else {
-        setActiveCampaignId(draft.id);
-        setIsWizardOpen(true);
-      }
+      openCampaignWizard(draft.id, 2, fullTpl.name);
       return true;
     } catch (err) {
       if (currentUse()) toast.error(err.message || 'Could not load this template. Please try again.');
@@ -844,12 +859,7 @@ export default function OutreachCampaigns({
         const draft = await res.json();
         if (!draft?.id) throw new Error('The campaign draft was not saved.');
         toast.success(`Campaign created: “${safeName}”`);
-        if (onOpenWizard) {
-          onOpenWizard(draft.id, 1, draft.name || safeName);
-        } else {
-          setActiveCampaignId(draft.id);
-          setIsWizardOpen(true);
-        }
+        openCampaignWizard(draft.id, 1, draft.name || safeName);
         return true;
       }
       const error = await res.json().catch(() => ({}));
@@ -950,8 +960,16 @@ export default function OutreachCampaigns({
         method: restore ? 'POST' : 'DELETE', credentials: 'include',
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Could not confirm the change. Retry this operation.');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 404 && !restore) {
+          saveDeletionReference(op, true);
+          fetchCampaigns();
+          toast.success('Campaign deleted');
+          return;
+        }
+        throw new Error(data.detail || 'Could not confirm the change. Retry this operation.');
+      }
       if (data.id !== op.id || data.request_id !== op.requestId
         || !['deleted', 'restored', 'deletion_pending', 'restore_pending'].includes(data.status)) {
         throw new Error('The operation could not be confirmed. Check its status before continuing.');
@@ -993,12 +1011,7 @@ export default function OutreachCampaigns({
           fetchCampaigns();
         }}
         onEdit={(id, step, name) => {
-          if (onOpenWizard) {
-            onOpenWizard(id, step || 2, name || '');
-          } else {
-            setActiveCampaignId(id);
-            setIsWizardOpen(true);
-          }
+          openCampaignWizard(id, step || 2, name || '');
         }}
       />
     );
@@ -1009,6 +1022,8 @@ export default function OutreachCampaigns({
     return (
       <OutreachCampaignWizard
         campaignId={activeCampaignId || 'new'}
+        initialStep={activeWizardStep}
+        initialName={activeWizardName}
         onBack={() => {
           setIsWizardOpen(false);
           setActiveCampaignId(null);
@@ -1271,14 +1286,7 @@ export default function OutreachCampaigns({
           </div>
 
           <button
-            onClick={() => {
-              if (onOpenWizard) {
-                onOpenWizard(draftCampaign.id, draftCampaign.draft_step || 2, draftCampaign.name);
-              } else {
-                setActiveCampaignId(draftCampaign.id);
-                setIsWizardOpen(true);
-              }
-            }}
+            onClick={() => openCampaignWizard(draftCampaign.id, draftCampaign.draft_step || 2, draftCampaign.name)}
             className="rounded-xl bg-[#5145cd] hover:bg-[#4338ca] px-4 py-2 text-xs font-semibold text-white shadow-2xs transition-colors shrink-0"
           >
             Resume draft
@@ -1391,12 +1399,7 @@ export default function OutreachCampaigns({
                     key={camp.id}
                     onClick={() => {
                       if (camp.status === 'draft') {
-                        if (onOpenWizard) {
-                          onOpenWizard(camp.id, camp.draft_step || 2, camp.name);
-                        } else {
-                          setActiveCampaignId(camp.id);
-                          setIsWizardOpen(true);
-                        }
+                        openCampaignWizard(camp.id, camp.draft_step || 2, camp.name);
                       } else {
                         setSelectedCampaignId(camp.id);
                       }
@@ -1505,7 +1508,7 @@ export default function OutreachCampaigns({
                             <button
                               onClick={() => {
                                 setMenuOpenId(null);
-                                if (onOpenWizard) onOpenWizard(camp.id, camp.draft_step || 2);
+                                openCampaignWizard(camp.id, camp.draft_step || 2, camp.name);
                               }}
                               className="w-full text-left px-3 py-1.5 rounded-lg text-indigo-700 hover:bg-indigo-50 font-medium flex items-center gap-2"
                             >
@@ -1535,7 +1538,9 @@ export default function OutreachCampaigns({
                               setMenuOpenId(null);
                               if (['active', 'warming_up'].includes(camp.status)) {
                                 toast.error('Pause the campaign before editing its sequence.');
-                              } else if (onOpenWizard) onOpenWizard(camp.id, 2);
+                              } else {
+                                openCampaignWizard(camp.id, 2, camp.name);
+                              }
                             }}
                             className="w-full text-left px-3 py-1.5 rounded-lg text-gray-700 hover:bg-gray-50 font-medium flex items-center gap-2"
                           >
