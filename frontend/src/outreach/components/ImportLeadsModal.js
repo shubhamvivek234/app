@@ -55,9 +55,16 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
     // Opening scope is immutable until close or campaign change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope]);
-  // Step 1: Choose Source, Step 2: Input / URLs / CSV / Search, Step 3: Preview & Deduplication, Step 4: Complete
+  // Step 1: Choose Source, Step 2: Input / URLs / CSV / Search / CRM, Step 3: Preview & Deduplication, Step 4: Complete
   const [step, setStep] = useState(1);
-  const [sourceType, setSourceType] = useState('urls'); // 'urls' | 'csv' | 'search'
+  const [sourceType, setSourceType] = useState('urls'); // 'urls' | 'csv' | 'search' | 'crm'
+  const [sourceHint, setSourceHint] = useState('');
+  const [crmLeads, setCrmLeads] = useState([]);
+  const [crmEngageLists, setCrmEngageLists] = useState([]);
+  const [crmSelectedListId, setCrmSelectedListId] = useState('');
+  const [crmLoading, setCrmLoading] = useState(false);
+  const [crmSearch, setCrmSearch] = useState('');
+  const [crmSelectedUrls, setCrmSelectedUrls] = useState([]);
 
   // Input states
   const [urlsText, setUrlsText] = useState('');
@@ -281,15 +288,65 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
     reader.readAsText(file);
   };
 
-  const handleRunPreview = async () => {
+  const loadCrmLeads = async (engageListId = '') => {
+    if (!isScopeCurrent()) return;
+    setCrmLoading(true);
+    setError(null);
+    try {
+      const token = scope.token;
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      if (engageListId) {
+        const res = await scopedFetch(`/api/v1/outreach/engage/lists/${engageListId}/contacts`, {
+          credentials: 'include',
+          headers,
+        });
+        if (res.ok && isScopeCurrent()) {
+          const data = await res.json();
+          const contacts = (Array.isArray(data) ? data : data.contacts || []).filter((c) => c.linkedin_url);
+          setCrmLeads(contacts);
+          setCrmSelectedUrls(contacts.map((c) => c.linkedin_url));
+        }
+      } else {
+        const [leadsRes, listsRes] = await Promise.all([
+          scopedFetch('/api/v1/outreach/leads?limit=100', { credentials: 'include', headers }),
+          scopedFetch('/api/v1/outreach/engage/lists', { credentials: 'include', headers }),
+        ]);
+        if (!isScopeCurrent()) return;
+        if (listsRes.ok) {
+          const listsData = await listsRes.json().catch(() => []);
+          setCrmEngageLists(Array.isArray(listsData) ? listsData : []);
+        }
+        if (leadsRes.ok) {
+          const leadsData = await leadsRes.json().catch(() => ({}));
+          const rows = (Array.isArray(leadsData) ? leadsData : leadsData.leads || []).filter(
+            (l) => l.linkedin_url && l.campaign_id !== campaignId
+          );
+          setCrmLeads(rows);
+          setCrmSelectedUrls(rows.map((l) => l.linkedin_url));
+        }
+      }
+    } catch (_) {
+      // fallback quietly
+    } finally {
+      if (isScopeCurrent()) setCrmLoading(false);
+    }
+  };
+
+  const handleRunPreview = async (overrideUrlsText) => {
     if (!isScopeCurrent()) return;
     if (!campaignId) {
       setError('Select a campaign before previewing contacts.');
       return;
     }
-    const rawText = sourceType === 'urls' ? urlsText.trim() : csvContent.trim();
+    const effectiveSource = typeof overrideUrlsText === 'string' ? 'urls' : sourceType;
+    const rawText =
+      typeof overrideUrlsText === 'string'
+        ? overrideUrlsText.trim()
+        : effectiveSource === 'urls'
+        ? urlsText.trim()
+        : csvContent.trim();
     if (!rawText) {
-      setError(sourceType === 'urls' ? 'Please paste at least one LinkedIn profile URL.' : 'Please upload or paste CSV content.');
+      setError(effectiveSource === 'urls' ? 'Please paste at least one LinkedIn profile URL.' : 'Please upload or paste CSV content.');
       return;
     }
 
@@ -308,7 +365,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
         },
         body: JSON.stringify({
           campaign_id: campaignId,
-          source_type: sourceType === 'urls' ? 'pasted_urls' : 'csv',
+          source_type: effectiveSource === 'urls' ? 'pasted_urls' : 'csv',
           raw_text: rawText,
           default_first_name: defaultFirstName.trim() || null,
           default_company_name: defaultCompanyName.trim() || null,
@@ -716,7 +773,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                 {/* 1. Paste LinkedIn Profile URLs (ACTIVE) */}
                 <button
                   type="button"
-                  onClick={() => { setSourceType('urls'); setStep(2); }}
+                  onClick={() => { setSourceHint(''); setSourceType('urls'); setStep(2); }}
                   className="text-left p-4 rounded-xl border-2 border-indigo-500 bg-indigo-50/20 hover:bg-indigo-50/40 transition-all group relative cursor-pointer"
                 >
                   <div className="absolute top-3 right-3 flex items-center gap-1 bg-indigo-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-xs">
@@ -736,7 +793,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                 {/* 2. CSV File (ACTIVE) */}
                 <button
                   type="button"
-                  onClick={() => { setSourceType('csv'); setStep(2); }}
+                  onClick={() => { setSourceHint(''); setSourceType('csv'); setStep(2); }}
                   className="text-left p-4 rounded-xl border border-gray-200 hover:border-indigo-500 hover:bg-gray-50 transition-all group cursor-pointer"
                 >
                   <div className="flex items-center gap-3.5">
@@ -754,7 +811,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                 <button
                   type="button"
                   disabled={!searchAvailable}
-                  onClick={() => { setSourceType('search'); setStep(2); }}
+                  onClick={() => { setSourceHint(''); setSourceType('search'); setStep(2); }}
                   className="text-left p-4 rounded-xl border border-gray-200 hover:border-indigo-500 hover:bg-gray-50 transition-all group cursor-pointer relative"
                 >
                   <div className="absolute top-3 right-3 flex items-center gap-1 bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-xs">
@@ -771,53 +828,71 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                   </div>
                 </button>
 
-                {/* 4. Lead Finder (DISABLED - REQUIRES PARTNER APPROVAL) */}
-                <div className="p-4 rounded-xl border border-gray-200 bg-gray-50/70 opacity-60 relative">
-                  <div className="absolute top-3 right-3 text-[10px] font-semibold text-gray-500 bg-gray-200 px-2 py-0.5 rounded-full">
-                    Partner API required
+                {/* 4. Interactive Lead Finder / Workspace CRM & Engage Lists */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSourceHint('');
+                    setSourceType('crm');
+                    setCrmSelectedListId('');
+                    setStep(2);
+                    loadCrmLeads('');
+                  }}
+                  className="text-left p-4 rounded-xl border border-gray-200 hover:border-indigo-500 hover:bg-gray-50 transition-all group relative cursor-pointer"
+                >
+                  <div className="absolute top-3 right-3 text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
+                    Workspace CRM & Lists
                   </div>
                   <div className="flex items-center gap-3.5">
-                    <div className="p-2.5 rounded-xl bg-gray-200 text-gray-500">
+                    <div className="p-2.5 rounded-xl bg-amber-100 text-amber-700 group-hover:bg-amber-600 group-hover:text-white transition-colors">
                       <Sparkles className="h-5 w-5" />
                     </div>
                     <div>
-                      <h4 className="font-bold text-gray-700 text-sm">Interactive Lead Finder</h4>
-                      <p className="text-xs text-gray-500 mt-0.5">Direct prospect exploration requires official LinkedIn Partner API</p>
+                      <h4 className="font-bold text-gray-900 text-sm">Interactive Lead Finder</h4>
+                      <p className="text-xs text-gray-500 mt-0.5">Select prospects from your Workspace CRM or Engage Warm-Up Lists</p>
                     </div>
                   </div>
-                </div>
+                </button>
 
-                {/* 5. LinkedIn Event (DISABLED) */}
-                <div className="p-4 rounded-xl border border-gray-200 bg-gray-50/70 opacity-60 relative">
-                  <div className="absolute top-3 right-3 text-[10px] font-semibold text-gray-500 bg-gray-200 px-2 py-0.5 rounded-full">
-                    Scraping disabled
+                {/* 5. LinkedIn Event (Manual URL Import with Scraping disabled notice) */}
+                <button
+                  type="button"
+                  onClick={() => { setSourceHint('event'); setSourceType('urls'); setStep(2); }}
+                  className="text-left p-4 rounded-xl border border-gray-200 hover:border-indigo-500 hover:bg-gray-50 transition-all group relative cursor-pointer"
+                >
+                  <div className="absolute top-3 right-3 text-[10px] font-semibold text-gray-600 bg-gray-100 border border-gray-200 px-2 py-0.5 rounded-full">
+                    Scraping disabled · Paste URLs
                   </div>
                   <div className="flex items-center gap-3.5">
-                    <div className="p-2.5 rounded-xl bg-gray-200 text-gray-500">
+                    <div className="p-2.5 rounded-xl bg-sky-100 text-sky-700 group-hover:bg-sky-600 group-hover:text-white transition-colors">
                       <Calendar className="h-5 w-5" />
                     </div>
                     <div>
-                      <h4 className="font-bold text-gray-700 text-sm">LinkedIn Event attendees</h4>
-                      <p className="text-xs text-gray-500 mt-0.5">Automated attendee harvesting disabled for account safety</p>
+                      <h4 className="font-bold text-gray-900 text-sm">LinkedIn Event attendees</h4>
+                      <p className="text-xs text-gray-500 mt-0.5">Automated attendee harvesting disabled for safety — click to paste attendee URLs</p>
                     </div>
                   </div>
-                </div>
+                </button>
 
-                {/* 6. Post Engagers (DISABLED) */}
-                <div className="p-4 rounded-xl border border-gray-200 bg-gray-50/70 opacity-60 relative">
-                  <div className="absolute top-3 right-3 text-[10px] font-semibold text-gray-500 bg-gray-200 px-2 py-0.5 rounded-full">
-                    Scraping disabled
+                {/* 6. Post Engagers (Manual URL Import with Scraping disabled notice) */}
+                <button
+                  type="button"
+                  onClick={() => { setSourceHint('post'); setSourceType('urls'); setStep(2); }}
+                  className="text-left p-4 rounded-xl border border-gray-200 hover:border-indigo-500 hover:bg-gray-50 transition-all group relative cursor-pointer"
+                >
+                  <div className="absolute top-3 right-3 text-[10px] font-semibold text-gray-600 bg-gray-100 border border-gray-200 px-2 py-0.5 rounded-full">
+                    Scraping disabled · Paste URLs
                   </div>
                   <div className="flex items-center gap-3.5">
-                    <div className="p-2.5 rounded-xl bg-gray-200 text-gray-500">
+                    <div className="p-2.5 rounded-xl bg-rose-100 text-rose-700 group-hover:bg-rose-600 group-hover:text-white transition-colors">
                       <MessageSquare className="h-5 w-5" />
                     </div>
                     <div>
-                      <h4 className="font-bold text-gray-700 text-sm">LinkedIn Post Engagers</h4>
-                      <p className="text-xs text-gray-500 mt-0.5">Commenter/liker scraping disabled for account safety</p>
+                      <h4 className="font-bold text-gray-900 text-sm">LinkedIn Post Engagers</h4>
+                      <p className="text-xs text-gray-500 mt-0.5">Commenter/liker scraping disabled for safety — click to paste engager URLs</p>
                     </div>
                   </div>
-                </div>
+                </button>
               </div>
             </div>
           )}
@@ -825,6 +900,11 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
           {/* ── STEP 2: Input / Configuration ───────────────────────────────────── */}
           {step === 2 && sourceType === 'urls' && (
             <div className="space-y-4">
+              {sourceHint && (
+                <div className="rounded-xl border border-sky-200 bg-sky-50/80 p-3 text-xs text-sky-900">
+                  <strong>{sourceHint === 'event' ? 'LinkedIn Event Attendees:' : 'LinkedIn Post Engagers:'}</strong> Automated scraping is disabled for account safety. Paste your exported {sourceHint === 'event' ? 'event attendee' : 'post engager'} LinkedIn profile URLs below (one per line) to validate and enroll them.
+                </div>
+              )}
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1">
                   Paste LinkedIn Profile URLs (One per line)
@@ -898,7 +978,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                 </button>
                 <button
                   type="button"
-                  onClick={handleRunPreview}
+                  onClick={() => handleRunPreview()}
                   disabled={previewLoading || !urlsText.trim()}
                   className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 shadow-sm disabled:opacity-50 cursor-pointer"
                 >
@@ -911,6 +991,167 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                       Validate & Preview <ArrowRight className="h-3.5 w-3.5" />
                     </>
                   )}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {step === 2 && sourceType === 'crm' && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-gray-700">
+                    Select Prospects from Workspace CRM or Engage Lists
+                  </h4>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Pick existing leads or warm-up cohort contacts to validate and enroll into this campaign.
+                  </p>
+                </div>
+                {crmEngageLists.length > 0 && (
+                  <select
+                    value={crmSelectedListId}
+                    onChange={(e) => {
+                      const nextListId = e.target.value;
+                      setCrmSelectedListId(nextListId);
+                      loadCrmLeads(nextListId);
+                    }}
+                    className="rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs bg-white text-gray-700"
+                  >
+                    <option value="">All Workspace Leads</option>
+                    {crmEngageLists.map((lst) => (
+                      <option key={lst.id} value={lst.id}>
+                        Engage List: {lst.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between gap-2">
+                <input
+                  type="text"
+                  value={crmSearch}
+                  onChange={(e) => setCrmSearch(e.target.value)}
+                  placeholder="Filter by name, company, or LinkedIn URL..."
+                  className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-xs"
+                />
+                <button
+                  type="button"
+                  onClick={() => setCrmSelectedUrls(crmLeads.map((l) => l.linkedin_url).filter(Boolean))}
+                  className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Select All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCrmSelectedUrls([])}
+                  className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Clear
+                </button>
+              </div>
+
+              <div className="border border-gray-200 rounded-xl max-h-56 overflow-y-auto divide-y divide-gray-100 text-xs">
+                {crmLoading ? (
+                  <div className="p-6 text-center text-gray-400 flex items-center justify-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading workspace contacts...
+                  </div>
+                ) : crmLeads.length === 0 ? (
+                  <div className="p-6 text-center text-gray-500 space-y-2">
+                    <p>No existing workspace leads found outside this campaign.</p>
+                    <button
+                      type="button"
+                      onClick={() => { setSourceType('urls'); }}
+                      className="text-indigo-600 font-semibold hover:underline"
+                    >
+                      Paste LinkedIn profile URLs instead →
+                    </button>
+                  </div>
+                ) : (
+                  crmLeads
+                    .filter((l) => {
+                      if (!crmSearch.trim()) return true;
+                      const q = crmSearch.toLowerCase();
+                      return (
+                        (l.first_name || '').toLowerCase().includes(q) ||
+                        (l.last_name || '').toLowerCase().includes(q) ||
+                        (l.full_name || '').toLowerCase().includes(q) ||
+                        (l.company_name || '').toLowerCase().includes(q) ||
+                        (l.linkedin_url || '').toLowerCase().includes(q)
+                      );
+                    })
+                    .map((lead, idx) => {
+                      const url = lead.linkedin_url;
+                      const checked = crmSelectedUrls.includes(url);
+                      const fullName =
+                        lead.full_name ||
+                        `${lead.first_name || ''} ${lead.last_name || ''}`.trim() ||
+                        lead.vanity_name ||
+                        'Unnamed Lead';
+                      return (
+                        <label
+                          key={lead.id || url || idx}
+                          className="flex items-center justify-between gap-3 p-2.5 hover:bg-gray-50 cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setCrmSelectedUrls((prev) => [...new Set([...prev, url])]);
+                                } else {
+                                  setCrmSelectedUrls((prev) => prev.filter((u) => u !== url));
+                                }
+                              }}
+                              className="rounded border-gray-300 text-indigo-600"
+                            />
+                            <div className="min-w-0">
+                              <div className="font-semibold text-gray-900 truncate">
+                                {fullName}
+                                {lead.company_name ? (
+                                  <span className="text-gray-400 font-normal"> · {lead.company_name}</span>
+                                ) : null}
+                              </div>
+                              <div className="text-[11px] text-gray-500 font-mono truncate">{url}</div>
+                            </div>
+                          </div>
+                        </label>
+                      );
+                    })
+                )}
+              </div>
+
+              <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setStep(1)}
+                  disabled={previewLoading}
+                  className="text-xs text-gray-500 hover:text-gray-800 font-medium cursor-pointer"
+                >
+                  ← Back to Sources
+                </button>
+                <button
+                  type="button"
+                  disabled={previewLoading || crmSelectedUrls.length === 0}
+                  onClick={() => {
+                    const selectedRows = crmLeads.filter((l) => crmSelectedUrls.includes(l.linkedin_url));
+                    const formatted = selectedRows
+                      .map((l) => {
+                        const first = l.first_name || (l.full_name ? l.full_name.split(' ')[0] : '');
+                        const last = l.last_name || (l.full_name ? l.full_name.split(' ').slice(1).join(' ') : '');
+                        return [l.linkedin_url, first, last, l.company_name || '', l.job_title || l.headline || '']
+                          .filter(Boolean)
+                          .join(', ');
+                      })
+                      .join('\n');
+                    setUrlsText(formatted);
+                    setSourceType('urls');
+                    handleRunPreview(formatted);
+                  }}
+                  className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 shadow-sm disabled:opacity-50 cursor-pointer"
+                >
+                  Validate & Preview ({crmSelectedUrls.length}) <ArrowRight className="h-3.5 w-3.5" />
                 </button>
               </div>
             </div>

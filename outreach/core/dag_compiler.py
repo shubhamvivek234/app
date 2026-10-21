@@ -575,6 +575,7 @@ class DAGCompiler:
                         "delay_hours": 24,
                         "config": {
                             "subject": "Quick question regarding {{company_name}}",
+                            "body": "Hi {{first_name}}, came across your profile and noticed your focus at {{company_name}}. Would love to share a quick perspective if you are open to it!",
                             "message": "Hi {{first_name}}, came across your profile and noticed your focus at {{company_name}}. Would love to share a quick perspective if you are open to it!",
                         },
                         "position": {"x": 250, "y": 320},
@@ -609,6 +610,7 @@ class DAGCompiler:
                         "delay_days": 1,
                         "config": {
                             "subject": "Quick question regarding {{company_name}}",
+                            "body": "Hi {{first_name}}, came across your profile and noticed your focus at {{company_name}}. Would love to share a quick perspective if you are open to it!",
                             "message": "Hi {{first_name}}, came across your profile and noticed your focus at {{company_name}}. Would love to share a quick perspective if you are open to it!",
                         },
                         "branches": {

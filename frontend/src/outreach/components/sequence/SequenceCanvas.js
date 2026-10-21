@@ -424,6 +424,8 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
       step.config?.script ||
       step.config?.body ||
       step.config?.message ||
+      step.config?.comment ||
+      step.config?.comment_template ||
       step.config?.note ||
       '';
     setPreviewModalOpen(true);
@@ -638,18 +640,161 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
       });
   };
 
+  const makeStepId = () =>
+    `step_${globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`}`;
+
+  const subtreeHasType = (steps, types) =>
+    (steps || []).some(
+      (s) =>
+        types.includes(s.type) ||
+        (s.branches &&
+          Object.values(s.branches).some((b) => subtreeHasType(b?.steps || [], types)))
+    );
+
+  const getPathStateAtTarget = (nodes, target, state = { connected: 'unknown', email: 'unknown', connectionAncestorId: null, leftBranchLength: 0 }) => {
+    let curr = { ...state };
+    const advanceStep = (s) => {
+      if (s.type === 'withdraw_invite') curr.connected = 'withdrawn';
+      if (s.type === 'find_email') curr.email = 'unknown';
+    };
+    if (!target || target.type === 'linear') {
+      if (target?.stepId === 'start') return curr;
+      for (const s of nodes || []) {
+        advanceStep(s);
+        if (s.id === target?.stepId) return curr;
+      }
+      return curr;
+    }
+    for (const s of nodes || []) {
+      if (s.id === target.parentStepId && s.branches && target.branchKey) {
+        let nextConn = curr.connected;
+        let nextEmail = curr.email;
+        let connAncestor = curr.connectionAncestorId;
+        let leftLen = curr.leftBranchLength;
+        if (s.type === 'connection_request' || s.type === 'if_connected') {
+          if (target.branchKey === 'right') {
+            nextConn = 'yes';
+            connAncestor = s.id;
+            leftLen = (s.branches.left?.steps || []).length;
+          } else {
+            nextConn = s.type === 'connection_request' || curr.connected === 'invited' ? 'invited' : 'no';
+          }
+        }
+        if (s.type === 'if_email_available') {
+          nextEmail = target.branchKey === 'right' ? 'yes' : 'no';
+        }
+        const branchSteps = s.branches[target.branchKey]?.steps || [];
+        const limit = target.index !== undefined ? target.index : branchSteps.length;
+        let branchState = { connected: nextConn, email: nextEmail, connectionAncestorId: connAncestor, leftBranchLength: leftLen };
+        for (let i = 0; i < Math.min(limit, branchSteps.length); i += 1) {
+          if (branchSteps[i].type === 'withdraw_invite') branchState.connected = 'withdrawn';
+          if (branchSteps[i].type === 'find_email') branchState.email = 'unknown';
+        }
+        return branchState;
+      }
+      advanceStep(s);
+      if (s.branches) {
+        for (const [bKey, bVal] of Object.entries(s.branches)) {
+          let nextConn = curr.connected;
+          let nextEmail = curr.email;
+          let connAncestor = curr.connectionAncestorId;
+          let leftLen = curr.leftBranchLength;
+          if (s.type === 'connection_request' || s.type === 'if_connected') {
+            if (bKey === 'right') {
+              nextConn = 'yes';
+              connAncestor = s.id;
+              leftLen = (s.branches.left?.steps || []).length;
+            } else {
+              nextConn = s.type === 'connection_request' || curr.connected === 'invited' ? 'invited' : 'no';
+            }
+          }
+          if (s.type === 'if_email_available') {
+            nextEmail = bKey === 'right' ? 'yes' : 'no';
+          }
+          const found = findNode(bVal?.steps || [], target.parentStepId);
+          if (found) {
+            return getPathStateAtTarget(bVal?.steps || [], target, {
+              connected: nextConn,
+              email: nextEmail,
+              connectionAncestorId: connAncestor,
+              leftBranchLength: leftLen,
+            });
+          }
+        }
+      }
+    }
+    return curr;
+  };
+
+  const spliceStepIntoList = (list, index, newStepOrSteps) => {
+    const stepsToInsert = (Array.isArray(newStepOrSteps) ? newStepOrSteps : [newStepOrSteps]).filter(Boolean);
+    if (!stepsToInsert.length) return list;
+    const before = list.slice(0, index).map((item, idx, arr) =>
+      idx === arr.length - 1 && item.endsHere ? { ...item, endsHere: false } : item
+    );
+    const trailing = list.slice(index);
+    const lastInserted = stepsToInsert[stepsToInsert.length - 1];
+
+    if (lastInserted.branches && trailing.length > 0) {
+      let targetBranch = 'right';
+      let adjustedTrailing = trailing;
+      if (['send_message', 'voice_note', 'inmail'].includes(lastInserted.type)) {
+        targetBranch = 'left';
+      } else if (
+        lastInserted.type === 'if_connected' &&
+        subtreeHasType(trailing, ['connection_request', 'withdraw_invite'])
+      ) {
+        targetBranch = 'left';
+      } else if (
+        lastInserted.type === 'connection_request' &&
+        subtreeHasType(trailing, ['connection_request', 'withdraw_invite'])
+      ) {
+        targetBranch = 'left';
+        if (trailing[0]?.type === 'connection_request') {
+          const withdrawStep = {
+            id: makeStepId(),
+            type: 'withdraw_invite',
+            title: 'Withdraw invite',
+            subtitle: 'Withdraw unaccepted invite',
+            delay_days: 3,
+            config: {},
+          };
+          const cooledFirst = {
+            ...trailing[0],
+            delay_hours: Math.max(stepDelayHours(trailing[0]), 504),
+          };
+          delete cooledFirst.delay_days;
+          adjustedTrailing = [withdrawStep, cooledFirst, ...trailing.slice(1)];
+        }
+      }
+      const existingBranch = lastInserted.branches[targetBranch] || { steps: [] };
+      const updatedLast = {
+        ...lastInserted,
+        branches: {
+          ...lastInserted.branches,
+          [targetBranch]: {
+            ...existingBranch,
+            steps: [...(existingBranch.steps || []), ...adjustedTrailing],
+            endsHere: false,
+          },
+        },
+      };
+      return [...before, ...stepsToInsert.slice(0, -1), updatedLast];
+    }
+
+    return [...before, ...stepsToInsert, ...trailing];
+  };
+
   // Insert a new step into the tree
   const insertStep = (nodes, target, newStep) => {
-    if (!target) return [...nodes, newStep];
+    if (!target) return spliceStepIntoList(nodes, nodes.length, newStep);
 
     // Linear insertion after target stepId
     if (target.type === 'linear') {
-      if (target.stepId === 'start') return [newStep, ...nodes];
+      if (target.stepId === 'start') return spliceStepIntoList(nodes, 0, newStep);
       const idx = nodes.findIndex((n) => n.id === target.stepId);
       if (idx !== -1) {
-        const copy = [...nodes];
-        copy.splice(idx + 1, 0, newStep);
-        return copy;
+        return spliceStepIntoList(nodes, idx + 1, newStep);
       }
     }
 
@@ -659,13 +804,14 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
         const branch = node.branches[target.branchKey];
         if (!branch) return node;
         const steps = branch.steps || [];
+        const insertIdx = target.index !== undefined ? target.index : steps.length;
         return {
           ...node,
           branches: {
             ...node.branches,
             [target.branchKey]: {
               ...branch,
-              steps: target.index !== undefined ? [...steps.slice(0, target.index), newStep, ...steps.slice(target.index)] : [...steps, newStep],
+              steps: spliceStepIntoList(steps, insertIdx, newStep),
               endsHere: false,
             },
           },
@@ -688,17 +834,40 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
     const condDef = allConditions.find((c) => c.type === type);
     const actionDef = [...ACTION_DEFINITIONS, ...EMAIL_ACTION_DEFINITIONS].find((a) => a.type === type);
 
-    const newId = `step_${globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`}`;
+    // If user clicks Connection request at start when starter connection_request is already alone on canvas, select it
+    if (
+      type === 'connection_request' &&
+      paletteTarget?.type === 'linear' &&
+      paletteTarget?.stepId === 'start' &&
+      tree.length === 1 &&
+      tree[0]?.type === 'connection_request' &&
+      !(tree[0]?.branches?.left?.steps?.length) &&
+      !(tree[0]?.branches?.right?.steps?.length)
+    ) {
+      setSelectedStepId(tree[0].id);
+      setToastMessage('Connection request selected.');
+      setPaletteOpen(false);
+      setPaletteTarget(null);
+      return;
+    }
+
+    const newId = makeStepId();
     let newStep = null;
 
     if (isCondition && condDef) {
+      const defaultCondConfig =
+        type === 'has_data_in_column'
+          ? { ...DEFAULT_FIELD_CONDITION }
+          : ['if_connected', 'if_opened_message', 'open_profile_check'].includes(type)
+          ? { timeout_days: 3 }
+          : {};
       newStep = {
         id: newId,
         type: condDef.type,
         title: condDef.label,
         subtitle: condDef.desc,
         delay_days: 0,
-        config: type === 'has_data_in_column' ? { ...DEFAULT_FIELD_CONDITION } : {},
+        config: defaultCondConfig,
         branches: {
           left: {
             condition: condDef.leftCondition,
@@ -714,14 +883,43 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
       };
     } else if (actionDef) {
       const isBranchingAction = ['connection_request', 'voice_note', 'inmail', 'send_message'].includes(type);
+      const defaultActionConfigs = {
+        send_message: {
+          body: 'Hi {{first_name}}, thanks for connecting! Wanted to reach out regarding your work at {{company_name}}.',
+        },
+        voice_note: {
+          script: 'Hey {{first_name}}, saw your work at {{company_name}} and wanted to send a quick voice note!',
+        },
+        inmail: {
+          subject: 'Quick question, {{first_name}}',
+          body: 'Hi {{first_name}}, wanted to connect regarding {{company_name}}.',
+          message: 'Hi {{first_name}}, wanted to connect regarding {{company_name}}.',
+        },
+        send_email: {
+          subject: 'Quick question, {{first_name}}',
+          body: 'Hi {{first_name}},\n\nWanted to reach out regarding your work at {{company_name}}.',
+        },
+        comment_last_post: {
+          mode: 'custom',
+          comment: 'Great insights on this, {{first_name}}!',
+          comment_template: 'Great insights on this, {{first_name}}!',
+        },
+        like_last_post: {
+          max_post_age_days: 30,
+          skip_if_no_posts: true,
+        },
+        follow: {
+          skip_if_following: true,
+        },
+      };
       newStep = {
         id: newId,
         type: actionDef.type,
         title: actionDef.label,
         subtitle: actionDef.desc,
         delay_days: 0,
-        config: {},
-        isActionRequired: ['voice_note', 'inmail', 'send_message', 'send_email', 'reply_to_comment'].includes(type),
+        config: defaultActionConfigs[type] ? { ...defaultActionConfigs[type] } : {},
+        isActionRequired: false,
       };
 
       if (type === 'connection_request') {
@@ -732,13 +930,81 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
       } else if (isBranchingAction) {
         newStep.branches = {
           left: { condition: 'no reply', type: 'danger', steps: [] },
-          right: { condition: 'replied', type: 'success', steps: [] },
+          right: { condition: 'replied', type: 'success', steps: [], endsHere: true },
         };
       }
     }
 
     if (newStep) {
-      setTree((prev) => insertStep(prev, paletteTarget, newStep));
+      let effectiveTarget = paletteTarget;
+      let pathState = getPathStateAtTarget(tree, effectiveTarget);
+
+      // Redirect connection_request or withdraw_invite away from an already-connected ('yes') branch
+      if (
+        ['connection_request', 'withdraw_invite'].includes(type) &&
+        pathState.connected === 'yes' &&
+        pathState.connectionAncestorId
+      ) {
+        effectiveTarget = {
+          type: 'branch',
+          parentStepId: pathState.connectionAncestorId,
+          branchKey: 'left',
+          index: pathState.leftBranchLength,
+        };
+        pathState = getPathStateAtTarget(tree, effectiveTarget);
+      }
+
+      let stepsToInsert = newStep;
+
+      if (['send_message', 'voice_note'].includes(type) && ['no', 'invited', 'withdrawn'].includes(pathState.connected)) {
+        // Wrap in a positive connection check so negative/invited/withdrawn paths are guarded
+        stepsToInsert = {
+          id: makeStepId(),
+          type: 'if_connected',
+          title: 'If connected',
+          subtitle: 'Check connection status',
+          delay_days: 1,
+          config: { timeout_days: 3 },
+          branches: {
+            left: { condition: 'not connected', type: 'danger', steps: [] },
+            right: { condition: 'connected', type: 'success', steps: [newStep] },
+          },
+        };
+      } else if (type === 'send_email' && pathState.email === 'no') {
+        stepsToInsert = [
+          {
+            id: makeStepId(),
+            type: 'find_email',
+            title: 'Find email',
+            subtitle: 'Find verified work email',
+            delay_days: 0,
+            config: {},
+          },
+          newStep,
+        ];
+      } else if (type === 'connection_request') {
+        if (pathState.connected === 'withdrawn') {
+          newStep = { ...newStep, delay_hours: 504 };
+          delete newStep.delay_days;
+          stepsToInsert = newStep;
+        } else if (pathState.connected === 'invited') {
+          const cooledInvite = { ...newStep, delay_hours: 504 };
+          delete cooledInvite.delay_days;
+          stepsToInsert = [
+            {
+              id: makeStepId(),
+              type: 'withdraw_invite',
+              title: 'Withdraw invite',
+              subtitle: 'Withdraw unaccepted invite',
+              delay_days: 3,
+              config: {},
+            },
+            cooledInvite,
+          ];
+        }
+      }
+
+      setTree((prev) => insertStep(prev, effectiveTarget, stepsToInsert));
       setToastMessage(`${newStep.title} added.`);
       setSelectedStepId(newStep.id);
     }
@@ -786,12 +1052,33 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
         })
       );
     } else if (selectedStep.type === 'inmail') {
-      const curr = selectedStep.config?.message || '';
+      const curr = selectedStep.config?.body ?? selectedStep.config?.message ?? '';
+      const nextVal = curr ? `${curr} ${variable}` : variable;
       setTree((prev) =>
         updateNode(prev, selectedStep.id, {
-          config: { ...selectedStep.config, message: curr ? `${curr} ${variable}` : variable },
+          config: { ...selectedStep.config, body: nextVal, message: nextVal },
           isActionRequired: false,
           subtitle: 'InMail message configured',
+        })
+      );
+    } else if (selectedStep.type === 'comment_last_post') {
+      const isAi = selectedStep.config?.mode === 'ai';
+      const curr = isAi
+        ? (selectedStep.config?.ai_prompt || '')
+        : (selectedStep.config?.comment ?? selectedStep.config?.comment_template ?? '');
+      const nextVal = curr ? `${curr} ${variable}` : variable;
+      setTree((prev) =>
+        updateNode(prev, selectedStep.id, {
+          config: isAi
+            ? {
+                ...selectedStep.config,
+                ai_prompt: nextVal,
+                comment: selectedStep.config?.comment || 'Great insights on this, {{first_name}}!',
+                comment_template: selectedStep.config?.comment_template || 'Great insights on this, {{first_name}}!',
+              }
+            : { ...selectedStep.config, comment: nextVal, comment_template: nextVal },
+          isActionRequired: false,
+          subtitle: 'Comment template set',
         })
       );
     } else if (selectedStep.type === 'send_message' || selectedStep.type === 'send_email') {
@@ -1044,7 +1331,8 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
   );
 
   // Recursive Branch / Subtree Renderer
-  const renderBranchSubtree = (branchSteps, parentStepId, branchKey, endsHere) => {
+  const renderBranchSubtree = (branchSteps, parentStepId, branchKey, endsHere, branchCondition = '') => {
+    const isTerminalReplyBranch = (branchCondition || '').toLowerCase() === 'replied';
     return (
       <div className="flex flex-col items-center shrink-0 w-auto">
         {branchSteps && branchSteps.length > 0 ? (
@@ -1088,6 +1376,14 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
               )}
             </div>
           ))
+        ) : isTerminalReplyBranch ? (
+          <div className="flex flex-col items-center mt-1">
+            <div className="w-[2px] h-4 bg-slate-300" />
+            <div className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-slate-100 border border-slate-200 text-slate-600">
+              <span>✓</span>
+              <span>ENDS HERE</span>
+            </div>
+          </div>
         ) : endsHere ? (
           /* Ends Here Badge matching media_1790088201124.png Voice Note Left Branch */
           <div className="flex flex-col items-center mt-1">
@@ -1183,7 +1479,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
             </div>
 
             {/* Left Branch Subtree */}
-            {node.branches.left ? renderBranchSubtree(left.steps, node.id, 'left', left.endsHere) : <p className="mt-3 text-xs text-slate-500">No path saved; this outcome ends here.</p>}
+            {node.branches.left ? renderBranchSubtree(left.steps, node.id, 'left', left.endsHere, left.condition) : <p className="mt-3 text-xs text-slate-500">No path saved; this outcome ends here.</p>}
           </div>
 
           {/* Right Branch Column */}
@@ -1209,7 +1505,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
             </div>
 
             {/* Right Branch Subtree */}
-            {node.branches.right ? renderBranchSubtree(right.steps, node.id, 'right', right.endsHere) : <p className="mt-3 text-xs text-slate-500">No path saved; this outcome ends here.</p>}
+            {node.branches.right ? renderBranchSubtree(right.steps, node.id, 'right', right.endsHere, right.condition) : <p className="mt-3 text-xs text-slate-500">No path saved; this outcome ends here.</p>}
           </div>
         </div>
       </div>
@@ -1638,17 +1934,17 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
                   <div className="flex items-center justify-between text-xs font-bold text-gray-900 mb-1">
                     <span>Message</span>
                     <span className="text-[11px] font-normal text-gray-400">
-                      {(selectedStep.config?.message || '').length}/1900
+                      {(selectedStep.config?.body ?? selectedStep.config?.message ?? '').length}/1900
                     </span>
                   </div>
                   <textarea
                     rows={5}
                     maxLength={1900}
-                    value={selectedStep.config?.message || ''}
+                    value={selectedStep.config?.body ?? selectedStep.config?.message ?? ''}
                     onChange={(e) =>
                       setTree((prev) =>
                         updateNode(prev, selectedStep.id, {
-                          config: { ...selectedStep.config, message: e.target.value },
+                          config: { ...selectedStep.config, body: e.target.value, message: e.target.value },
                           isActionRequired: e.target.value.trim().length === 0,
                           subtitle: e.target.value.trim().length > 0 ? 'InMail copy ready' : 'Action required',
                         })
@@ -1725,10 +2021,10 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
                             type="button"
                             onClick={() => {
                               if (!exists) {
-                                const baseBody = selectedStep.config?.body || '';
+                                const baseBody = selectedStep.config?.body || 'Hi {{first_name}}, wanted to follow up on my previous note!';
                                 const nextVariants = variants.length
-                                  ? [...variants, { id: vid, body: '' }]
-                                  : [{ id: 'A', body: baseBody }, { id: vid, body: '' }];
+                                  ? [...variants, { id: vid, body: baseBody }]
+                                  : [{ id: 'A', body: baseBody }, { id: vid, body: baseBody }];
                                 setTree((prev) =>
                                   updateNode(prev, selectedStep.id, {
                                     config: { ...selectedStep.config, variants: nextVariants },
@@ -2033,7 +2329,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
                           )
                         }
                         className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg transition-colors ${
-                          (selectedStep.config?.mode || 'ai') === 'ai'
+                          (selectedStep.config?.mode || 'custom') === 'ai'
                             ? 'bg-purple-600 text-white shadow-2xs'
                             : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                         }`}
@@ -2050,7 +2346,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
                           )
                         }
                         className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg transition-colors ${
-                          selectedStep.config?.mode === 'custom'
+                          (selectedStep.config?.mode || 'custom') === 'custom'
                             ? 'bg-purple-600 text-white shadow-2xs'
                             : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                         }`}
@@ -2062,7 +2358,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
 
                   {renderEditorToolbar()}
 
-                  {(selectedStep.config?.mode || 'ai') === 'ai' ? (
+                  {(selectedStep.config?.mode || 'custom') === 'ai' ? (
                     <div>
                       <label className="block text-[11px] font-semibold text-gray-600 mb-1">
                         AI Prompt Instructions for Comment
@@ -2073,7 +2369,12 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
                         onChange={(e) =>
                           setTree((prev) =>
                             updateNode(prev, selectedStep.id, {
-                              config: { ...selectedStep.config, ai_prompt: e.target.value },
+                              config: {
+                                ...selectedStep.config,
+                                ai_prompt: e.target.value,
+                                comment: selectedStep.config?.comment || 'Great insights on this, {{first_name}}!',
+                                comment_template: selectedStep.config?.comment_template || 'Great insights on this, {{first_name}}!',
+                              },
                               subtitle: e.target.value.trim().length > 0 ? 'AI comment ready' : 'Action required',
                             })
                           )
@@ -2089,11 +2390,15 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
                       </label>
                       <textarea
                         rows={3}
-                        value={selectedStep.config?.comment_template || ''}
+                        value={selectedStep.config?.comment ?? selectedStep.config?.comment_template ?? ''}
                         onChange={(e) =>
                           setTree((prev) =>
                             updateNode(prev, selectedStep.id, {
-                              config: { ...selectedStep.config, comment_template: e.target.value },
+                              config: {
+                                ...selectedStep.config,
+                                comment: e.target.value,
+                                comment_template: e.target.value,
+                              },
                               subtitle: e.target.value.trim().length > 0 ? 'Comment template set' : 'Action required',
                             })
                           )

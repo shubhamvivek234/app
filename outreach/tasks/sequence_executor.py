@@ -790,7 +790,7 @@ class SequenceExecutor:
         elif node_type == SequenceNodeType.COMMENT_LAST_POST:
             if action_result is None:
                 action_config = effective_config
-                comment_template = action_config.get("comment") or action_config.get("body") or "Great insights on this, {{first_name}}!"
+                comment_template = action_config.get("comment") or action_config.get("comment_template") or action_config.get("body") or "Great insights on this, {{first_name}}!"
                 comment_body = interpolate_template(comment_template, lead)
                 action_result = await _dispatch_action(db, lead, expected_authorization, node_type, operation_id,
                     intent_id, operation_owner, lambda: voyager.comment_last_post(
@@ -803,7 +803,7 @@ class SequenceExecutor:
             if action_result is None:
                 action_config = effective_config
                 subject_template = action_config.get("subject") or "Quick question, {{first_name}}"
-                body_template = action_config.get("body") or "Hi {{first_name}}"
+                body_template = action_config.get("body") or action_config.get("message") or "Hi {{first_name}}"
                 inmail_subject = interpolate_template(subject_template, lead).strip()
                 inmail_body = interpolate_template(body_template, lead)
                 attachment_url = action_config.get("attachment_url")

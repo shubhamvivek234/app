@@ -28,6 +28,7 @@ COLUMN_ALIASES = {
     ],
     "first_name": ["first_name", "first name", "firstname", "first", "given name"],
     "last_name": ["last_name", "last name", "lastname", "last", "surname"],
+    "full_name": ["full_name", "full name", "fullname", "name", "contact_name", "person_name", "prospect_name"],
     "company_name": ["company", "company_name", "company name", "organization", "employer"],
     "job_title": ["title", "job_title", "job title", "position", "role", "headline"],
     "headline": ["headline", "linkedin_headline", "profile_headline"],
@@ -659,6 +660,14 @@ class LeadImporter:
                 continue
 
             raw_first = (row.get(header_mapping.get("first_name", "")) or "").strip()
+            raw_last = (row.get(header_mapping.get("last_name", "")) or "").strip()
+            if not raw_first and "full_name" in header_mapping:
+                full_val = (row.get(header_mapping["full_name"]) or "").strip()
+                if full_val:
+                    parts = full_val.split(maxsplit=1)
+                    raw_first = parts[0]
+                    if not raw_last and len(parts) > 1:
+                        raw_last = parts[1]
             if not raw_first and default_first_name:
                 raw_first = default_first_name.strip()
             cleaned_first = clean_first_name(raw_first)
@@ -687,7 +696,7 @@ class LeadImporter:
                 "raw_first_name": raw_first,
                 "cleaned_first_name": cleaned_first,
                 "first_name": cleaned_first or raw_first,
-                "last_name": (row.get(header_mapping.get("last_name", "")) or "").strip(),
+                "last_name": raw_last,
                 "company_name": company_name,
                 "job_title": (row.get(header_mapping.get("job_title", "")) or "").strip(),
                 "headline": (row.get(header_mapping.get("headline", "")) or "").strip(),
@@ -711,7 +720,12 @@ class LeadImporter:
                 lead_data["custom_variables"]["vanity_handle"] = vanity
 
             # Collect any additional columns as custom variables for dynamic template tags
-            mapped_values = set(header_mapping.values())
+            core_fields = {
+                "linkedin_url", "first_name", "last_name", "full_name",
+                "company_name", "job_title", "location", "email", "phone",
+                "member_urn", "sales_lead_urn",
+            }
+            mapped_values = {col for key, col in header_mapping.items() if key in core_fields}
             for col_name, val in row.items():
                 if col_name and col_name not in mapped_values and isinstance(val, str) and val:
                     lead_data["custom_variables"][col_name.strip()] = val.strip()

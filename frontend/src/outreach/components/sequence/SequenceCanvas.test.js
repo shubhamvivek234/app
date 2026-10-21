@@ -184,4 +184,59 @@ describe('Server-driven sequence capabilities', () => {
     await act(async () => fitBtn.click());
     // Should execute without crashing
   });
+
+  it('splices trailing steps into the appropriate branch when inserting a condition before existing steps and guards message steps', async () => {
+    let savedPayloads = [];
+    global.fetch = jest.fn((url, opts) => {
+      if (url.includes('sequence-capabilities')) {
+        return Promise.resolve(ok({
+          capabilities: [
+            { type: 'if_connected', supported: true, builder_available: true, live_enabled: true },
+            { type: 'send_message', supported: true, builder_available: true, live_enabled: true },
+            { type: 'visit_profile', supported: true, builder_available: true, live_enabled: true },
+          ],
+        }));
+      }
+      if (url === '/api/v1/outreach/sequences' && opts?.method === 'POST') {
+        savedPayloads.push(JSON.parse(opts.body));
+        return Promise.resolve(ok({ id: 'seq-1' }));
+      }
+      return Promise.resolve(ok({
+        tree: [
+          { id: 'step_visit', type: 'visit_profile', title: 'Visit profile', delay_days: 1, config: {} },
+        ],
+      }));
+    });
+
+    const onRegisterSave = jest.fn();
+    await act(async () => root.render(<SequenceCanvas campaignId="camp-splice" onRegisterSave={onRegisterSave} />));
+
+    // Open the first "+" button (index 0, before step_visit)
+    const addButtons = container.querySelectorAll('button[title="Add a step"]');
+    expect(addButtons.length).toBeGreaterThanOrEqual(2);
+    await act(async () => addButtons[0].click());
+
+    // Insert "If connected" before Visit profile
+    await act(async () => paletteButton(container, 'If connected').click());
+
+    // Save and inspect the compiled DAG
+    const save = onRegisterSave.mock.calls.filter(([cb]) => cb).at(-1)?.[0];
+    expect(save).toBeTruthy();
+    let saved;
+    await act(async () => { saved = await save(); });
+    expect(saved).toBe(true);
+
+    const lastPayload = savedPayloads.at(-1);
+    expect(lastPayload).toBeTruthy();
+    const ifConnNode = lastPayload.nodes.find((n) => n.type === 'if_connected');
+    expect(ifConnNode).toBeTruthy();
+    // Trailing step_visit should now be attached to if_connected via a labeled branch edge ('connected')
+    expect(lastPayload.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        source: ifConnNode.id,
+        target: 'step_visit',
+        label: 'connected',
+      }),
+    ]));
+  });
 });

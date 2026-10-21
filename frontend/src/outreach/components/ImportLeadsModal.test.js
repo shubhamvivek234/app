@@ -297,4 +297,81 @@ describe('ImportLeadsModal', () => {
     expect(stagedPayload.leads[0].raw_first_name).toBe('ALEXANDER');
     expect(container.textContent).toContain('Lead Intake Complete');
   });
+
+  it('supports Interactive Lead Finder (Workspace CRM & Lists) selection and validation preview', async () => {
+    global.fetch.mockImplementation(withImportContext((url, opts) => {
+      if (url.endsWith('/accounts')) return Promise.resolve(response([]));
+      if (url.endsWith('/import-sources')) return Promise.resolve(response({ contract_version: 1, sources: [] }));
+      if (url.includes('/api/v1/outreach/leads?limit=100')) {
+        return Promise.resolve(response([
+          {
+            id: 'crm-lead-1',
+            linkedin_url: 'https://linkedin.com/in/sarahconnor',
+            first_name: 'Sarah',
+            last_name: 'Connor',
+            company_name: 'Cyberdyne',
+            job_title: 'Director',
+          },
+        ]));
+      }
+      if (url === '/api/v1/outreach/engage/lists') {
+        return Promise.resolve(response([
+          { id: 'list-1', name: 'Warm Founders', contacts_count: 1 },
+        ]));
+      }
+      if (url === '/api/v1/outreach/leads/preview') {
+        const body = JSON.parse(opts.body);
+        expect(body.source_type).toBe('pasted_urls');
+        expect(body.raw_text).toContain('https://linkedin.com/in/sarahconnor');
+        return Promise.resolve(response({
+          total_submitted: 1,
+          valid_count: 1,
+          duplicate_count: 0,
+          contacted_count: 0,
+          dnc_count: 0,
+          invalid_count: 0,
+          rows: [
+            {
+              row_number: 1,
+              linkedin_url: 'https://linkedin.com/in/sarahconnor',
+              first_name: 'Sarah',
+              last_name: 'Connor',
+              company_name: 'Cyberdyne',
+              status: 'valid',
+            },
+          ],
+        }));
+      }
+      return Promise.reject(new Error(`Unexpected request: ${url}`));
+    }));
+
+    await act(async () => {
+      root.render(<ImportLeadsModal isOpen={true} onClose={() => {}} campaignId="camp-1" />);
+    });
+
+    const crmBtn = [...container.querySelectorAll('button')].find((b) =>
+      b.textContent.includes('Interactive Lead Finder')
+    );
+    expect(crmBtn).toBeTruthy();
+    await act(async () => crmBtn.click());
+
+    expect(container.textContent).toContain('Sarah Connor');
+    expect(container.textContent).toContain('Cyberdyne');
+
+    // Select All
+    const selectAllBtn = [...container.querySelectorAll('button')].find((b) =>
+      b.textContent.includes('Select All')
+    );
+    await act(async () => selectAllBtn.click());
+
+    // Validate & Preview
+    const previewBtn = [...container.querySelectorAll('button')].find((b) =>
+      b.textContent.includes('Validate & Preview')
+    );
+    expect(previewBtn.disabled).toBe(false);
+    await act(async () => previewBtn.click());
+
+    expect(container.textContent).toContain('Validation Preview & Deduplication');
+    expect(container.textContent).toContain('Sarah Connor');
+  });
 });

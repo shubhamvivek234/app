@@ -50,6 +50,22 @@ Invalid,Lead,None,None,http://twitter.com/notlinkedin,0,None
     assert parsed[0]["custom_variables"]["Industry"] == "SaaS"
 
 
+def test_parse_csv_full_name_split():
+    """Verify CSV with a single Full Name column automatically splits into first_name and last_name."""
+    sample_csv = """Full Name,Company,Title,LinkedIn URL,Segment
+Ada Lovelace,Analytical Engine,Chief Mathematician,https://linkedin.com/in/adalovelace,Enterprise
+Grace Murray Hopper,US Navy,Rear Admiral,https://linkedin.com/in/gracehopper,Gov
+"""
+    parsed = LeadImporter.parse_csv_content(sample_csv)
+    assert len(parsed) == 2
+    assert parsed[0]["first_name"] == "Ada"
+    assert parsed[0]["last_name"] == "Lovelace"
+    assert parsed[0]["company_name"] == "Analytical Engine"
+    assert parsed[0]["custom_variables"]["Segment"] == "Enterprise"
+    assert parsed[1]["first_name"] == "Grace"
+    assert parsed[1]["last_name"] == "Murray Hopper"
+
+
 @pytest.mark.asyncio
 async def test_lead_deduplication_and_ingestion():
     """Verify deduplication skips duplicates in campaign and blocks Do-Not-Contact URLs."""

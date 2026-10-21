@@ -84,7 +84,15 @@ def content_templates(node: dict, lead: dict | None = None) -> dict[str, str]:
         'subject': 'Quick question, {{first_name}}',
     }
     _, effective_config = select_step_variant(node, lead)
-    return {field: effective_config.get(field, '' if node['type'] in {'send_email', 'inmail'} else defaults.get(field, '')) for field in _FIELDS.get(node['type'], ())}
+    def _resolve_field(cfg: dict, field: str) -> Any:
+        if field in cfg:
+            return cfg[field]
+        if node['type'] == 'inmail' and field == 'body' and 'message' in cfg:
+            return cfg['message']
+        if node['type'] == 'comment_last_post' and field == 'comment' and 'comment_template' in cfg:
+            return cfg['comment_template']
+        return '' if node['type'] in {'send_email', 'inmail'} else defaults.get(field, '')
+    return {field: _resolve_field(effective_config, field) for field in _FIELDS.get(node['type'], ())}
 
 
 def all_variant_templates(node: dict) -> list[tuple[str | None, dict[str, str]]]:
@@ -104,7 +112,11 @@ def all_variant_templates(node: dict) -> list[tuple[str | None, dict[str, str]]]
             if isinstance(v, dict):
                 merged = {**config, **v}
                 result.append((v.get('id'), {
-                    field: merged.get(field, '' if node['type'] in {'send_email', 'inmail'} else defaults.get(field, ''))
+                    field: (merged[field] if field in merged else (
+                        merged['message'] if node['type'] == 'inmail' and field == 'body' and 'message' in merged else (
+                        merged['comment_template'] if node['type'] == 'comment_last_post' and field == 'comment' and 'comment_template' in merged else
+                        ('' if node['type'] in {'send_email', 'inmail'} else defaults.get(field, ''))
+                    )))
                     for field in fields
                 }))
         if result:
