@@ -4,9 +4,9 @@ Supports verified session-cookie connection; legacy credential routes are retire
 Assigns one pre-purchased dedicated static residential proxy per sender.
 """
 import logging
-from typing import Any
+from typing import Annotated, Any
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -18,6 +18,7 @@ from outreach.models import (
     AccountStatus,
 )
 from outreach.api.connection_jobs import queue_connection
+from outreach.core.sender_verification_recovery import discover_jobs, verify_recovery_context, job_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class ConnectCookieRequest(BaseModel):
         description="2-letter ISO country code for proxy matching",
     )
     reconnect_account_id: str | None = Field(default=None, description="Existing sender ID when renewing its session")
+    connection_scope_digest: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$')
     workspace_id: str | None = None
 
 
@@ -88,16 +90,67 @@ async def list_outreach_accounts(
 
 
 
+@router.get('/connection-jobs')
+async def discover_connection_jobs(
+    response: Response,
+    current_user: dict = require_outreach_permission('account:connect'),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    response.headers['Cache-Control'] = 'private, no-store'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return await discover_jobs(db, current_user)
+
+
 @router.get("/connection-jobs/{job_id}")
 async def get_connection_job(
     job_id: str,
     current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
+    scope_digest: Annotated[str | None, Query(pattern=r'^[0-9a-f]{64}$')] = None,
+    response: Response = None,
 ):
     workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
-    job = await db.outreach_connection_jobs.find_one({"id": job_id, "workspace_id": workspace_id})
+    if response is not None:
+        response.headers['Cache-Control'] = 'private, no-store'
+    if scope_digest is not None:
+        verify_recovery_context(current_user, scope_digest)
+        matches = await db.outreach_connection_jobs.find({'id': job_id, 'workspace_id': workspace_id},
+            {'id': 1, 'workspace_id': 1, 'user_id': 1, 'sender_id': 1, 'status': 1, 'reconnect': 1,
+             'account_id': 1, 'credential_generation': 1, 'expected_linkedin_urn': 1}).limit(2).to_list(2)
+        if len(matches) > 1:
+            raise HTTPException(503, 'Duplicate verification records require support review')
+        job = matches[0] if matches else None
+    else:
+        job = await db.outreach_connection_jobs.find_one({"id": job_id, "workspace_id": workspace_id})
     if not job:
         raise HTTPException(status_code=404, detail="Connection job not found")
+    if scope_digest is not None:
+        context = verify_recovery_context(current_user, scope_digest)
+        if job.get('user_id') != current_user.get('user_id'):
+            raise HTTPException(404, 'Connection job not found')
+        result = {**job_metadata(job, workspace_id, current_user['user_id']), **context, 'account_current': False}
+        if job['status'] == 'completed' and type(job.get('account_id')) is str and job['account_id'] == job['sender_id']:
+            accounts = await db.outreach_accounts.find({'workspace_id': workspace_id, 'id': job['account_id']},
+                {'id': 1, 'workspace_id': 1, 'account_name': 1, 'status': 1, 'is_deleted': 1,
+                 'credential_generation': 1, 'linkedin_urn': 1, 'connection_finalization': 1}).limit(2).to_list(2)
+            account = accounts[0] if len(accounts) == 1 else None
+            fence = account.get('connection_finalization') if account else None
+            if (account and type(account.get('id')) is str and account['id'] == job['sender_id']
+                    and type(account.get('workspace_id')) is str and account['workspace_id'] == workspace_id
+                    and type(account.get('status')) is str and account['status'] == 'active'
+                    and (account.get('is_deleted') is None or account.get('is_deleted') is False)
+                    and type(job.get('credential_generation')) is str and job['credential_generation']
+                    and type(account.get('credential_generation')) is str and account['credential_generation'] == job['credential_generation']
+                    and type(job.get('expected_linkedin_urn')) is str and job['expected_linkedin_urn']
+                    and type(account.get('linkedin_urn')) is str and account['linkedin_urn'] == job['expected_linkedin_urn']
+                    and type(fence) is dict and type(fence.get('job_id')) is str and fence['job_id'] == job_id
+                    and type(fence.get('generation')) is str and fence['generation'] == job['credential_generation']
+                    and fence.get('ever_installed') is True and type(fence.get('state')) is str and fence['state'] == 'closed'
+                    and type(fence.get('completion')) is str and fence['completion'] == 'verified_install'):
+                result['account_current'] = True
+                result['account'] = {key: account[key] for key in ('id', 'workspace_id', 'status')}
+                result['account']['account_name'] = account.get('account_name') if type(account.get('account_name')) is str else 'LinkedIn sender'
+        return result
     result = {"job_id": job_id, "status": job.get("status", "queued")}
     if job.get("status") == "failed":
         result["error"] = job.get("error") or "Sender verification failed. Check your session values and try again."

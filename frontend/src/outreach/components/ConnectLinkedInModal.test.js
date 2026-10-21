@@ -152,6 +152,36 @@ describe('LinkedIn sender session connection', () => {
     expect(global.fetch.mock.calls[2][0]).toBe('/api/v1/outreach/accounts/connection-jobs/saved-job');
   });
 
+  it('retains the opening scoped job across discovery invalidation instead of falling back to another POST', async () => {
+    const context = { contract_version: 1, workspace_id: 'w', scope_digest: 'a'.repeat(64) };
+    const connected = jest.fn();
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ job_id: 'original', status: 'queued' }) })
+      .mockRejectedValueOnce(new Error('Status unavailable'))
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...context, job_id: 'original', sender_id: 'sender',
+        status: 'completed', account_current: true, account: { id: 'sender', workspace_id: 'w', status: 'active' } }) });
+    await renderModal({ connectionContext: context, onAccountConnected: connected });
+    await enterValue('linkedin-li-at', 'li_at=synthetic; JSESSIONID="ajax:synthetic"');
+    await enterValue('linkedin-proxy-country', 'IN'); await submit();
+    await renderModal({ connectionContext: null, onAccountConnected: connected });
+    await submit();
+    expect(global.fetch.mock.calls.filter(([, options]) => options.method === 'POST')).toHaveLength(1);
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body).connection_scope_digest).toBe(context.scope_digest);
+    expect(global.fetch.mock.calls[2][0]).toContain(`original?scope_digest=${context.scope_digest}`);
+    expect(connected).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds an unacknowledged scoped POST without allowing a second submission', async () => {
+    global.fetch = jest.fn().mockRejectedValue(new Error('Lost acknowledgement'));
+    await renderModal({ connectionContext: { contract_version: 1, workspace_id: 'w', scope_digest: 'a'.repeat(64) } });
+    await enterValue('linkedin-li-at', 'li_at=synthetic; JSESSIONID="ajax:synthetic"');
+    await enterValue('linkedin-proxy-country', 'IN'); await submit(); await submit();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('button[type="submit"]').disabled).toBe(true);
+    expect(container.querySelector('#linkedin-li-at').value).toBe('');
+    expect(container.textContent).toContain('request may have been saved');
+  });
+
   it('ignores a saved connection response after the dialog context is closed', async () => {
     let resolveConnection;
     global.fetch = jest.fn(() => new Promise((resolve) => { resolveConnection = resolve; }));

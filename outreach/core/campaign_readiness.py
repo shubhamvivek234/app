@@ -18,6 +18,7 @@ from outreach.core.proxy_custody import proxy_digest, proxy_record, _context as 
 from outreach.core.sequence_capabilities import sequence_capability_map
 from outreach.core.sequence_preview import analyze_sequence, same_execution_graph
 from outreach.core.sequence_versions import load_sequence
+from outreach.core import sequence_continuity
 from outreach.core.workspace_scope import workspace_scope
 from outreach.models import DailyLimits
 
@@ -257,6 +258,12 @@ async def _assess(db: Any, workspace: str, campaign: dict, warmup_reader: Any,
     check('lead_progress', 'Prospect Sequence Continuity', not progress_conflict,
           'Outstanding prospect steps still exist in this sequence',
           'Outstanding prospects reference missing or invalid sequence progress; restore the original steps or request a reviewed migration')
+    version = sequence_continuity.current_version(seq) if isinstance(seq, dict) else None
+    version_conflict = (await db.outreach_leads.find_one(sequence_continuity.version_conflicts(
+        workspace, cid, version, root_ids, node_ids))) if version is not None else True
+    check('lead_versions', 'Prospect Version Continuity', not version_conflict,
+          'Retained progress keeps its current version; unacted queued roots can receive an initial binding',
+          sequence_continuity.VERSION_HOLD)
     check('schedule', 'Working Schedule Window', OutboundRateLimiter.has_valid_working_window(campaign.get('schedule')),
           'A valid working-hours window is configured; execution waits for that window', 'Configure a valid working-hours schedule window', 400)
     try:

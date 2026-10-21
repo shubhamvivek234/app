@@ -370,7 +370,8 @@ async def test_resume_preserves_valid_sender_step_and_due_time(replica_db):
     due = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=5)
     await replica_db.outreach_campaigns.update_one({}, {'$set': {'status': 'paused'}})
     await replica_db.outreach_leads.update_one({}, {'$set': {'assigned_account_id': 'sender',
-        'current_node_id': 'root', 'execution_state': 'waiting_delay', 'next_action_due_at': due}})
+        'current_node_id': 'root', 'execution_state': 'waiting_delay', 'next_action_due_at': due,
+        'sequence_version': 1}})
     assert (await preflight(replica_db))['can_launch'] is True
     assert (await campaigns._launch_campaign_impl('campaign', None, USER, replica_db))['status'] == 'launched'
     lead = await replica_db.outreach_leads.find_one({})

@@ -5,7 +5,7 @@ const cleanToken = (value, name) => value.trim()
   .replace(new RegExp(`^${name}\\s*=`, 'i'), '')
   .replace(/^["']|["']$/g, '');
 
-export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnected, reconnectAccount = null }) {
+export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnected, reconnectAccount = null, connectionContext = null }) {
   const [cookieValue, setCookieValue] = useState('');
   const [liAValue, setLiAValue] = useState('');
   const [jsessionId, setJsessionId] = useState('');
@@ -17,16 +17,24 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [pendingJobId, setPendingJobId] = useState(null);
+  const [submissionUnknown, setSubmissionUnknown] = useState(false);
   const inFlight = useRef(false);
   const contextVersion = useRef(0);
   const dialogRef = useRef(null);
   const previousFocus = useRef(null);
+  const openedContext = useRef(null);
+  const latestContext = useRef(connectionContext);
+  latestContext.current = connectionContext;
 
   useEffect(() => {
+    // Keep the opening scope across discovery refreshes. An existing scoped
+    // dialog must never fall back to an unscoped legacy POST or lose its job.
+    openedContext.current = isOpen ? latestContext.current : null;
     contextVersion.current += 1;
     inFlight.current = false;
     setLoading(false);
     setPendingJobId(null);
+    setSubmissionUnknown(false);
     setCookieValue('');
     setLiAValue('');
     setJsessionId('');
@@ -75,7 +83,7 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
 
   const handleConnectCookie = async (event) => {
     event.preventDefault();
-    if (inFlight.current) return;
+    if (inFlight.current || submissionUnknown) return;
     if (!pendingJobId && !cookieValue.trim()) {
       setError('Please enter your li_at session cookie.');
       return;
@@ -89,15 +97,18 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
       return;
     }
 
+    const connectionContext = openedContext.current;
     const version = contextVersion.current;
     const token = localStorage.getItem('token');
     const current = () => contextVersion.current === version && localStorage.getItem('token') === token;
     inFlight.current = version;
     setLoading(true);
     setError(null);
+    let postUnconfirmed = false;
     try {
       let jobId = pendingJobId;
       if (!jobId) {
+        postUnconfirmed = true;
         const response = await fetch('/api/v1/outreach/accounts/connect-cookie', {
           method: 'POST',
           credentials: 'include',
@@ -113,11 +124,13 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
             user_agent: userAgent.trim(),
             country_code: proxyCountry,
             ...(reconnectAccount?.id ? { reconnect_account_id: reconnectAccount.id } : {}),
+            ...(connectionContext ? { connection_scope_digest: connectionContext.scope_digest } : {}),
           }),
         });
         const data = await response.json().catch(() => ({}));
         if (!current()) return;
         if (!response.ok) {
+          postUnconfirmed = response.status >= 500;
           throw new Error(typeof data?.detail === 'string' ? data.detail : 'LinkedIn session verification failed. Please try again.');
         }
         const savedStatuses = ['queued', 'running', 'finalizing', 'repairing', 'completed', 'failed', 'storage_stopped', 'repaired_stopped', 'cancelled'];
@@ -125,6 +138,7 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
           throw new Error('Connection status could not be confirmed. Check your sender account before retrying.');
         }
         jobId = data.job_id;
+        postUnconfirmed = false;
         setPendingJobId(jobId);
         // Secrets are no longer needed in the browser after the encrypted job is saved.
         setCookieValue('');
@@ -134,13 +148,17 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
       for (let attempt = 0; attempt < 45; attempt += 1) {
         if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 2000));
         if (!current()) return;
-        const jobResponse = await fetch(`/api/v1/outreach/accounts/connection-jobs/${encodeURIComponent(jobId)}`, {
+        const contextQuery = connectionContext ? `?scope_digest=${encodeURIComponent(connectionContext.scope_digest)}` : '';
+        const jobResponse = await fetch(`/api/v1/outreach/accounts/connection-jobs/${encodeURIComponent(jobId)}${contextQuery}`, {
           credentials: 'include',
           headers: { Authorization: token ? `Bearer ${token}` : '' },
         });
         const job = await jobResponse.json().catch(() => ({}));
         if (!current()) return;
         if (!jobResponse.ok) throw new Error(typeof job?.detail === 'string' ? job.detail : 'Could not read sender verification status.');
+        if (connectionContext && (job?.job_id !== jobId || job?.contract_version !== 1
+            || job?.scope_digest !== connectionContext.scope_digest || job?.workspace_id !== connectionContext.workspace_id
+            || typeof job?.account_current !== 'boolean')) throw new Error('Sender verification context changed. Refresh sender accounts.');
         if (job?.status === 'failed') {
           setPendingJobId(null);
           throw new Error(typeof job.error === 'string' ? job.error : 'LinkedIn session verification failed.');
@@ -149,14 +167,24 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
           throw new Error('Sender verification was stopped. Contact support before reconnecting.');
         }
         if (job?.status === 'completed' && job.account?.id) {
+          if (connectionContext && (!job.account_current || job.account.id !== job.sender_id
+              || job.account.workspace_id !== connectionContext.workspace_id || job.account.status !== 'active')) {
+            throw new Error('This verification no longer confirms the current sender. Refresh sender accounts.');
+          }
           onAccountConnected?.(job.account);
           closeModal(true);
           return;
         }
+        if (connectionContext && job?.status === 'completed') throw new Error('This verification no longer confirms the current sender. Refresh sender accounts.');
       }
       setError('Verification is still running. Check verification status again, or close this dialog and refresh your sender accounts.');
     } catch (connectionError) {
-      if (current()) setError(connectionError.message || 'LinkedIn session verification failed. Please try again.');
+      if (current()) {
+        if (connectionContext && postUnconfirmed) {
+          setSubmissionUnknown(true); setCookieValue(''); setJsessionId(''); setLiAValue('');
+          setError('Connection status could not be confirmed. The request may have been saved. Close this dialog and check Sender verifications before reconnecting.');
+        } else setError(connectionError.message || 'LinkedIn session verification failed. Please try again.');
+      }
     } finally {
       if (contextVersion.current === version) {
         inFlight.current = false;
@@ -333,7 +361,7 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
             </button>
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || submissionUnknown}
               className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-[#8280f6] py-2.5 text-sm font-semibold text-white hover:bg-[#7270e6] disabled:opacity-50"
             >
               {loading && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}

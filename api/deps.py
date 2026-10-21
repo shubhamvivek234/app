@@ -53,6 +53,46 @@ def get_firebase_app() -> firebase_admin.App:
     return _firebase_app
 
 
+async def _hydrate_verified_identity(db, user: dict, decoded: dict) -> dict:
+    """Never use email to replace an existing UID; fence allowed profile writes."""
+    uid = decoded['uid']
+    stored = user.get('firebase_uid')
+    unlinked = stored is None or type(stored) is str and stored == ''
+    actor = user.get('user_id')
+    if (type(actor) is not str or not actor.strip() or type(user.get('status')) not in {str, type(None)}
+            or user.get('status') in {'deletion_pending', 'deleted'}):
+        raise HTTPException(403, 'Account identity requires review before sign-in')
+    if unlinked:
+        if (decoded.get('email_verified') is not True or type(decoded.get('email')) is not str
+                or type(user.get('email')) is not str or user['email'] != decoded['email']):
+            raise HTTPException(403, 'Verified account linking is required before sign-in')
+    elif type(stored) is not str or stored != uid:
+        raise HTTPException(403, 'Account identity does not match this sign-in; contact support')
+
+    updates = {}
+    if unlinked:
+        updates['firebase_uid'] = uid
+    verified = decoded.get('email_verified') is True
+    if user.get('email_verified') != verified:
+        updates['email_verified'] = verified
+    if decoded.get('name') and user.get('display_name') != decoded['name']:
+        updates['display_name'] = decoded['name']
+    if decoded.get('picture') and user.get('avatar_url') != decoded['picture']:
+        updates['avatar_url'] = decoded['picture']
+    if updates:
+        query = {'user_id': actor, 'firebase_uid': stored if 'firebase_uid' in user else {'$exists': False},
+            'status': user['status'] if 'status' in user else {'$exists': False}}
+        if '_id' in user:
+            query['_id'] = user['_id']
+        if unlinked:
+            query['email'] = decoded['email']
+        result = await db.users.update_one(query, {'$set': updates})
+        if result.matched_count != 1:
+            raise HTTPException(409, 'Account identity changed during sign-in; try again without relinking it')
+        user = {**user, **updates}
+    return {key: value for key, value in user.items() if key != '_id'}
+
+
 async def _bootstrap_user_from_claims(
     db: AsyncIOMotorDatabase,
     decoded: dict,
@@ -65,56 +105,24 @@ async def _bootstrap_user_from_claims(
     yet have firebase_uid populated.
     """
     uid = decoded.get("uid")
+    if type(uid) is not str or not uid.strip() or len(uid) > 200:
+        raise HTTPException(401, 'Verified sign-in identity is missing or invalid')
     from outreach.core.erasure import identity_is_erased
     if await identity_is_erased(db, uid):
         raise HTTPException(status_code=403, detail="Account is marked for permanent deletion.")
     email = decoded.get("email", uid)
     display_name = decoded.get("name")
-    email_verified = bool(decoded.get("email_verified", False))
+    email_verified = decoded.get("email_verified") is True
     avatar_url = decoded.get("picture")
 
-    user = await db.users.find_one({"firebase_uid": uid}, {"_id": 0})
+    user = await db.users.find_one({"firebase_uid": uid})
     if user is not None:
-        if user.get("status") in {"deletion_pending", "deleted"}:
-            raise HTTPException(status_code=403, detail="Account is marked for permanent deletion.")
-        updates = {}
-        if user.get("email_verified") != email_verified:
-            updates["email_verified"] = email_verified
-        if display_name and user.get("display_name") != display_name:
-            updates["display_name"] = display_name
-        if avatar_url and user.get("avatar_url") != avatar_url:
-            updates["avatar_url"] = avatar_url
-        if updates:
-            await db.users.update_one({"user_id": user["user_id"]}, {"$set": updates})
-            user.update(updates)
-        return user
+        return await _hydrate_verified_identity(db, user, decoded)
 
     if email:
-        user = await db.users.find_one({"email": email}, {"_id": 0})
+        user = await db.users.find_one({"email": email})
         if user is not None:
-            if user.get("status") in {"deletion_pending", "deleted"}:
-                raise HTTPException(status_code=403, detail="Account is marked for permanent deletion.")
-            updates = {}
-            if uid and not user.get("firebase_uid"):
-                updates["firebase_uid"] = uid
-            if display_name and user.get("display_name") != display_name:
-                updates["display_name"] = display_name
-            if user.get("email_verified") != email_verified:
-                updates["email_verified"] = email_verified
-            if avatar_url and user.get("avatar_url") != avatar_url:
-                updates["avatar_url"] = avatar_url
-            if updates:
-                await db.users.update_one({"user_id": user["user_id"]}, {"$set": updates})
-                user.update(updates)
-                event_log(
-                    logger,
-                    "info",
-                    "auth.user.backfilled",
-                    user_id=user["user_id"],
-                    firebase_uid=uid,
-                    outcome="backfilled",
-                )
-            return user
+            return await _hydrate_verified_identity(db, user, decoded)
 
     now = datetime.now(timezone.utc)
     user_doc = {
@@ -203,17 +211,13 @@ async def _bootstrap_user_from_claims(
         if await identity_is_erased(db, uid):
             raise HTTPException(status_code=403, detail="Account is marked for permanent deletion.")
         if uid:
-            user = await db.users.find_one({"firebase_uid": uid}, {"_id": 0})
+            user = await db.users.find_one({"firebase_uid": uid})
             if user is not None:
-                if user.get("status") in {"deletion_pending", "deleted"}:
-                    raise HTTPException(status_code=403, detail="Account is marked for permanent deletion.")
-                return user
+                return await _hydrate_verified_identity(db, user, decoded)
         if email:
-            user = await db.users.find_one({"email": email}, {"_id": 0})
+            user = await db.users.find_one({"email": email})
             if user is not None:
-                if user.get("status") in {"deletion_pending", "deleted"}:
-                    raise HTTPException(status_code=403, detail="Account is marked for permanent deletion.")
-                return user
+                return await _hydrate_verified_identity(db, user, decoded)
         raise
 
 

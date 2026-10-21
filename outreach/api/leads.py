@@ -7,10 +7,10 @@ import csv
 import io
 import json
 import re
-from typing import Any
+from typing import Annotated, Any
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -19,6 +19,9 @@ from outreach.api.dependencies import require_outreach_permission as _lead_permi
 from db.mongo import get_db
 from outreach.core.sequence_versions import load_sequence
 from outreach.core.workspace_scope import workspace_scope
+from outreach.core.import_context import (
+    capture_import_scope, verify_import_scope, scoped_result, import_job_scope, check_job_scope, job_campaign_binding,
+)
 from outreach.core.lead_importer import (
     LeadImporter,
     normalize_linkedin_url,
@@ -253,16 +256,29 @@ async def create_lead_selection_draft(
     return await create_selection_draft(db, workspace, _user_id(current_user), req.lead_ids,
         req.allow_contacted, req.name, str(req.request_id), req.review_digest)
 
+@router.get("/import-context")
+async def import_request_context(
+    campaign_id: str = Query(..., min_length=1, max_length=200),
+    current_user: dict = _lead_permission("lead:create"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Current advisory scope; no execution permission or historical result."""
+    context = await capture_import_scope(db, current_user, campaign_id)
+    return JSONResponse(context.public, headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
+
+
 @router.post("/preview")
 async def preview_leads_intake(
     req: LeadPreviewRequest,
     current_user: dict = _lead_permission("lead:create"),
     db: AsyncIOMotorDatabase = Depends(get_db),
+    import_scope: Annotated[str | None, Header(alias="X-Outreach-Import-Scope", pattern=r"^[0-9a-f]{64}$")] = None,
 ):
     """
     Simulates deduplication and validation for CSV or pasted profile URLs.
     Returns row-level errors and counts before committing leads.
     """
+    context = await verify_import_scope(db, current_user, req.campaign_id, import_scope)
     workspace_id = _workspace_id(current_user)
     await _require_campaign(req.campaign_id, current_user, db)
 
@@ -282,7 +298,7 @@ async def preview_leads_intake(
             include_invalid=True,
         )
 
-    return await LeadImporter.preview_leads(
+    return scoped_result(context, await LeadImporter.preview_leads(
         leads=parsed,
         campaign_id=req.campaign_id,
         workspace_id=workspace_id,
@@ -290,7 +306,7 @@ async def preview_leads_intake(
         skip_already_contacted=req.skip_already_contacted,
         skip_do_not_contact=req.skip_do_not_contact,
         require_name=req.require_name,
-    )
+    ))
 
 
 @router.post("/preview-staged")
@@ -298,14 +314,16 @@ async def preview_edited_leads(
     req: ImportStagedRequest,
     current_user: dict = _lead_permission("lead:create"),
     db: AsyncIOMotorDatabase = Depends(get_db),
+    import_scope: Annotated[str | None, Header(alias="X-Outreach-Import-Scope", pattern=r"^[0-9a-f]{64}$")] = None,
 ):
     """Recheck edited rows against current exclusions before confirming intake."""
+    context = await verify_import_scope(db, current_user, req.campaign_id, import_scope)
     await _require_campaign(req.campaign_id, current_user, db)
     from outreach.core.search_sources import ensure_intake_provenance
     await ensure_intake_provenance(db, _workspace_id(current_user), req.leads, "staged_preview")
-    return await LeadImporter.preview_leads(req.leads, req.campaign_id, _workspace_id(current_user), db,
+    return scoped_result(context, await LeadImporter.preview_leads(req.leads, req.campaign_id, _workspace_id(current_user), db,
         skip_already_contacted=req.skip_already_contacted, skip_do_not_contact=True,
-        require_name=req.require_name)
+        require_name=req.require_name))
 
 
 @router.post("/import-urls")
@@ -313,10 +331,12 @@ async def import_leads_urls(
     req: ImportURLsRequest,
     current_user: dict = _lead_permission("lead:create"),
     db: AsyncIOMotorDatabase = Depends(get_db),
+    import_scope: Annotated[str | None, Header(alias="X-Outreach-Import-Scope", pattern=r"^[0-9a-f]{64}$")] = None,
 ):
     """
     Parses and ingests user-pasted LinkedIn profile URLs into a campaign with deduplication and DNC checks.
     """
+    context = await verify_import_scope(db, current_user, req.campaign_id, import_scope)
     workspace_id = _workspace_id(current_user)
     campaign = await _require_campaign(req.campaign_id, current_user, db)
     if campaign.get("status") == "warming_up":
@@ -366,9 +386,10 @@ async def import_leads_urls(
         source_metadata={"source_type": "pasted_urls", "consent_basis": req.consent_basis},
         require_name=req.require_name,
         include_rejections=True,
+        _import_scope=context,
     )
 
-    return result
+    return scoped_result(context, result)
 
 
 @router.post("/import-csv")
@@ -376,10 +397,12 @@ async def import_leads_csv(
     req: ImportCSVRequest,
     current_user: dict = _lead_permission("lead:create"),
     db: AsyncIOMotorDatabase = Depends(get_db),
+    import_scope: Annotated[str | None, Header(alias="X-Outreach-Import-Scope", pattern=r"^[0-9a-f]{64}$")] = None,
 ):
     """
     Parses and ingests a CSV list of LinkedIn leads into a specific campaign with deduplication.
     """
+    context = await verify_import_scope(db, current_user, req.campaign_id, import_scope)
     workspace_id = _workspace_id(current_user)
     campaign = await _require_campaign(req.campaign_id, current_user, db)
     if campaign.get("status") == "warming_up":
@@ -430,9 +453,10 @@ async def import_leads_csv(
         source_metadata={"source_type": "csv", "consent_basis": req.consent_basis},
         require_name=req.require_name,
         include_rejections=True,
+        _import_scope=context,
     )
 
-    return result
+    return scoped_result(context, result)
 
 
 @router.post("/import-staged")
@@ -440,10 +464,12 @@ async def import_leads_staged(
     req: ImportStagedRequest,
     current_user: dict = _lead_permission("lead:create"),
     db: AsyncIOMotorDatabase = Depends(get_db),
+    import_scope: Annotated[str | None, Header(alias="X-Outreach-Import-Scope", pattern=r"^[0-9a-f]{64}$")] = None,
 ):
     """
     Ingests reviewed and staged leads into a campaign with user-edited names, compound deduplication, and DNC suppression.
     """
+    context = await verify_import_scope(db, current_user, req.campaign_id, import_scope)
     workspace_id = _workspace_id(current_user)
     campaign = await _require_campaign(req.campaign_id, current_user, db)
     if campaign.get("status") == "warming_up":
@@ -487,9 +513,10 @@ async def import_leads_staged(
         source_metadata={"source_type": "staged_preview", "consent_basis": req.consent_basis},
         require_name=req.require_name,
         include_rejections=True,
+        _import_scope=context,
     )
 
-    return result
+    return scoped_result(context, result)
 
 
 @router.get("/import-sources")
@@ -502,12 +529,14 @@ async def import_search_url(
     req: ImportSearchRequest,
     current_user: dict = _lead_permission("lead:create"),
     db: AsyncIOMotorDatabase = Depends(get_db),
+    import_scope: Annotated[str | None, Header(alias="X-Outreach-Import-Scope", pattern=r"^[0-9a-f]{64}$")] = None,
 ):
     """
     1-Click LinkedIn Search & Sales Navigator URL lead extraction.
     Performs strict preflight safety checks, provisions SearchImportJob, and dispatches crawl_page.
     """
-    await _require_campaign(req.campaign_id, current_user, db)
+    context = await verify_import_scope(db, current_user, req.campaign_id, import_scope)
+    campaign = await _require_campaign(req.campaign_id, current_user, db)
     workspace_id = _workspace_id(current_user)
     if req.search_type not in {"basic", "sales_nav"}:
         raise HTTPException(422, "Unsupported search source")
@@ -601,7 +630,23 @@ async def import_search_url(
         status=SearchImportJobStatus.QUEUED,
     )
     job_dict = job.model_dump()
-    await db.outreach_import_jobs.insert_one(job_dict)
+    if context is None:
+        await db.outreach_import_jobs.insert_one(job_dict)
+    else:
+        from outreach.core.suppression import mutate_suppression, SuppressionUnavailable
+        job_dict['_import_campaign_native'] = job_campaign_binding(context)
+        async def save_scoped_job(current):
+            await verify_import_scope(current, current_user, req.campaign_id, context.digest)
+            parent = await current.outreach_campaigns.update_one({
+                'id': req.campaign_id, **workspace_scope(workspace_id),
+                '_id': campaign['_id'], 'is_deleted': {'$ne': True}}, {'$inc': {'lead_admission_revision': 1}})
+            if parent.matched_count != 1:
+                raise HTTPException(409, 'Import campaign changed before saving the search job')
+            await current.outreach_import_jobs.insert_one(job_dict)
+        try:
+            await mutate_suppression(db, workspace_id, save_scoped_job)
+        except SuppressionUnavailable:
+            raise HTTPException(503, 'Search job outcome is unconfirmed; review original campaign before retrying') from None
 
     # 8. Dispatch page 1 task
     from celery_workers.tasks.outreach import crawl_page
@@ -612,7 +657,7 @@ async def import_search_url(
 
     if "_id" in job_dict:
         del job_dict["_id"]
-    return job_dict
+    return scoped_result(context, job_dict)
 
 
 @router.get("/import-jobs/{job_id}")
@@ -620,15 +665,16 @@ async def get_import_job(
     job_id: str,
     current_user: dict = _lead_permission("lead:read"),
     db: AsyncIOMotorDatabase = Depends(get_db),
+    import_scope: Annotated[str | None, Header(alias="X-Outreach-Import-Scope", pattern=r"^[0-9a-f]{64}$")] = None,
 ):
     """Fetches real-time status and pacing metrics for a search import job."""
     workspace_id = _workspace_id(current_user)
-    job = await db.outreach_import_jobs.find_one({"id": job_id, **workspace_scope(workspace_id)})
+    job, context = await import_job_scope(db, current_user, job_id, import_scope)
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import job not found")
     if "_id" in job:
         del job["_id"]
-    return job
+    return scoped_result(context, job)
 
 
 @router.post("/import-jobs/{job_id}/cancel")
@@ -636,18 +682,21 @@ async def cancel_import_job(
     job_id: str,
     current_user: dict = _lead_permission("lead:create"),
     db: AsyncIOMotorDatabase = Depends(get_db),
+    import_scope: Annotated[str | None, Header(alias="X-Outreach-Import-Scope", pattern=r"^[0-9a-f]{64}$")] = None,
 ):
     """Gracefully halts a running search import job."""
     workspace_id = _workspace_id(current_user)
-    job = await db.outreach_import_jobs.find_one({"id": job_id, **workspace_scope(workspace_id)})
+    job, context = await import_job_scope(db, current_user, job_id, import_scope)
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import job not found")
 
     if job.get("status") in (SearchImportJobStatus.COMPLETED.value, SearchImportJobStatus.STOPPED.value, SearchImportJobStatus.FAILED.value):
-        return {"status": job.get("status"), "message": "Job is already completed or stopped."}
+        return scoped_result(context, {"status": job.get("status"), "message": "Job is already completed or stopped."})
 
     result = await db.outreach_import_jobs.update_one(
-        {"id": job_id, **workspace_scope(workspace_id), 'status': job.get('status'),
+        {"id": job_id, **workspace_scope(workspace_id),
+         **({"_id": job["_id"], "campaign_id": context.campaign,
+             "_import_campaign_native": job_campaign_binding(context)} if context is not None else {}), 'status': job.get('status'),
          'lease_token': job['lease_token'] if 'lease_token' in job else {'$exists': False}},
         {
             "$set": {
@@ -660,11 +709,15 @@ async def cancel_import_job(
         },
     )
     if result.matched_count != 1:
-        current = await db.outreach_import_jobs.find_one({'id': job_id, **workspace_scope(workspace_id)})
+        current = await db.outreach_import_jobs.find_one({'id': job_id, **workspace_scope(workspace_id),
+            **({'_id': job['_id']} if context is not None else {})})
+        if current and context is not None:
+            await verify_import_scope(db, current_user, context.campaign, context.digest)
+            check_job_scope(context, current)
         if current and current.get('status') in {'stopped', 'completed', 'failed'}:
-            return {'status': current['status'], 'message': 'Search job is already terminal.'}
+            return scoped_result(context, {'status': current['status'], 'message': 'Search job is already terminal.'})
         raise HTTPException(409, 'Search job changed. Reload its status before requesting cancellation again.')
-    return {"status": "stopped", "message": "Search import cancelled."}
+    return scoped_result(context, {"status": "stopped", "message": "Search import cancelled."})
 
 
 @router.get("/import-jobs/{job_id}/staged")
@@ -672,11 +725,18 @@ async def get_staged_leads_for_job(
     job_id: str,
     current_user: dict = _lead_permission("lead:read"),
     db: AsyncIOMotorDatabase = Depends(get_db),
+    import_scope: Annotated[str | None, Header(alias="X-Outreach-Import-Scope", pattern=r"^[0-9a-f]{64}$")] = None,
 ):
     """Retrieves all staged leads imported by this job for preview and review."""
     workspace_id = _workspace_id(current_user)
+    context = None
+    if import_scope is not None:
+        job, context = await import_job_scope(db, current_user, job_id, import_scope)
+        if not job:
+            raise HTTPException(404, "Import job not found")
     cursor = db.outreach_leads.find({
         "import_job_id": job_id,
+        **({"campaign_id": context.campaign} if context is not None else {}),
         **workspace_scope(workspace_id),
         "execution_state": LeadExecutionState.STAGED.value,
     })
@@ -684,7 +744,7 @@ async def get_staged_leads_for_job(
     for l in leads:
         if "_id" in l:
             del l["_id"]
-    return {"leads": leads, "count": len(leads)}
+    return scoped_result(context, {"leads": leads, "count": len(leads)})
 
 
 @router.post("/import-jobs/{job_id}/commit")
@@ -693,6 +753,7 @@ async def commit_staged_leads(
     req: CommitStagedLeadsRequest | None = None,
     current_user: dict = _lead_permission("lead:create"),
     db: AsyncIOMotorDatabase = Depends(get_db),
+    import_scope: Annotated[str | None, Header(alias="X-Outreach-Import-Scope", pattern=r"^[0-9a-f]{64}$")] = None,
 ):
     """
     Promotes staged leads into active 'queued' campaign leads after user review.
@@ -701,7 +762,7 @@ async def commit_staged_leads(
     workspace_id = _workspace_id(current_user)
     from outreach.core.suppression import mutate_suppression, SuppressionUnavailable
     from outreach.core.lead_importer import MAX_ADMISSION_ROWS
-    initial_job = await db.outreach_import_jobs.find_one({"id": job_id, **workspace_scope(workspace_id)})
+    initial_job, context = await import_job_scope(db, current_user, job_id, import_scope)
     if not initial_job:
         raise HTTPException(404, "Import job not found")
     await _require_campaign(initial_job["campaign_id"], current_user, db)
@@ -711,9 +772,12 @@ async def commit_staged_leads(
         raise HTTPException(409, UNVERIFIED_LEAD) from None
 
     async def promote(current):
-        job = await current.outreach_import_jobs.find_one({"id": job_id, **workspace_scope(workspace_id)})
+        job = await current.outreach_import_jobs.find_one({"id": job_id, **workspace_scope(workspace_id),
+            **({"_id": initial_job["_id"]} if context is not None else {})})
         if not job:
             raise HTTPException(404, "Import job not found")
+        if context is not None:
+            check_job_scope(context, job)
         query = {"import_job_id": job_id, "campaign_id": job["campaign_id"],
                  **workspace_scope(workspace_id), "execution_state": LeadExecutionState.STAGED.value}
         if req and req.selected_lead_ids:
@@ -729,11 +793,11 @@ async def commit_staged_leads(
                 candidate.update(first_name=name, raw_first_name=name, cleaned_first_name=name)
             candidates.append(candidate)
         result = await LeadImporter.ingest_leads(candidates, job["campaign_id"], workspace_id, current,
-            source="linkedin_search", include_rejections=True, _ordered=True, _staged_rows=rows)
+            source="linkedin_search", include_rejections=True, _ordered=True, _staged_rows=rows, _import_scope=context)
         return {"status": "committed", "enrolled_count": result["imported_count"],
                 "campaign_id": job["campaign_id"], "rejections": result.get("rejections", [])}
     try:
-        return await mutate_suppression(db, workspace_id, promote)
+        return scoped_result(context, await mutate_suppression(db, workspace_id, promote))
     except SuppressionUnavailable:
         raise HTTPException(503, "Could not confirm enrollment. Reload campaign contacts before retrying.") from None
 

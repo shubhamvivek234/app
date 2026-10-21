@@ -65,6 +65,7 @@ venv/
 .venv/
 
 # Development tools
+tools/
 chainlit.md
 .chainlit
 .ipynb_checkpoints/

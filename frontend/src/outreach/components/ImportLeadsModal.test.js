@@ -1,3 +1,4 @@
+import { withImportContext } from '../test/importContextFixture';
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import ImportLeadsModal from './ImportLeadsModal';
@@ -18,7 +19,7 @@ describe('ImportLeadsModal', () => {
     document.body.appendChild(container);
     root = createRoot(container);
     localStorage.clear();
-    global.fetch = jest.fn();
+    global.fetch = jest.fn(withImportContext());
   });
 
   afterEach(async () => {
@@ -57,7 +58,10 @@ describe('ImportLeadsModal', () => {
   it('previews pasted URLs and proceeds through import', async () => {
     const onLeadsImported = jest.fn();
 
-    global.fetch.mockImplementation((url, opts) => {
+    global.fetch.mockImplementation(withImportContext((url, opts) => {
+      if (url.endsWith('/accounts')) return Promise.resolve(response([]));
+      if (url.endsWith('/import-sources')) return Promise.resolve(response({ contract_version: 1,
+        sources: [{ type: 'basic', collection_available: false, parser_supported: true, reason: 'Unavailable' }] }));
       if (url === '/api/v1/outreach/leads/preview') {
         const body = JSON.parse(opts.body);
         expect(body.source_type).toBe('pasted_urls');
@@ -112,7 +116,7 @@ describe('ImportLeadsModal', () => {
       }
 
       return Promise.reject(new Error(`Unexpected request: ${url}`));
-    });
+    }));
 
     await act(async () => {
       root.render(
@@ -174,7 +178,10 @@ describe('ImportLeadsModal', () => {
     const onLeadsImported = jest.fn();
     let stagedPayload = null;
 
-    global.fetch.mockImplementation((url, opts) => {
+    global.fetch.mockImplementation(withImportContext((url, opts) => {
+      if (url.endsWith('/accounts')) return Promise.resolve(response([]));
+      if (url.endsWith('/import-sources')) return Promise.resolve(response({ contract_version: 1,
+        sources: [{ type: 'basic', collection_available: false, parser_supported: true, reason: 'Unavailable' }] }));
       if (url === '/api/v1/outreach/leads/preview') {
         return Promise.resolve(response({
           total_submitted: 1,
@@ -218,7 +225,7 @@ describe('ImportLeadsModal', () => {
       }
 
       return Promise.reject(new Error(`Unexpected request: ${url}`));
-    });
+    }));
 
     await act(async () => {
       root.render(

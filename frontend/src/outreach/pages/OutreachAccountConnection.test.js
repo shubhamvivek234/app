@@ -9,17 +9,21 @@ it('connects a verified session from the Accounts page and refreshes the sender 
   const root = createRoot(container);
   let connected = false;
   const account = {
-    id: 'sender-1', account_name: 'Alex Sender', vanity_name: 'alex',
+    id: 'sender-1', workspace_id: 'w', account_name: 'Alex Sender', vanity_name: 'alex',
     status: 'active', country_code: 'US', proxy: { host: '198.51.100.12' },
     limits: { connection_invites: 20, messages: 20 },
   };
   global.fetch = jest.fn((url) => {
+    const context = { contract_version: 1, workspace_id: 'w', scope_digest: 'a'.repeat(64) };
+    if (url === '/api/v1/outreach/accounts/connection-jobs') {
+      return Promise.resolve({ ok: true, json: async () => ({ context, jobs: [], operator_review_required: false }) });
+    }
     if (url === '/api/v1/outreach/accounts/connect-cookie') {
       return Promise.resolve({ ok: true, json: async () => ({ status: 'queued', job_id: 'job-1' }) });
     }
-    if (url === '/api/v1/outreach/accounts/connection-jobs/job-1') {
+    if (url === `/api/v1/outreach/accounts/connection-jobs/job-1?scope_digest=${context.scope_digest}`) {
       connected = true;
-      return Promise.resolve({ ok: true, json: async () => ({ status: 'completed', account }) });
+      return Promise.resolve({ ok: true, json: async () => ({ ...context, job_id: 'job-1', sender_id: 'sender-1', status: 'completed', account_current: true, account }) });
     }
     if (url === '/api/v1/outreach/accounts') {
       return Promise.resolve({ ok: true, json: async () => connected ? [account] : [] });

@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from outreach.models import OutreachLead, LeadExecutionState, LeadIdentifiers, generate_uuid
 from outreach.core.name_cleaner import clean_first_name
 from outreach.core.workspace_scope import workspace_scope
+from outreach.core.import_context import ImportScope, check_campaign_scope
 
 logger = logging.getLogger(__name__)
 MAX_ADMISSION_ROWS = 1000
@@ -891,6 +892,7 @@ class LeadImporter:
         _staged_rows: list[dict[str, Any]] | None = None,
         _record_decisions: bool = False,
         _match_limit: int | None = None,
+        _import_scope: ImportScope | None = None,
     ) -> dict[str, Any]:
         """
         Deduplicates and bulk-inserts parsed leads into MongoDB for the given campaign.
@@ -903,7 +905,7 @@ class LeadImporter:
             async def admit(current):
                 return await LeadImporter.ingest_leads(leads, campaign_id, workspace_id, current,
                     skip_already_contacted, skip_do_not_contact, None, source, source_metadata,
-                    require_name, include_rejections, _ordered=True, _staged_rows=_staged_rows, _record_decisions=_record_decisions, _match_limit=_match_limit)
+                    require_name, include_rejections, _ordered=True, _staged_rows=_staged_rows, _record_decisions=_record_decisions, _match_limit=_match_limit, _import_scope=_import_scope)
             try:
                 return await mutate_suppression(db, workspace_id, admit)
             except SuppressionUnavailable:
@@ -916,6 +918,14 @@ class LeadImporter:
             "id": campaign_id, **workspace_scope(workspace_id), "is_deleted": {"$ne": True}})
         if not isinstance(campaign, dict):
             raise HTTPException(404, "Campaign not found")
+        if _import_scope is not None:
+            if type(_import_scope) is not ImportScope:
+                raise HTTPException(503, "Import context needs review")
+            owners = await db.outreach_campaigns.find({"id": campaign_id, **workspace_scope(workspace_id),
+                "is_deleted": {"$ne": True}}, {"_id": 1}).limit(2).to_list(2)
+            if len(owners) != 1:
+                raise HTTPException(409, "Import campaign identity changed; review it again")
+            check_campaign_scope(_import_scope, campaign)
         if campaign.get("status") not in {"draft", "paused", "active"}:
             raise HTTPException(409, "Campaign cannot accept contacts in its current state.")
         if campaign.get("launch_claim_token"):
@@ -928,6 +938,7 @@ class LeadImporter:
         # Write the parent so concurrent status/config edits conflict with admission's snapshot.
         parent = await db.outreach_campaigns.update_one({
             "id": campaign_id, **workspace_scope(workspace_id), "status": campaign["status"],
+            **({"_id": campaign["_id"]} if _import_scope is not None else {}),
             "is_deleted": {"$ne": True}}, {"$inc": {"lead_admission_revision": 1}})
         if getattr(parent, "matched_count", 0) != 1:
             raise HTTPException(409, "Campaign changed. Reload before importing contacts.")

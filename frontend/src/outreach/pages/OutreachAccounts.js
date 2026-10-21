@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Shield, Globe, Trash2, CheckCircle2, AlertTriangle, Sliders, RefreshCw } from 'lucide-react';
+import { Globe, Trash2, Sliders, RefreshCw } from 'lucide-react';
 import ConnectLinkedInModal from '../components/ConnectLinkedInModal';
+import SenderVerificationRecovery from '../components/SenderVerificationRecovery';
+import SenderStoredDetails, { savedStatus, savedCap } from '../components/SenderStoredDetails';
 import { toast } from 'sonner';
 
 export default function OutreachAccounts() {
@@ -9,8 +11,25 @@ export default function OutreachAccounts() {
   const [loadError, setLoadError] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [reconnectAccount, setReconnectAccount] = useState(null);
+  const [modalContext, setModalContext] = useState(null);
+  const [recovery, setRecovery] = useState({ blocked: true, context: null, token: null });
+  const [recoveryRevision, setRecoveryRevision] = useState(0);
   const [editingLimitsId, setEditingLimitsId] = useState(null);
-  const [limitsForm, setLimitsForm] = useState({ connection_invites: 20, messages: 20, email_sends: 20 });
+  const [limitsForm, setLimitsForm] = useState({ connection_invites: '', messages: '', email_sends: '' });
+  const [limitChanges, setLimitChanges] = useState({});
+  const [savingLimits, setSavingLimits] = useState(false);
+  const openingLimits = useRef({});
+  const validChanges = Object.values(limitChanges).every(value => /^(0|[1-9]\d?)$/.test(value) && Number(value) <= 35);
+  const canSaveLimits = Object.keys(limitChanges).length > 0 && validChanges && !savingLimits;
+  const changeLimit = (field, value) => {
+    setLimitsForm(current => ({ ...current, [field]: value }));
+    setLimitChanges(current => {
+      const next = { ...current };
+      if (value === String(openingLimits.current[field] ?? '')) delete next[field];
+      else next[field] = value;
+      return next;
+    });
+  };
   const loadVersion = useRef(0);
 
   const fetchAccounts = useCallback(async () => {
@@ -64,6 +83,8 @@ export default function OutreachAccounts() {
   };
 
   const handleSaveLimits = async (accountId) => {
+    if (!canSaveLimits) return;
+    setSavingLimits(true);
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/v1/outreach/accounts/${accountId}/limits`, {
@@ -73,7 +94,7 @@ export default function OutreachAccounts() {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
         },
-        body: JSON.stringify(limitsForm),
+        body: JSON.stringify(Object.fromEntries(Object.entries(limitChanges).map(([key, value]) => [key, Number(value)]))),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Could not save daily limits');
       const updated = await res.json();
@@ -82,7 +103,15 @@ export default function OutreachAccounts() {
       toast.success('Daily limits saved');
     } catch (err) {
       toast.error(err.message || 'Could not save daily limits');
+    } finally {
+      setSavingLimits(false);
     }
+  };
+
+  const openConnection = target => {
+    if (recovery.blocked || !recovery.context || recovery.token !== localStorage.getItem('token')) return;
+    setModalContext(recovery.context);
+    setReconnectAccount(target); setModalOpen(true);
   };
 
   return (
@@ -95,12 +124,15 @@ export default function OutreachAccounts() {
           <RefreshCw className="h-3.5 w-3.5" />Refresh
         </button>
         <button
-          onClick={() => { setReconnectAccount(null); setModalOpen(true); }}
+          disabled={recovery.blocked}
+          onClick={() => openConnection(null)}
           className="inline-flex items-center gap-1.5 rounded-lg bg-[#2e266f] hover:bg-[#251e5c] px-4 py-2 text-xs font-semibold text-white shadow-2xs transition-colors"
         >
           Connect account
         </button>
       </div>
+
+      <SenderVerificationRecovery onState={setRecovery} refreshKey={recoveryRevision} onAccountConnected={fetchAccounts} />
 
       {/* Account Cards or Empty State */}
       {loading ? (
@@ -115,7 +147,8 @@ export default function OutreachAccounts() {
         <div className="rounded-xl border border-gray-200/80 bg-gray-50/50 p-6 text-xs sm:text-sm text-gray-500">
           No accounts connected yet. Click{' '}
           <button
-            onClick={() => { setReconnectAccount(null); setModalOpen(true); }}
+            disabled={recovery.blocked}
+            onClick={() => openConnection(null)}
             className="font-semibold text-gray-800 hover:underline"
           >
             Connect account
@@ -138,17 +171,16 @@ export default function OutreachAccounts() {
                     <h3 className="font-bold text-gray-900 leading-tight">{acc.account_name}</h3>
                     <p className="text-xs text-gray-400 font-mono mt-0.5">@{acc.vanity_name || 'linkedin'}</p>
                     <div className="flex items-center gap-1.5 mt-1">
-                      <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full ${acc.status === 'active' ? 'text-emerald-600 bg-emerald-50' : 'text-amber-700 bg-amber-50'}`}>
-                        <CheckCircle2 className="h-3 w-3" />
-                        {acc.status === 'active' ? 'Active' : (acc.status || 'Unknown').replace(/_/g, ' ').replace(/^./, (letter) => letter.toUpperCase())}
+                      <span className="inline-flex items-center text-[11px] font-medium px-2 py-0.5 rounded-full text-gray-600 bg-gray-100">
+                        Saved status: {savedStatus(acc.status)}
                       </span>
-                      <span className="text-[11px] text-gray-400">Warmup: Level {acc.warmup_level || 1}</span>
                     </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
                   <button
-                    onClick={() => { setReconnectAccount(acc); setModalOpen(true); }}
+                    disabled={recovery.blocked}
+                    onClick={() => openConnection(acc)}
                     title="Reconnect this sender"
                     aria-label={`Reconnect ${acc.account_name}`}
                     className="rounded-lg p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
@@ -169,23 +201,27 @@ export default function OutreachAccounts() {
               <div className="mt-5 pt-4 border-t border-gray-100 flex items-center justify-between text-xs text-gray-500">
                 <div className="flex items-center gap-2">
                   <Globe className="h-3.5 w-3.5 text-indigo-500" />
-                  <span>Residential Proxy: <strong className="text-gray-700">{acc.proxy?.host ? `${acc.country_code || ''} (${acc.proxy.host})` : 'Not configured'}</strong></span>
+                  <span>Configured proxy: <strong className="text-gray-700">{typeof acc.proxy?.host === 'string' && acc.proxy.host ? acc.proxy.host : 'Not recorded'}</strong></span>
                 </div>
-                {acc.proxy?.host && acc.proxy.host !== '127.0.0.1' && <span className="text-[11px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-md font-medium">1:1 Dedicated</span>}
               </div>
+              <SenderStoredDetails account={acc} />
 
               {/* Limits & Counters Section */}
               <div className="mt-4 rounded-xl bg-gray-50/80 p-3.5 border border-gray-100">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-semibold text-gray-700 uppercase tracking-wider">Daily Limits</span>
+                  <span className="text-xs font-semibold text-gray-700 uppercase tracking-wider">Saved daily caps</span>
                   <button
+                    disabled={savingLimits}
                     onClick={() => {
                       setEditingLimitsId(editingLimitsId === acc.id ? null : acc.id);
-                      setLimitsForm({
-                        connection_invites: acc.limits?.connection_invites ?? 20,
-                        messages: acc.limits?.messages ?? 20,
-                        email_sends: acc.limits?.email_sends ?? 20,
-                      });
+                      const opening = {
+                        connection_invites: savedCap(acc.limits?.connection_invites) ?? '',
+                        messages: savedCap(acc.limits?.messages) ?? '',
+                        email_sends: savedCap(acc.limits?.email_sends) ?? '',
+                      };
+                      openingLimits.current = opening;
+                      setLimitsForm(opening);
+                      setLimitChanges({});
                     }}
                     className="text-xs font-medium text-indigo-600 hover:text-indigo-800 inline-flex items-center gap-1"
                   >
@@ -203,7 +239,9 @@ export default function OutreachAccounts() {
                         max={35}
                         min={0}
                         value={limitsForm.connection_invites}
-                        onChange={(e) => setLimitsForm({ ...limitsForm, connection_invites: parseInt(e.target.value) || 0 })}
+                        disabled={savingLimits}
+                        aria-label="Saved invites per day"
+                        onChange={(e) => changeLimit('connection_invites', e.target.value)}
                         className="w-20 text-center rounded-lg border border-gray-300 py-1 text-xs"
                       />
                     </div>
@@ -214,7 +252,9 @@ export default function OutreachAccounts() {
                         max={35}
                         min={0}
                         value={limitsForm.messages}
-                        onChange={(e) => setLimitsForm({ ...limitsForm, messages: parseInt(e.target.value) || 0 })}
+                        disabled={savingLimits}
+                        aria-label="Saved messages per day"
+                        onChange={(e) => changeLimit('messages', e.target.value)}
                         className="w-20 text-center rounded-lg border border-gray-300 py-1 text-xs"
                       />
                     </div>
@@ -225,27 +265,33 @@ export default function OutreachAccounts() {
                         max={35}
                         min={0}
                         value={limitsForm.email_sends}
-                        onChange={(e) => setLimitsForm({ ...limitsForm, email_sends: parseInt(e.target.value, 10) || 0 })}
+                        disabled={savingLimits}
+                        aria-label="Saved emails per day"
+                        onChange={(e) => changeLimit('email_sends', e.target.value)}
                         className="w-20 text-center rounded-lg border border-gray-300 py-1 text-xs"
                       />
                     </div>
                     <button
+                      disabled={!canSaveLimits}
                       onClick={() => handleSaveLimits(acc.id)}
                       className="w-full mt-2 rounded-lg bg-indigo-600 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700"
                     >
                       Save Limits
                     </button>
+                    {!validChanges && <p role="alert" className="text-xs text-amber-800">Enter a whole number from 0 to 35 for each changed cap.</p>}
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div>
-                      <span className="text-gray-400">Invites:</span> <strong className="text-gray-800">{acc.limits?.connection_invites ?? 20}/day</strong>
+                      <span className="text-gray-400">Invites:</span> <strong className="text-gray-800">{savedCap(acc.limits?.connection_invites) === null ? 'Not recorded' : `${acc.limits.connection_invites}/day`}</strong>
                     </div>
                     <div>
-                      <span className="text-gray-400">Messages:</span> <strong className="text-gray-800">{acc.limits?.messages ?? 20}/day</strong>
+                      <span className="text-gray-400">Messages:</span> <strong className="text-gray-800">{savedCap(acc.limits?.messages) === null ? 'Not recorded' : `${acc.limits.messages}/day`}</strong>
                     </div>
+                    <div><span className="text-gray-400">Email sends:</span> <strong className="text-gray-800">{savedCap(acc.limits?.email_sends) === null ? 'Not recorded' : `${acc.limits.email_sends}/day`}</strong></div>
                   </div>
                 )}
+                <p className="mt-2 text-xs text-gray-500">Actual allowance can be lower. Campaign caps, daily use, warm-up and current execution checks also apply.</p>
               </div>
             </div>
           ))}
@@ -256,7 +302,8 @@ export default function OutreachAccounts() {
       <ConnectLinkedInModal
         isOpen={modalOpen}
         reconnectAccount={reconnectAccount}
-        onClose={() => { setModalOpen(false); setReconnectAccount(null); }}
+        connectionContext={modalContext}
+        onClose={() => { setModalOpen(false); setReconnectAccount(null); setRecoveryRevision(value => value + 1); }}
         onAccountConnected={() => { setModalOpen(false); setReconnectAccount(null); fetchAccounts(); }}
       />
     </div>

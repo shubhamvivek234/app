@@ -857,11 +857,23 @@ async def _launch_campaign_impl(
         raise HTTPException(status_code=409, detail="Campaign changed or another launch is preparing it")
     revision = activation["revision"]
     try:
+        from outreach.core import sequence_continuity
+        version = sequence_continuity.current_version(seq)
+        if version is None:
+            raise HTTPException(409, sequence_continuity.VERSION_HOLD)
         # A superseded launcher cannot overwrite a newer lead binding.
+        # Retained progress cannot acquire a different version, even if its
+        # public step ID survived a content/type/timing edit. Terminal history
+        # keeps its original authorization and version.
         await db.outreach_leads.update_many(
-            activation_lead_filter(workspace_id, campaign_id, revision),
-            {"$set": {"authorized_revision": revision, "sequence_version": seq.get("version", 1)}},
+            {'$and': [activation_lead_filter(workspace_id, campaign_id, revision),
+                      sequence_continuity.outstanding_scope(workspace_id, campaign_id),
+                      sequence_continuity.binding_candidates(version, [root_node_id], list(seq['compiled_dag']['nodes']))]},
+            {"$set": {"authorized_revision": revision, "sequence_version": version}},
         )
+        if await db.outreach_leads.find_one(sequence_continuity.version_conflicts(
+                workspace_id, campaign_id, version, [root_node_id], list(seq['compiled_dag']['nodes']))):
+            raise HTTPException(409, sequence_continuity.VERSION_HOLD)
         await db.outreach_leads.update_many(
             {"workspace_id": workspace_id, "campaign_id": campaign_id, "authorized_revision": revision,
              "current_node_id": None, "has_replied": {"$ne": True},

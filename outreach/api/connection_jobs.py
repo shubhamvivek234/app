@@ -29,6 +29,9 @@ def _enqueue_connection_job(job_id: str, workspace_id: str, trace_id: str) -> No
 
 
 async def queue_connection(req, current_user: dict, db) -> dict:
+    if getattr(req, 'connection_scope_digest', None) is not None:
+        from outreach.core.sender_verification_recovery import verify_recovery_context
+        verify_recovery_context(current_user, req.connection_scope_digest)
     if not live_actions_enabled():
         raise HTTPException(status_code=503, detail="Live outreach connection is not enabled for this pilot")
     if os.getenv("OUTREACH_MOCK_AUTH", "false").lower() in {"true", "1"}:

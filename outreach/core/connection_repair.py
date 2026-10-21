@@ -9,6 +9,7 @@ from outreach.core.execution_permission import ExecutionPermission
 from outreach.core.inbox_freshness import credential_generation
 from outreach.core.manual_resolution import require_review
 from outreach.core.paid_access import _utc, get_active_entitlement
+from outreach.core.sender_identity import identity_owner, sender_identity
 from outreach.models import OutreachAccount
 
 PENDING_SECRETS = {key: "" for key in ("li_at_enc", "jsession_id_enc", "li_a_enc")}
@@ -69,18 +70,44 @@ class ConnectionRepair:
 
     async def prepare(self, job: dict, owner: str, generation: str, profile: dict,
                       *, now: datetime | None = None) -> None:
+        """Reserve identity and prepare custody atomically under the workspace guard."""
+        from outreach.core import suppression
+        from outreach.core.restore_epoch import positive, EpochUnavailable
+        async def apply(current):
+            epoch = await positive(current, job['workspace_id'])
+            await ConnectionRepair(current)._prepare(job, owner, generation, profile, now=now)
+            if not epoch.live():
+                raise EpochUnavailable('Restore configuration changed during preparation')
+        await suppression.mutate_suppression(self.db, job['workspace_id'], apply)
+
+    async def _prepare(self, job: dict, owner: str, generation: str, profile: dict,
+                       *, now: datetime | None = None) -> None:
         """Create no usable session. A stopped job cannot cross the later install CAS."""
+        urn = sender_identity(profile.get('linkedin_urn'))
         now = now or datetime.now(timezone.utc)
         deadline = credential_deadline(job)
         if not deadline or deadline <= now:
             raise ValueError("Credential custody expired")
         owned = {**self.scope(job), "status": "running", "verification_owner_token": owner}
         current = await self.db.outreach_connection_jobs.find_one(owned)
+        if not self._same_job(current, job):
+            raise ValueError('Connection owner/job scope changed')
+        job = current
+        deadline = credential_deadline(job)
+        if not deadline or deadline <= now:
+            raise ValueError('Credential custody expired')
+        owned['_id'] = current.get('_id', {'$exists': False})
         lock = await self.db.outreach_connection_locks.find_one({"_id": job["sender_id"],
             "workspace_id": job["workspace_id"], "job_id": job["id"]})
         if not current or not lock:
             raise ValueError("Connection owner changed")
-        account_scope = self.account_scope(job)
+        reservation = await identity_owner(self.db, job['workspace_id'], job['sender_id'], urn)
+        if reservation and not job.get('reconnect'):
+            raise ValueError('Existing sender identity requires explicit reconnect')
+        if not reservation and job.get('reconnect'):
+            raise ValueError('Original reconnect sender is unavailable')
+        account_scope = {**self.account_scope(job),
+            '_id': reservation.get('_id', {'$exists': False})} if reservation else self.account_scope(job)
         account = await self.db.outreach_accounts.find_one(account_scope)
         if account and not captured_after_disconnect(account, job):
             raise ValueError("Sender was disconnected after verification was captured")
@@ -193,7 +220,7 @@ class ConnectionRepair:
         now = now or datetime.now(timezone.utc)
         current = await self.db.outreach_connection_jobs.find_one({**self.scope(job), "status": "finalizing",
             "verification_owner_token": owner, "credential_generation": generation, "custody_expired_at": {"$exists": False}})
-        if not current:
+        if not self._same_job(current, job):
             return False
         deadline = credential_deadline(current)
         if not deadline or deadline <= now:
@@ -205,7 +232,19 @@ class ConnectionRepair:
         if (fence.get("job_id") != job["id"] or fence.get("owner_token") != owner
                 or fence.get("generation") != generation or fence.get("state") != "prepared"):
             return False
-        query = {**self.account_scope(job), "connection_finalization": fence,
+        try:
+            urn = sender_identity(current.get('expected_linkedin_urn'))
+            if (sender_identity(fence.get('expected_linkedin_urn')) != urn
+                    or sender_identity(account.get('linkedin_urn')) != urn
+                    or sender_identity(updates.get('linkedin_urn', urn)) != urn
+                    or 'expected_linkedin_urn' in job and sender_identity(job['expected_linkedin_urn']) != urn):
+                return False
+            reservation = await identity_owner(self.db, job['workspace_id'], job['sender_id'], urn)
+            if not reservation or reservation.get('_id') != account.get('_id'):
+                return False
+        except ValueError:
+            return False
+        query = {**self.account_scope(job), '_id': account.get('_id', {'$exists': False}), "connection_finalization": fence,
             "connection_finalization.custody_expires_at": {"$gt": now},
             "credential_generation": fence.get("base_generation"), "is_deleted": {"$ne": True},
             "$expr": {"$gt": ["$connection_finalization.custody_expires_at", "$$NOW"]}}
@@ -217,6 +256,17 @@ class ConnectionRepair:
             "connection_finalization.installed_credential_digest": installed_digest({**account, **updates})},
             "$unset": {"encrypted_session_cookie": "", "li_at_enc": "", "jsession_id_enc": "", "proxy_config": ""}})
         return bool(changed.matched_count)
+
+    @staticmethod
+    def _same_job(current: dict | None, captured: dict) -> bool:
+        if not current:
+            return False
+        return (all(type(current.get(key)) is str and 0 < len(current[key]) <= 128
+                    and type(captured.get(key)) is str and current[key] == captured[key]
+                    for key in ('id', 'workspace_id', 'sender_id', 'user_id'))
+            and type(current.get('reconnect', False)) is bool
+            and type(captured.get('reconnect', False)) is bool
+            and current.get('reconnect', False) == captured.get('reconnect', False))
 
     async def close_fence(self, job: dict, *, now: datetime | None = None, _remaining: int = 3) -> dict:
         """Closing and installing contend on the same account document."""

@@ -1,3 +1,4 @@
+import { withImportContext } from '../test/importContextFixture';
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import ImportLeadsModal from './ImportLeadsModal';
@@ -10,7 +11,7 @@ describe('Search cancellation confirmation and recovery', () => {
     sessionStorage.setItem('unravler.search-job.campaign', 'job');
     job = { id: 'job', campaign_id: 'campaign', status: 'crawling', target_count: 100 };
     cancel = async () => response({ detail: 'Cancellation rejected' }, 403);
-    global.fetch = jest.fn(async (url) => {
+    global.fetch = jest.fn(withImportContext(async (url) => {
       // Synthetic enabled contract isolates historical batching/cancel mechanics.
       // Product-disabled collection is covered separately by the source tests.
       if (url.endsWith('/import-sources')) return response({ contract_version: 1,
@@ -18,7 +19,7 @@ describe('Search cancellation confirmation and recovery', () => {
       if (url.endsWith('/cancel')) return cancel();
       if (url.endsWith('/import-jobs/job')) return response(job);
       return response([]);
-    });
+    }));
     container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
     await act(async () => root.render(<ImportLeadsModal isOpen campaignId="campaign" />));
   });
@@ -33,10 +34,12 @@ describe('Search cancellation confirmation and recovery', () => {
     await act(async () => jest.advanceTimersByTime(2000));
     expect(global.fetch.mock.calls.length).toBeGreaterThan(reads);
   });
-  it('does not infer stop from a network failure', async () => {
+  it('holds an unknown cancellation without inferring stop or resubmitting it', async () => {
     cancel = async () => { throw new Error('Synthetic lost response'); };
     await act(async () => button('Stop Crawl').click());
-    expect(container.textContent).not.toContain('Search Extraction Stopped'); expect(button('Stop Crawl')).toBeTruthy();
+    expect(container.textContent).not.toContain('Search Extraction Stopped');
+    expect(container.textContent).toContain('Some rows may already be saved');
+    expect(button('Stop Crawl')).toBeUndefined();
   });
   it('waits for the current server record after an accepted cancellation', async () => {
     let resolve; cancel = () => new Promise((done) => { resolve = done; });
@@ -59,7 +62,11 @@ describe('Search cancellation confirmation and recovery', () => {
   it('keeps a confirmed stop when an earlier crawling read arrives late', async () => {
     let finishEarlierRead;
     const earlierJob = { ...job };
-    global.fetch.mockImplementationOnce(() => new Promise((done) => { finishEarlierRead = done; }));
+    const previous = global.fetch.getMockImplementation(); let first = true;
+    global.fetch.mockImplementation(withImportContext((url, options) => {
+      if (first && url.endsWith('/import-jobs/job')) { first = false; return new Promise((done) => { finishEarlierRead = done; }); }
+      return previous(url, options);
+    }));
     await act(async () => jest.advanceTimersByTime(2000));
     cancel = async () => { job = { ...job, status: 'stopped' }; return response({ status: 'stopped' }); };
     await act(async () => button('Stop Crawl').click());
@@ -72,7 +79,11 @@ describe('Search cancellation confirmation and recovery', () => {
     await act(async () => root.render(<ImportLeadsModal isOpen={false} campaignId="campaign" />));
     let finishRecovery;
     const earlierJob = { ...job };
-    global.fetch.mockImplementationOnce(() => new Promise((done) => { finishRecovery = done; }));
+    const previous = global.fetch.getMockImplementation(); let first = true;
+    global.fetch.mockImplementation(withImportContext((url, options) => {
+      if (first && url.endsWith('/import-jobs/job')) { first = false; return new Promise((done) => { finishRecovery = done; }); }
+      return previous(url, options);
+    }));
     await act(async () => root.render(<ImportLeadsModal isOpen campaignId="campaign" />));
     await act(async () => jest.advanceTimersByTime(2000));
     cancel = async () => { job = { ...job, status: 'stopped' }; return response({ status: 'stopped' }); };
@@ -86,7 +97,7 @@ describe('Search cancellation confirmation and recovery', () => {
     const rows = Array.from({ length: 1001 }, (_, index) => ({ id: String(index), first_name: 'Person', linkedin_url: `https://linkedin.com/in/person-${index}` }));
     const commits = [];
     job = { ...job, status: 'completed', leads_imported: 1001 };
-    global.fetch.mockImplementation(async (url, options) => {
+    global.fetch.mockImplementation(withImportContext(async (url, options) => {
       if (url.endsWith('/staged')) return response({ leads: rows });
       if (url.endsWith('/commit')) {
         const payload = JSON.parse(options.body); commits.push(payload);
@@ -95,7 +106,7 @@ describe('Search cancellation confirmation and recovery', () => {
         return response({ enrolled_count: payload.selected_lead_ids.length, rejections: [] });
       }
       return response(job);
-    });
+    }));
     await act(async () => jest.advanceTimersByTime(2000));
     await act(async () => button('Review 1001').click());
     await act(async () => button('Confirm & Ingest').click());
@@ -110,11 +121,11 @@ describe('Search cancellation confirmation and recovery', () => {
   it.each(['Edited name', ''])('keeps staged-search edits on the job commit contract, including explicit name %p', async (name) => {
     let committed;
     job = { ...job, status: 'completed', leads_imported: 1 };
-    global.fetch.mockImplementation(async (url, options) => {
+    global.fetch.mockImplementation(withImportContext(async (url, options) => {
       if (url.endsWith('/staged')) return response({ leads: [{ id: 'lead-1', first_name: 'Original', linkedin_url: 'https://linkedin.com/in/synthetic' }] });
       if (url.endsWith('/commit')) { committed = JSON.parse(options.body); return response({ enrolled_count: 1 }); }
       return response(job);
-    });
+    }));
     await act(async () => jest.advanceTimersByTime(2000));
     await act(async () => button('Review 1').click());
     const input = container.querySelector('input[aria-label="First name for lead #1"]');
@@ -133,11 +144,11 @@ describe('Search cancellation confirmation and recovery', () => {
     let resolveFirst;
     let commits = 0;
     job = { ...job, status: 'completed', leads_imported: 1001 };
-    global.fetch.mockImplementation(async (url) => {
+    global.fetch.mockImplementation(withImportContext(async (url) => {
       if (url.endsWith('/staged')) return response({ leads: rows });
       if (url.endsWith('/commit')) { commits += 1; return new Promise((resolve) => { resolveFirst = resolve; }); }
       return response(job);
-    });
+    }));
     await act(async () => jest.advanceTimersByTime(2000));
     await act(async () => button('Review 1001').click());
     await act(async () => button('Confirm & Ingest').click());

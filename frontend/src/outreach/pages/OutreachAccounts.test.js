@@ -2,6 +2,8 @@ import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import OutreachAccounts from './OutreachAccounts';
 
+const discovery = { context: { contract_version: 1, workspace_id: 'w', scope_digest: 'a'.repeat(64) }, jobs: [], operator_review_required: false };
+
 jest.mock('../components/ConnectLinkedInModal', () => ({ isOpen, onClose, onAccountConnected }) => (
   isOpen ? <div><button onClick={onClose}>Cancel connect</button><button onClick={() => onAccountConnected({ id: 'sender-1' })}>Reconnect</button></div> : null
 ));
@@ -54,7 +56,7 @@ describe('LinkedIn sender accounts', () => {
     expect(refresh).not.toBeNull();
     await act(async () => refresh.click());
     expect(container.textContent).toContain('Active');
-    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(global.fetch.mock.calls.filter(([url]) => url === '/api/v1/outreach/accounts')).toHaveLength(2);
   });
 
   it('does not describe a malformed successful response as having no senders', async () => {
@@ -62,5 +64,17 @@ describe('LinkedIn sender accounts', () => {
     await act(async () => root.render(<OutreachAccounts />));
     expect(container.textContent).toContain('invalid response');
     expect(container.textContent).not.toContain('No accounts connected yet');
+  });
+
+  it('holds new connections until current durable verification discovery succeeds', async () => {
+    let finish;
+    global.fetch = jest.fn(url => url.endsWith('/connection-jobs')
+      ? new Promise(resolve => { finish = resolve; })
+      : Promise.resolve({ ok: true, json: async () => [] }));
+    await act(async () => root.render(<OutreachAccounts />));
+    const connect = [...container.querySelectorAll('button')].find(button => button.textContent === 'Connect account');
+    expect(connect.disabled).toBe(true);
+    await act(async () => finish({ ok: true, json: async () => discovery }));
+    expect(connect.disabled).toBe(false);
   });
 });

@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { createImportContextSession } from './importContextSession';
 import {
   FileSpreadsheet, Search, Users, MessageSquare, Upload, ArrowRight, X, AlertCircle,
   CheckCircle2, Loader2, Shield, Sparkles, Calendar, Bookmark, ExternalLink,
@@ -6,7 +7,54 @@ import {
   RotateCcw, Play, Square, RefreshCw
 } from 'lucide-react';
 
+const readImportToken = () => {
+  try { return localStorage.getItem('token'); } catch { return undefined; }
+};
+
 export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsImported }) {
+  const scope = useMemo(() => ({ isOpen, campaignId, token: readImportToken(), invalid: false }), [isOpen, campaignId]);
+  const currentScopeRef = useRef(scope);
+  currentScopeRef.current = scope;
+  const [sessionHeld, setSessionHeld] = useState(false);
+  const [readyScope, setReadyScope] = useState(null);
+  const isScopeCurrent = () => {
+    if (!scope.isOpen || currentScopeRef.current !== scope || scope.invalid) return false;
+    if (scope.token === undefined || readImportToken() !== scope.token) {
+      scope.invalid = true;
+      setSessionHeld(true);
+      return false;
+    }
+    return true;
+  };
+  const serverSession = () => {
+    if (!scope.serverSession) scope.serverSession = createImportContextSession({
+      campaignId, isCurrent: isScopeCurrent,
+      headers: scope.token ? { Authorization: `Bearer ${scope.token}` } : {},
+      onHold: () => { if (currentScopeRef.current === scope) { scope.invalid = true; setSessionHeld(true); } },
+    });
+    return scope.serverSession;
+  };
+  const scopedFetch = (...args) => serverSession().request(...args);
+  useEffect(() => {
+    currentScopeRef.current = scope;
+    setSessionHeld(false);
+    setReadyScope(null);
+    if (scope.isOpen) isScopeCurrent();
+    if (scope.isOpen && isScopeCurrent()) serverSession().bootstrap()
+      .then(() => { if (isScopeCurrent()) setReadyScope(scope); }).catch(() => {});
+    const check = () => {
+      if (scope.isOpen && isScopeCurrent()) serverSession().verify().catch(() => {});
+    };
+    window.addEventListener('focus', check);
+    window.addEventListener('storage', check);
+    return () => {
+      if (currentScopeRef.current === scope) currentScopeRef.current = null;
+      window.removeEventListener('focus', check);
+      window.removeEventListener('storage', check);
+    };
+    // Opening scope is immutable until close or campaign change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope]);
   // Step 1: Choose Source, Step 2: Input / URLs / CSV / Search, Step 3: Preview & Deduplication, Step 4: Complete
   const [step, setStep] = useState(1);
   const [sourceType, setSourceType] = useState('urls'); // 'urls' | 'csv' | 'search'
@@ -54,22 +102,23 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
     if (!isOpen) return undefined;
     const controller = new AbortController();
     setSourceCapabilities(null); setSourceCapabilityError('');
-    const token = localStorage.getItem('token');
+    const token = scope.token;
     const loadCapabilities = async () => {
-      const response = await fetch('/api/v1/outreach/leads/import-sources', {
+      const response = await scopedFetch('/api/v1/outreach/leads/import-sources', {
         credentials: 'include', headers: token ? { Authorization: `Bearer ${token}` } : {}, signal: controller.signal,
       });
       const body = await response.json();
+      if (!isScopeCurrent()) return;
       if (!response.ok || body?.contract_version !== 1 || !Array.isArray(body.sources)
           || !body.sources.some((source) => source?.type === 'basic')
           || body.sources.some((source) => !source || typeof source.type !== 'string'
             || typeof source.collection_available !== 'boolean' || typeof source.parser_supported !== 'boolean' || typeof source.reason !== 'string')) {
         throw new Error('Search availability could not be confirmed. CSV and public profile imports remain available.');
       }
-      if (!controller.signal.aborted) setSourceCapabilities(body);
+      if (isScopeCurrent() && !controller.signal.aborted) setSourceCapabilities(body);
     };
     loadCapabilities().catch(() => {
-      if (!controller.signal.aborted) setSourceCapabilityError('Search availability could not be confirmed. CSV and public profile imports remain available.');
+      if (isScopeCurrent() && !controller.signal.aborted) setSourceCapabilityError('Search availability could not be confirmed. CSV and public profile imports remain available.');
     });
     return () => controller.abort();
   }, [isOpen, campaignId]);
@@ -80,6 +129,10 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
     setLoading(false);
     setPreviewLoading(false);
     setPreviewResult(null); setStagedRows([]); setHasEdits(false); setReviewRequired(false); setImportResult(null); setStep(1);
+    setUrlsText(''); setCsvContent(''); setCsvFileName('');
+    setDefaultFirstName(''); setDefaultCompanyName('');
+    setSearchUrl(''); setSelectedSenderId(''); setAccounts([]); setActiveJob(null);
+    setCrawlLoading(false); setCancelingCrawl(false); setError(null);
     return () => { importGenerationRef.current += 1; };
   }, [isOpen, campaignId]);
 
@@ -92,21 +145,23 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
     try { saved = sessionStorage.getItem(`unravler.search-job.${campaignId}`); } catch { return undefined; }
     if (!saved) return undefined;
     setActiveJob({ id: saved, campaign_id: campaignId, status: 'checking' });
-    const token = localStorage.getItem('token');
-    fetch(`/api/v1/outreach/leads/import-jobs/${encodeURIComponent(saved)}`, {
+    setSourceType('search'); setStep(2);
+    const token = scope.token;
+    scopedFetch(`/api/v1/outreach/leads/import-jobs/${encodeURIComponent(saved)}`, {
       credentials: 'include', headers: token ? { Authorization: `Bearer ${token}` } : {},
     }).then(async (response) => {
       if (!response.ok) throw new Error('Could not recover search status. Reopen the importer to try again.');
       const job = await response.json();
+      if (!isScopeCurrent()) return;
       if (job.id !== saved || job.campaign_id !== campaignId) throw new Error('Search job context changed.');
-      if (current) {
+      if (current && isScopeCurrent()) {
         setActiveJob((prior) => {
-          if (!current || prior?.id !== saved || jobScopeRef.current !== campaignId) return prior;
+          if (!current || !isScopeCurrent() || prior?.id !== saved || jobScopeRef.current !== campaignId) return prior;
           return ['stopped', 'completed', 'failed'].includes(prior.status) ? prior : job;
         });
         setSourceType('search'); setStep(2);
       }
-    }).catch((failure) => { if (current) setError(failure.message); });
+    }).catch((failure) => { if (current && isScopeCurrent()) setError(failure.message); });
     return () => { current = false; };
   }, [isOpen, campaignId]);
 
@@ -115,13 +170,14 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
     const fetchAccounts = async () => {
       setAccountsLoading(true);
       try {
-        const token = localStorage.getItem('token');
-        const res = await fetch('/api/v1/outreach/accounts', {
+        const token = scope.token;
+        const res = await scopedFetch('/api/v1/outreach/accounts', {
           credentials: 'include',
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         if (res.ok) {
           const data = await res.json();
+          if (!isScopeCurrent()) return;
           const active = (Array.isArray(data) ? data : data.accounts || []).filter(
             (a) => a.status === 'active' && !a.is_deleted
           );
@@ -133,11 +189,11 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
       } catch (e) {
         // quiet fallback
       } finally {
-        setAccountsLoading(false);
+        if (isScopeCurrent()) setAccountsLoading(false);
       }
     };
     fetchAccounts();
-  }, [isOpen]);
+  }, [isOpen, campaignId]);
 
   const activeJobId = activeJob?.id;
   const activeJobStatus = activeJob?.status;
@@ -155,25 +211,26 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
     let current = true;
     const poll = async () => {
       try {
-        const token = localStorage.getItem('token');
-        const res = await fetch(`/api/v1/outreach/leads/import-jobs/${activeJobId}`, {
+        const token = scope.token;
+        const res = await scopedFetch(`/api/v1/outreach/leads/import-jobs/${activeJobId}`, {
           credentials: 'include',
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         if (res.ok) {
           const updated = await res.json();
+          if (!isScopeCurrent()) return;
           if (updated.id !== activeJobId || updated.campaign_id !== campaignId) throw new Error('Search job context changed.');
-          if (current) setActiveJob((prior) => {
-            if (!current || prior?.id !== activeJobId || jobScopeRef.current !== campaignId) return prior;
+          if (current && isScopeCurrent()) setActiveJob((prior) => {
+            if (!current || !isScopeCurrent() || prior?.id !== activeJobId || jobScopeRef.current !== campaignId) return prior;
             // A read started before cancellation cannot undo its confirmed terminal record.
             if (['stopped', 'completed', 'failed'].includes(prior.status)) return prior;
             return updated;
           });
         } else {
-          if (current) setError('Search status is unavailable. Cancellation is not confirmed; monitoring continues.');
+          if (current && isScopeCurrent()) setError('Search status is unavailable. Cancellation is not confirmed; monitoring continues.');
         }
       } catch (err) {
-        if (current) setError('Search status is unavailable. Cancellation is not confirmed; monitoring continues.');
+        if (current && isScopeCurrent()) setError('Search status is unavailable. Cancellation is not confirmed; monitoring continues.');
       }
     };
 
@@ -185,8 +242,24 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
   }, [isOpen, activeJobId, activeJobStatus, campaignId]);
 
   if (!isOpen) return null;
+  if (sessionHeld) return (
+    <div role="dialog" aria-modal="true" aria-label="Import paused" className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="max-w-md rounded-xl bg-white p-6">
+        <p>Sign-in changed, or the workspace/import result could not be confirmed. Close and reopen the importer before reviewing or importing contacts.</p>
+        <p className="mt-3 text-sm text-gray-600">Some rows may already be saved. Check the original campaign before retrying.</p>
+        <button type="button" onClick={onClose} className="mt-4 rounded-lg border px-4 py-2">Close importer</button>
+      </div>
+    </div>
+  );
+  if (readyScope !== scope) return (
+    <div role="dialog" aria-modal="true" aria-label="Checking import workspace" className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="rounded-xl bg-white p-6"><p>Checking the import workspace…</p>
+        <button type="button" onClick={onClose} className="mt-4 rounded-lg border px-4 py-2">Close importer</button></div>
+    </div>
+  );
 
   const handleFileUpload = (e) => {
+    if (!isScopeCurrent()) return;
     const file = e.target.files[0];
     if (!file) return;
     if (file.size > 5 * 1024 * 1024) {
@@ -195,9 +268,11 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
     }
     setCsvFileName(file.name);
     const generation = ++previewGenerationRef.current;
-    const isCurrent = () => openRef.current && jobScopeRef.current === campaignId && previewGenerationRef.current === generation;
+    const isCurrent = () => isScopeCurrent() && openRef.current && jobScopeRef.current === campaignId && previewGenerationRef.current === generation;
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
+      if (!isCurrent()) return;
+      try { await serverSession().verify(); } catch { return; }
       if (!isCurrent()) return;
       setCsvContent(event.target.result);
       setError(null);
@@ -207,6 +282,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
   };
 
   const handleRunPreview = async () => {
+    if (!isScopeCurrent()) return;
     if (!campaignId) {
       setError('Select a campaign before previewing contacts.');
       return;
@@ -220,10 +296,10 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
     setPreviewLoading(true);
     setError(null);
     const generation = ++previewGenerationRef.current;
-    const isCurrent = () => openRef.current && jobScopeRef.current === campaignId && previewGenerationRef.current === generation;
+    const isCurrent = () => isScopeCurrent() && openRef.current && jobScopeRef.current === campaignId && previewGenerationRef.current === generation;
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch('/api/v1/outreach/leads/preview', {
+      const token = scope.token;
+      const res = await scopedFetch('/api/v1/outreach/leads/preview', {
         method: 'POST',
         credentials: 'include',
         headers: {
@@ -243,6 +319,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
       });
 
       const data = await res.json();
+      if (!isScopeCurrent()) return;
       if (!res.ok) {
         throw new Error(data.detail || 'Failed to preview leads.');
       }
@@ -260,6 +337,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
   };
 
   const handleNameChange = (rowNumber, newName) => {
+    if (!isScopeCurrent()) return;
     setStagedRows((prev) =>
       prev.map((r) => {
         if (r.row_number === rowNumber) {
@@ -285,19 +363,21 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
   };
 
   const handleValidateChanges = async () => {
+    if (!isScopeCurrent()) return;
     if (previewLoading || loading || sourceType === 'search') return;
     setPreviewLoading(true); setError(null);
     const generation = ++previewGenerationRef.current;
-    const isCurrent = () => openRef.current && jobScopeRef.current === campaignId && previewGenerationRef.current === generation;
+    const isCurrent = () => isScopeCurrent() && openRef.current && jobScopeRef.current === campaignId && previewGenerationRef.current === generation;
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('/api/v1/outreach/leads/preview-staged', {
+      const token = scope.token;
+      const response = await scopedFetch('/api/v1/outreach/leads/preview-staged', {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
         body: JSON.stringify({ campaign_id: campaignId, leads: stagedRows, require_name: requireName,
           skip_already_contacted: skipContacted, skip_do_not_contact: true }),
       });
       const body = await response.json();
+      if (!isScopeCurrent()) return;
       if (!response.ok) throw new Error(body.detail || 'Could not validate the edited contacts.');
       if (!isCurrent()) return;
       setPreviewResult(body); setStagedRows(body.rows || []); setReviewRequired(false);
@@ -309,6 +389,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
   };
 
   const handleStartSearchCrawl = async () => {
+    if (!isScopeCurrent()) return;
     if (!searchAvailable) { setError(searchUnavailableReason); return; }
     if (!campaignId) {
       setError('Select a campaign before importing contacts.');
@@ -326,8 +407,8 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
     setCrawlLoading(true);
     setError(null);
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch('/api/v1/outreach/leads/import-search', {
+      const token = scope.token;
+      const res = await scopedFetch('/api/v1/outreach/leads/import-search', {
         method: 'POST',
         credentials: 'include',
         headers: {
@@ -342,6 +423,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
         }),
       });
       const data = await res.json();
+      if (!isScopeCurrent()) return;
       if (!res.ok) {
         throw new Error(data.detail || 'Failed to start search import.');
       }
@@ -349,19 +431,20 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
       try { sessionStorage.setItem(`unravler.search-job.${campaignId}`, data.id); }
       catch { setError('Search started, but this browser cannot remember it after reload. Keep this importer open.'); }
     } catch (err) {
-      setError(err.message);
+      if (isScopeCurrent()) setError(err.message);
     } finally {
-      setCrawlLoading(false);
+      if (isScopeCurrent()) setCrawlLoading(false);
     }
   };
 
   const handleCancelCrawl = async () => {
+    if (!isScopeCurrent()) return;
     if (!activeJob?.id || cancelingCrawl) return;
     const jobId = activeJob.id;
     setCancelingCrawl(true); setError(null);
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`/api/v1/outreach/leads/import-jobs/${jobId}/cancel`, {
+      const token = scope.token;
+      const response = await scopedFetch(`/api/v1/outreach/leads/import-jobs/${jobId}/cancel`, {
         method: 'POST',
         credentials: 'include',
         headers: {
@@ -371,32 +454,35 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.detail || 'Cancellation was not confirmed. Monitoring continues.');
       // Confirm the full current server record; a successful POST alone is not a local stop.
-      const statusResponse = await fetch(`/api/v1/outreach/leads/import-jobs/${jobId}`, {
+      const statusResponse = await scopedFetch(`/api/v1/outreach/leads/import-jobs/${jobId}`, {
         credentials: 'include', headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
       if (!statusResponse.ok) throw new Error('Cancellation was requested, but its outcome is not confirmed. Monitoring continues.');
       const job = await statusResponse.json();
+      if (!isScopeCurrent()) return;
       if (job.id !== jobId || job.campaign_id !== campaignId) throw new Error('Search job context changed.');
-      setActiveJob((prior) => prior?.id === jobId && jobScopeRef.current === campaignId ? job : prior);
+      setActiveJob((prior) => isScopeCurrent() && prior?.id === jobId && jobScopeRef.current === campaignId ? job : prior);
       if (!['stopped', 'completed', 'failed'].includes(job.status)) setError('Cancellation is not confirmed yet. Monitoring continues.');
     } catch (err) {
-      setError(err.message || 'Cancellation was not confirmed. Monitoring continues.');
+      if (isScopeCurrent()) setError(err.message || 'Cancellation was not confirmed. Monitoring continues.');
     } finally {
-      setCancelingCrawl(false);
+      if (isScopeCurrent()) setCancelingCrawl(false);
     }
   };
 
   const handleReviewStagedLeads = async () => {
+    if (!isScopeCurrent()) return;
     if (!activeJob?.id) return;
     setPreviewLoading(true);
     setError(null);
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`/api/v1/outreach/leads/import-jobs/${activeJob.id}/staged`, {
+      const token = scope.token;
+      const res = await scopedFetch(`/api/v1/outreach/leads/import-jobs/${activeJob.id}/staged`, {
         credentials: 'include',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       const data = await res.json();
+      if (!isScopeCurrent()) return;
       if (!res.ok) throw new Error(data.detail || 'Could not load staged leads.');
       const leads = data.leads || [];
       const rows = leads.map((l, idx) => ({
@@ -424,13 +510,14 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
       });
       setStep(3);
     } catch (err) {
-      setError(err.message);
+      if (isScopeCurrent()) setError(err.message);
     } finally {
-      setPreviewLoading(false);
+      if (isScopeCurrent()) setPreviewLoading(false);
     }
   };
 
   const handleExecuteImport = async () => {
+    if (!isScopeCurrent()) return;
     if (reviewRequired || previewLoading) { setError('Validate the changed contacts before confirming this import.'); return; }
     if (sourceType === 'search' && !searchAvailable) { setError(searchUnavailableReason); return; }
     if (!campaignId) {
@@ -441,7 +528,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
     setError(null);
     const importGeneration = ++importGenerationRef.current;
     try {
-      const token = localStorage.getItem('token');
+      const token = scope.token;
       let res;
 
       if (sourceType === 'search' && activeJob) {
@@ -454,9 +541,9 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
         let enrolled = 0;
         let rejected = 0;
         for (let offset = 0; offset < stagedRows.length; offset += 1000) {
-          if (!openRef.current || jobScopeRef.current !== campaignId || importGenerationRef.current !== importGeneration) return;
+          if (!isScopeCurrent() || !openRef.current || jobScopeRef.current !== campaignId || importGenerationRef.current !== importGeneration) return;
           const batch = stagedRows.slice(offset, offset + 1000);
-          res = await fetch(`/api/v1/outreach/leads/import-jobs/${activeJob.id}/commit`, {
+          res = await scopedFetch(`/api/v1/outreach/leads/import-jobs/${activeJob.id}/commit`, {
             method: 'POST', credentials: 'include',
             headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
             body: JSON.stringify({ selected_lead_ids: batch.map((row) => row.id),
@@ -464,8 +551,9 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                 .map((row) => [row.id, nameOverrides[row.id]])) }),
           });
           const data = await res.json();
+          if (!isScopeCurrent()) return;
           if (!res.ok) throw new Error(data.detail || 'Import interrupted.');
-          if (!openRef.current || jobScopeRef.current !== campaignId || importGenerationRef.current !== importGeneration) return;
+          if (!isScopeCurrent() || !openRef.current || jobScopeRef.current !== campaignId || importGenerationRef.current !== importGeneration) return;
           enrolled += data.enrolled_count || 0;
           rejected += (data.rejections || []).length;
           if (onLeadsImported) onLeadsImported(data);
@@ -479,7 +567,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
       }
 
       if (hasEdits) {
-        res = await fetch('/api/v1/outreach/leads/import-staged', {
+        res = await scopedFetch('/api/v1/outreach/leads/import-staged', {
           method: 'POST',
           credentials: 'include',
           headers: {
@@ -496,7 +584,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
           }),
         });
       } else if (sourceType === 'urls') {
-        res = await fetch('/api/v1/outreach/leads/import-urls', {
+        res = await scopedFetch('/api/v1/outreach/leads/import-urls', {
           method: 'POST',
           credentials: 'include',
           headers: {
@@ -515,7 +603,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
           }),
         });
       } else {
-        res = await fetch('/api/v1/outreach/leads/import-csv', {
+        res = await scopedFetch('/api/v1/outreach/leads/import-csv', {
           method: 'POST',
           credentials: 'include',
           headers: {
@@ -536,20 +624,21 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
       }
 
       const data = await res.json();
+      if (!isScopeCurrent()) return;
       if (!res.ok) {
         throw new Error(data.detail || 'Import failed.');
       }
-      if (!openRef.current || jobScopeRef.current !== campaignId || importGenerationRef.current !== importGeneration) return;
+      if (!isScopeCurrent() || !openRef.current || jobScopeRef.current !== campaignId || importGenerationRef.current !== importGeneration) return;
       setImportResult(data);
       if (onLeadsImported) onLeadsImported(data);
     } catch (err) {
-      if (importGenerationRef.current === importGeneration) {
+      if (isScopeCurrent() && importGenerationRef.current === importGeneration) {
         setError(sourceType === 'search'
           ? `${err.message || 'Import interrupted.'} Some rows may already be saved. Review or retry the same staged rows to finish.`
           : err.message);
       }
     } finally {
-      if (importGenerationRef.current === importGeneration) setLoading(false);
+      if (isScopeCurrent() && importGenerationRef.current === importGeneration) setLoading(false);
     }
   };
 
