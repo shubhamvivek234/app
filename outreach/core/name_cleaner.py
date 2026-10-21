@@ -55,11 +55,12 @@ def _smart_title_case_word(word: str) -> str:
     return word.capitalize()
 
 
-def clean_first_name(raw: str | None) -> str:
+def clean_first_name(raw: str | None, custom_scrub_terms: list[str] | None = None) -> str:
     """
     Cleans a first name string safely and non-destructively:
     - Strips emojis and trailing certifications/headline noise.
     - Strips bracketed/parenthetical annotations.
+    - Strips any user-configured custom scrub terms (e.g. 'Dr.', 'Hiring!', 'Ex-Meta').
     - Preserves mixed-case strings (e.g. McDonald, de la Cruz, van Buren, O'Connor).
     - Safely converts 100% ALL-CAPS strings (e.g. 'JOHN DOE' -> 'John Doe', 'O'CONNOR' -> 'O'Connor').
     - Capitalizes 100% all-lowercase strings (e.g. 'john' -> 'John').
@@ -71,6 +72,13 @@ def clean_first_name(raw: str | None) -> str:
     text = raw.strip()
     if not text:
         return ""
+
+    # 0. Remove custom user-defined scrub terms if provided
+    if custom_scrub_terms:
+        for term in custom_scrub_terms:
+            if isinstance(term, str) and term.strip():
+                escaped_term = re.escape(term.strip())
+                text = re.sub(rf"(?i)(?:^|\s|,|\|){escaped_term}(?=$|\s|,|\|)", " ", text).strip()
 
     # 1. Remove bracketed / parenthetical notes
     text = PARENTHETICAL_NOISE_PATTERN.sub("", text).strip()

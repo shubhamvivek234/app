@@ -7,7 +7,7 @@ import logging
 import os
 from typing import Any
 from datetime import datetime, timedelta, timezone
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -769,6 +769,142 @@ async def get_campaign_node_counts(
         "waiting_node_counts": combined_node_counts,
         "execution_state_counts": execution_state_counts,
         "total_leads": total_leads,
+    }
+
+
+@router.get("/{campaign_id}/sequence-step-leads")
+async def get_sequence_step_leads(
+    campaign_id: str,
+    node_id: str = Query(..., min_length=1, max_length=200),
+    status_filter: str | None = Query(None, description="Optional filter: 'queued' | 'in_progress' | 'completed' | 'failed'"),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: dict = Depends(get_outreach_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Returns detailed lead queue & execution history for a specific sequence node
+    (queued leads, waiting condition leads, completed touches, and failed leads with failure reason + A/B variant).
+    Powers click-through inspection on the Sequence Canvas.
+    """
+    ws_id = _workspace_id(current_user)
+    campaign = await db.outreach_campaigns.find_one(_campaign_filter(campaign_id, current_user))
+    if not campaign:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+
+    # 1. Leads currently sitting at this node (queued / in_progress / paused / failed)
+    lead_query: dict[str, Any] = {
+        "campaign_id": campaign_id,
+        "workspace_id": ws_id,
+        "current_node_id": node_id,
+    }
+    if status_filter in {"queued", "in_progress", "paused", "failed"}:
+        lead_query["execution_state"] = status_filter
+
+    active_leads_docs = await _fetch_cursor_docs(
+        db.outreach_leads.find(lead_query).sort("updated_at", -1), length=limit
+    )
+
+    # 2. Task execution history at this node (completed, failed, skipped, pending)
+    task_docs: list[dict[str, Any]] = []
+    if hasattr(db, "outreach_tasks") and hasattr(db.outreach_tasks, "find"):
+        task_q: dict[str, Any] = {
+            "campaign_id": campaign_id,
+            "workspace_id": ws_id,
+            "node_id": node_id,
+        }
+        if status_filter == "completed":
+            task_q["status"] = "completed"
+        elif status_filter == "failed":
+            task_q["status"] = {"$in": ["failed", "skipped"]}
+        task_docs = await _fetch_cursor_docs(
+            db.outreach_tasks.find(task_q).sort("updated_at", -1), length=limit
+        )
+
+    # Hydrate lead info for tasks whose leads have already moved past this node
+    seen_lead_ids = {str(l.get("id")) for l in active_leads_docs if l.get("id")}
+    task_lead_ids = [
+        str(t.get("lead_id")) for t in task_docs
+        if t.get("lead_id") and str(t.get("lead_id")) not in seen_lead_ids
+    ]
+    extra_leads_map: dict[str, dict[str, Any]] = {}
+    if task_lead_ids:
+        extra_docs = await _fetch_cursor_docs(
+            db.outreach_leads.find({
+                "campaign_id": campaign_id,
+                "workspace_id": ws_id,
+                "id": {"$in": list(dict.fromkeys(task_lead_ids))[:200]},
+            }),
+            length=200,
+        )
+        extra_leads_map = {str(d.get("id")): d for d in extra_docs if d.get("id")}
+
+    latest_task_by_lead: dict[str, dict[str, Any]] = {}
+    for t in task_docs:
+        lid = str(t.get("lead_id") or "")
+        if lid and lid not in latest_task_by_lead:
+            latest_task_by_lead[lid] = t
+
+    items: list[dict[str, Any]] = []
+    counts = {"queued": 0, "in_progress": 0, "completed": 0, "failed": 0}
+
+    for ldoc in active_leads_docs:
+        lid = str(ldoc.get("id") or "")
+        state = str(ldoc.get("execution_state") or "queued")
+        t_info = latest_task_by_lead.get(lid, {})
+        ab_map = ldoc.get("ab_variants_assigned") if isinstance(ldoc.get("ab_variants_assigned"), dict) else {}
+        variant_id = t_info.get("variant_id") or ab_map.get(node_id)
+        bucket = "failed" if state == "failed" or t_info.get("status") == "failed" else (
+            "in_progress" if state == "in_progress" else "queued"
+        )
+        counts[bucket] = counts.get(bucket, 0) + 1
+        items.append({
+            "lead_id": lid,
+            "first_name": ldoc.get("first_name") or "",
+            "last_name": ldoc.get("last_name") or "",
+            "company_name": ldoc.get("company_name") or "",
+            "job_title": ldoc.get("job_title") or "",
+            "linkedin_url": ldoc.get("linkedin_url") or "",
+            "step_status": bucket,
+            "execution_state": state,
+            "next_action_due_at": ldoc.get("next_action_due_at"),
+            "failure_reason": t_info.get("error_reason") or t_info.get("skip_reason") or ldoc.get("pause_reason"),
+            "ab_variant": variant_id,
+            "updated_at": ldoc.get("updated_at") or ldoc.get("created_at"),
+        })
+
+    for t in task_docs:
+        lid = str(t.get("lead_id") or "")
+        if not lid or lid in seen_lead_ids:
+            continue
+        seen_lead_ids.add(lid)
+        ldoc = extra_leads_map.get(lid, {})
+        t_status = str(t.get("status") or "completed")
+        bucket = "failed" if t_status in {"failed", "skipped"} else "completed"
+        if status_filter and status_filter != bucket:
+            continue
+        counts[bucket] = counts.get(bucket, 0) + 1
+        ab_map = ldoc.get("ab_variants_assigned") if isinstance(ldoc.get("ab_variants_assigned"), dict) else {}
+        variant_id = t.get("variant_id") or ab_map.get(node_id)
+        items.append({
+            "lead_id": lid,
+            "first_name": ldoc.get("first_name") or "",
+            "last_name": ldoc.get("last_name") or "",
+            "company_name": ldoc.get("company_name") or "",
+            "job_title": ldoc.get("job_title") or "",
+            "linkedin_url": ldoc.get("linkedin_url") or "",
+            "step_status": bucket,
+            "execution_state": ldoc.get("execution_state") or "in_progress",
+            "next_action_due_at": ldoc.get("next_action_due_at"),
+            "failure_reason": t.get("error_reason") or t.get("skip_reason"),
+            "ab_variant": variant_id,
+            "updated_at": t.get("updated_at") or t.get("executed_at") or t.get("created_at"),
+        })
+
+    return {
+        "campaign_id": campaign_id,
+        "node_id": node_id,
+        "counts": counts,
+        "leads": items[:limit],
     }
 
 

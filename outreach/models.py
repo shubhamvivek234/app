@@ -166,14 +166,14 @@ class ProxyConfig(BaseModel):
 class DailyLimits(BaseModel):
     """Configured daily caps per sender; they do not prevent platform enforcement."""
     connection_invites: int = Field(default=20, ge=0, le=100)
-    messages: int = Field(default=20, ge=0, le=100)
+    messages: int = Field(default=20, ge=0, le=150)
     voice_notes: int = Field(default=20, ge=0, le=100)
     inmails: int = Field(default=20, ge=0, le=100)
-    profile_visits: int = Field(default=20, ge=0, le=100)
-    follows: int = Field(default=20, ge=0, le=100)
-    post_likes: int = Field(default=20, ge=0, le=100)
-    comments: int = Field(default=20, ge=0, le=100)
-    email_sends: int = Field(default=20, ge=0, le=100)
+    profile_visits: int = Field(default=20, ge=0, le=150)
+    follows: int = Field(default=20, ge=0, le=150)
+    post_likes: int = Field(default=20, ge=0, le=150)
+    comments: int = Field(default=20, ge=0, le=150)
+    email_sends: int = Field(default=20, ge=0, le=150)
 
 
 class DailyCounters(BaseModel):
@@ -227,6 +227,11 @@ class OutreachAccount(BaseModel):
     counters: DailyCounters = Field(default_factory=DailyCounters)
     warmup_level: int = 1  # 1 (5/day) to 4 (20/day)
     warmup_started_at: datetime = Field(default_factory=utc_now)
+    activity_control_enabled: bool = False
+    connections_count: int | None = None
+    weekly_invite_limit_reached: bool = False
+    weekly_invite_reset_at: datetime | None = None
+    weekly_invites_sent: int = 0
     last_active_at: datetime | None = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
@@ -294,6 +299,7 @@ class SequenceNodeType(str, Enum):
     COMMENT_LAST_POST = "comment_last_post"
     REPLY_TO_COMMENT = "reply_to_comment"
     ENDORSE_SKILLS = "endorse_skills"
+    WITHDRAW_INVITE = "withdraw_invite"
     FIND_EMAIL = "find_email"
     SEND_EMAIL = "send_email"
     # Conditions & Triggers
@@ -378,7 +384,18 @@ class OutreachLead(BaseModel):
     last_name: str = ""
     company_name: str = ""
     job_title: str = ""
+    headline: str = ""
+    industry: str = ""
     location: str = ""
+    company_location: str = ""
+    connections_count: int | str | None = None
+    top_skill: str = ""
+    summary: str = ""
+    school: str = ""
+    years_in_company: str = ""
+    years_in_role: str = ""
+    mutual_connections: str = ""
+    is_open_profile: bool | None = None
     email: str | None = None
     phone: str | None = None
     country_code: str = ""
@@ -397,6 +414,8 @@ class OutreachLead(BaseModel):
     accepted_at: datetime | None = None
     has_replied: bool = False
     replied_at: datetime | None = None
+    withdrawn_at: datetime | None = None
+    ab_variants_assigned: dict[str, str] = Field(default_factory=dict)
     pause_reason: str | None = None
     import_job_id: str | None = None
     staged_at: datetime | None = None
@@ -446,6 +465,9 @@ class OutreachInboxMessage(BaseModel):
     body: str
     audio_url: str | None = None
     is_voice_note: bool = False
+    attachment_url: str | None = None
+    attachment_name: str | None = None
+    edited_at: datetime | None = None
     timestamp: datetime = Field(default_factory=utc_now)
 
 

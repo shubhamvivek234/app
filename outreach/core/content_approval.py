@@ -6,7 +6,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
 
 from outreach.core.authorization import canonical_hash
-from outreach.core.dag_compiler import interpolate_template, contains_ai_prompt_token
+from outreach.core.dag_compiler import interpolate_template, contains_ai_prompt_token, select_step_variant
 from outreach.core.inbox_freshness import credential_generation
 from outreach.core.paid_access import _utc
 from outreach.core.sequence_versions import load_sequence
@@ -17,7 +17,7 @@ from outreach.core.sequence_contract import MAX_RENDER_CHARS
 POLICY_VERSION = 1
 POLICY = {"mode": "exact_human_review", "max_content_chars": MAX_RENDER_CHARS, "valid_seconds": 86400}
 POLICY_DIGEST = canonical_hash(POLICY)
-CONTENT_ACTIONS = {"connection_request", "send_message", "voice_note", "send_email", "comment", "inbox_reply"}
+CONTENT_ACTIONS = {"connection_request", "send_message", "voice_note", "send_email", "comment", "comment_last_post", "inmail", "inbox_reply"}
 
 
 def make_binding(*, workspace_id: str, account: dict, source: str, recipient: str,
@@ -54,12 +54,14 @@ async def sequence_binding(db: AsyncIOMotorDatabase, workspace_id: str, lead_id:
     action = node.get("type")
     if action not in CONTENT_ACTIONS:
         return None
-    config = node.get("config") or {}
+    variant_id, config = select_step_variant({"id": lead.get("current_node_id"), **node}, lead)
     recipient = lead.get("linkedin_urn") or lead.get("linkedin_url") or ""
     context = {"campaign_id": lead["campaign_id"], "lead_id": lead["id"],
                "enrollment_id": lead.get("enrollment_id") or "legacy:" + lead["id"], "node_id": lead.get("current_node_id"),
                "sequence_version": sequence.get("version", 1), "sequence_digest": canonical_hash(sequence.get("compiled_dag")),
                "authorization_revision": campaign.get("authorization_revision", 0)}
+    if variant_id is not None:
+        context["variant_id"] = variant_id
     if action == "send_email":
         from outreach.core.mailbox_delivery import render_email_body
         from outreach.core.email_finder import normalize_email
@@ -95,6 +97,13 @@ async def sequence_binding(db: AsyncIOMotorDatabase, workspace_id: str, lead_id:
             content["audio_digest"] = voice_artifact["audio_digest"]
             context["voice_artifact_id"] = voice_artifact["_id"]
             context["voice_artifact_generation"] = voice_artifact.get("generation_id", "legacy")
+    elif action == "inmail":
+        subject = interpolate_template(config.get("subject") or "Quick question, {{first_name}}", lead).strip()
+        body = interpolate_template(config.get("body") or "Hi {{first_name}}", lead)
+        content = {"subject": subject, "body": body}
+    elif action == "comment_last_post":
+        template = config.get("comment") or config.get("body") or "Great insights on this, {{first_name}}!"
+        content = {"body": interpolate_template(template, lead)}
     else:
         template = config.get("note", "") if action == "connection_request" else config.get("body", "Hi {{first_name}}")
         content = {"body": interpolate_template(template, lead)}

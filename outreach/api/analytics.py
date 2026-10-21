@@ -172,6 +172,108 @@ async def get_outreach_analytics(
                     'email_cohort_basis': email_evidence['kpis']['cohort_basis'],
                     'email_bounce_basis': email_evidence['kpis']['bounce_basis']})
 
+    # Team / Per-Sender Performance & Daily Quota Usage
+    team_performance: list[dict[str, Any]] = []
+    today_str = now.strftime("%Y-%m-%d")
+    if hasattr(db, "outreach_accounts") and hasattr(db.outreach_accounts, "find"):
+        from outreach.core.safety_shield import WarmUpGovernor
+        try:
+            acc_cursor = db.outreach_accounts.find({**scope, "is_deleted": {"$ne": True}})
+            sender_docs = await acc_cursor.to_list(length=50) if hasattr(acc_cursor, "to_list") else []
+            if not isinstance(sender_docs, list):
+                sender_docs = []
+        except Exception:
+            sender_docs = []
+
+        for sdoc in sender_docs:
+            if not isinstance(sdoc, dict) or not sdoc.get("id"):
+                continue
+            sid = sdoc["id"]
+            s_task_base = {**scope, "account_id": sid, "status": "completed", "updated_at": {"$gte": period_start, "$lte": now}}
+            if campaign_id and campaign_id != "all":
+                s_task_base["campaign_id"] = campaign_id
+            s_lead_base = {**scope, "assigned_account_id": sid}
+            if campaign_id and campaign_id != "all":
+                s_lead_base["campaign_id"] = campaign_id
+
+            s_req_sent, s_req_acc, s_msg_sent, s_msg_rep, s_visits = await asyncio.gather(
+                db.outreach_tasks.count_documents({**s_task_base, "task_type": "connection_request"}),
+                db.outreach_leads.count_documents({**s_lead_base, "is_connected": True, "accepted_at": {"$gte": period_start, "$lte": now}}),
+                db.outreach_tasks.count_documents({**s_task_base, "task_type": "send_message"}),
+                db.outreach_leads.count_documents({**s_lead_base, "has_replied": True, "replied_at": {"$gte": period_start, "$lte": now}}),
+                db.outreach_tasks.count_documents({**s_task_base, "task_type": "visit_profile"}),
+            )
+            ac_summary = WarmUpGovernor.compute_activity_control_summary(sdoc, now=now)
+            counters = sdoc.get("counters") or {}
+            is_today = counters.get("date") == today_str
+            eff_limits = ac_summary["effective_limits"]
+            weekly_limit_reached = bool(sdoc.get("weekly_invite_limit_reached", False))
+            weekly_reset_at = sdoc.get("weekly_invite_reset_at")
+            if isinstance(weekly_reset_at, datetime) and weekly_reset_at.tzinfo is None:
+                weekly_reset_at = weekly_reset_at.replace(tzinfo=timezone.utc)
+            if weekly_limit_reached and isinstance(weekly_reset_at, datetime) and now >= weekly_reset_at:
+                weekly_limit_reached = False
+            team_performance.append({
+                "account_id": sid,
+                "account_name": sdoc.get("account_name") or "LinkedIn Sender",
+                "vanity_name": sdoc.get("vanity_name") or "",
+                "status": sdoc.get("status") or "active",
+                "premium_product": sdoc.get("premium_product") or "classic",
+                "activity_control_enabled": ac_summary["activity_control_enabled"],
+                "warmup_level": sdoc.get("warmup_level", 1),
+                "connections_count": sdoc.get("connections_count"),
+                "weekly_invite_limit_reached": weekly_limit_reached,
+                "weekly_invite_reset_at": weekly_reset_at.isoformat() if isinstance(weekly_reset_at, datetime) else weekly_reset_at,
+                "daily_usage_today": {
+                    "connection_invites": int(counters.get("connection_invites", 0)) if is_today else 0,
+                    "messages": int(counters.get("messages", 0)) if is_today else 0,
+                    "profile_visits": int(counters.get("profile_visits", 0)) if is_today else 0,
+                },
+                "effective_limits": {
+                    "connection_invites": eff_limits.get("connection_invites", 20),
+                    "messages": eff_limits.get("messages", 20),
+                    "profile_visits": eff_limits.get("profile_visits", 20),
+                },
+                "period_stats": {
+                    "requests_sent": s_req_sent,
+                    "requests_accepted": s_req_acc,
+                    "acceptance_rate": round((s_req_acc / s_req_sent) * 100, 1) if s_req_sent > 0 else None,
+                    "messages_sent": s_msg_sent,
+                    "messages_replied": s_msg_rep,
+                    "reply_rate": round((s_msg_rep / s_msg_sent) * 100, 1) if s_msg_sent > 0 else None,
+                    "profile_visits": s_visits,
+                },
+            })
+
+    # A/B Testing Variant Breakdown (A, B, C)
+    ab_variants_breakdown: dict[str, dict[str, Any]] = {}
+    if hasattr(db, "outreach_tasks") and hasattr(db.outreach_tasks, "find"):
+        for vid in ("A", "B", "C"):
+            v_req_sent, v_msg_sent = await asyncio.gather(
+                db.outreach_tasks.count_documents(task_filter("connection_request", {"variant_id": vid, "updated_at": {"$gte": period_start, "$lte": now}})),
+                db.outreach_tasks.count_documents(task_filter("send_message", {"variant_id": vid, "updated_at": {"$gte": period_start, "$lte": now}})),
+            )
+            if v_req_sent > 0 or v_msg_sent > 0:
+                ab_variants_breakdown[vid] = {
+                    "variant_id": vid,
+                    "requests_sent": v_req_sent,
+                    "messages_sent": v_msg_sent,
+                    "total_sent": v_req_sent + v_msg_sent,
+                }
+
+    sequence_funnel = {
+        "total_leads": total_leads,
+        "profile_visits": profile_visits,
+        "requests_sent": requests_sent,
+        "requests_accepted": requests_accepted,
+        "acceptance_rate": linkedin_cohorts["requests"]["acceptance_rate"],
+        "messages_sent": messages_sent,
+        "messages_replied": messages_replied,
+        "reply_rate": linkedin_cohorts["messages"]["reply_rate"],
+        "calls_booked": booked_leads,
+        "variants_breakdown": ab_variants_breakdown,
+    }
+
     return {
         "has_connected_account": has_connected_account,
         "kpis": {
@@ -206,6 +308,8 @@ async def get_outreach_analytics(
         },
         "daily_chart": daily_chart,
         "linkedin_cohorts": linkedin_cohorts,
+        "team_performance": team_performance,
+        "sequence_funnel": sequence_funnel,
         "timeframe": timeframe,
         "campaign_id": campaign_id or "all",
         "sender_account_id": sender_account_id or "all",

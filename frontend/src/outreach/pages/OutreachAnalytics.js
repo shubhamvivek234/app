@@ -535,6 +535,162 @@ export default function OutreachAnalytics() {
           </div>
         </div>
       </div>
+
+      {/* Sequence Step Conversion Funnel */}
+      {analytics?.sequence_funnel && (
+        <div className="bg-white rounded-2xl border border-gray-200/90 p-6 mt-6 shadow-2xs">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-indigo-600" />
+              <h2 className="text-xs font-bold text-gray-900 uppercase tracking-wider">
+                Sequence Step Conversion Funnel
+              </h2>
+            </div>
+            <span className="text-[11px] text-gray-500">Step-by-step progression in period</span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            {[
+              { label: 'Total Prospects', val: analytics.sequence_funnel.total_leads ?? 0, sub: 'Enrolled' },
+              { label: 'Profile Views', val: analytics.sequence_funnel.profile_visits ?? 0, sub: 'Auto-viewed' },
+              { label: 'Invites Sent', val: analytics.sequence_funnel.requests_sent ?? 0, sub: 'Connection reqs' },
+              {
+                label: 'Connected',
+                val: analytics.sequence_funnel.requests_accepted ?? 0,
+                sub: Number.isFinite(analytics.sequence_funnel.acceptance_rate)
+                  ? `${analytics.sequence_funnel.acceptance_rate}% cohort rate`
+                  : 'Accepted',
+              },
+              { label: 'Messages Sent', val: analytics.sequence_funnel.messages_sent ?? 0, sub: 'Direct messages' },
+              {
+                label: 'Replied',
+                val: analytics.sequence_funnel.messages_replied ?? 0,
+                sub: Number.isFinite(analytics.sequence_funnel.reply_rate)
+                  ? `${analytics.sequence_funnel.reply_rate}% cohort rate`
+                  : 'Prospect replies',
+              },
+            ].map((stage, idx) => (
+              <div key={idx} className="rounded-xl border border-gray-100 bg-gray-50/70 p-3.5">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">{stage.label}</p>
+                <p className="text-xl font-extrabold text-gray-900 mt-1">{stage.val}</p>
+                <p className="text-[10px] text-indigo-600 font-medium mt-0.5">{stage.sub}</p>
+              </div>
+            ))}
+          </div>
+          {analytics.sequence_funnel.variants_breakdown && Object.keys(analytics.sequence_funnel.variants_breakdown).length > 0 && (
+            <div className="mt-4 pt-3 border-t border-gray-100 flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">A/B Variants Sent:</span>
+              {Object.values(analytics.sequence_funnel.variants_breakdown).map((vb) => (
+                <span
+                  key={vb.variant_id}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-violet-50 border border-violet-200 px-2.5 py-1 text-xs font-semibold text-violet-800"
+                >
+                  <span>Variant {vb.variant_id}:</span>
+                  <strong>{vb.total_sent} sent</strong>
+                  <span className="text-[10px] text-violet-600">({vb.requests_sent} invites · {vb.messages_sent} msgs)</span>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Team & Sender Performance + Daily Activity Control Quota Table */}
+      {Array.isArray(analytics?.team_performance) && analytics.team_performance.length > 0 && (
+        <div className="bg-white rounded-2xl border border-gray-200/90 p-6 mt-6 shadow-2xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+            <div className="flex items-center gap-2">
+              <User className="w-4 h-4 text-indigo-600" />
+              <h2 className="text-xs font-bold text-gray-900 uppercase tracking-wider">
+                Team & Sender Account Performance
+              </h2>
+            </div>
+            <span className="text-[11px] text-gray-500">
+              Daily usage vs. Activity Control cap & period conversion stats
+            </span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="border-b border-gray-100 text-[10px] font-bold uppercase tracking-wider text-gray-500">
+                  <th className="py-2.5 pr-4">Sender Account</th>
+                  <th className="py-2.5 px-3">Safety / Activity Control</th>
+                  <th className="py-2.5 px-3">Today&apos;s Invites</th>
+                  <th className="py-2.5 px-3">Today&apos;s Messages</th>
+                  <th className="py-2.5 px-3">Period Invites (Acc %)</th>
+                  <th className="py-2.5 pl-3 text-right">Period Messages (Reply %)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {analytics.team_performance.map((member) => {
+                  const invUsed = member.daily_usage_today?.connection_invites ?? 0;
+                  const invMax = member.effective_limits?.connection_invites ?? 20;
+                  const msgUsed = member.daily_usage_today?.messages ?? 0;
+                  const msgMax = member.effective_limits?.messages ?? 20;
+                  const pStats = member.period_stats || {};
+                  return (
+                    <tr
+                      key={member.account_id}
+                      onClick={() => setSenderAccountId(member.account_id === senderAccountId ? 'all' : member.account_id)}
+                      className="hover:bg-gray-50/80 cursor-pointer transition-colors"
+                    >
+                      <td className="py-3 pr-4">
+                        <div className="font-bold text-gray-900">{member.account_name}</div>
+                        <div className="text-[11px] text-gray-400">
+                          {member.vanity_name ? `@${member.vanity_name} · ` : ''}
+                          {member.premium_product === 'sales_navigator' ? 'Sales Navigator' : member.premium_product === 'recruiter' ? 'Recruiter' : 'Standard LinkedIn'}
+                        </div>
+                      </td>
+                      <td className="py-3 px-3">
+                        <div className="flex flex-wrap items-center gap-1">
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                            member.activity_control_enabled
+                              ? 'bg-emerald-50 text-emerald-700'
+                              : 'bg-gray-100 text-gray-600'
+                          }`}>
+                            {member.activity_control_enabled ? `Activity Control · Lvl ${member.warmup_level || 1}` : `Static Cap · Lvl ${member.warmup_level || 1}`}
+                          </span>
+                          {member.weekly_invite_limit_reached && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                              Weekly Invite Cap (Messages Active)
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3 px-3">
+                        <span className="font-semibold text-gray-900">{invUsed}</span>
+                        <span className="text-gray-400"> / {invMax}</span>
+                      </td>
+                      <td className="py-3 px-3">
+                        <span className="font-semibold text-gray-900">{msgUsed}</span>
+                        <span className="text-gray-400"> / {msgMax}</span>
+                      </td>
+                      <td className="py-3 px-3">
+                        <span className="font-semibold text-gray-900">{pStats.requests_sent ?? 0}</span>
+                        <span className="text-gray-500"> sent · {pStats.requests_accepted ?? 0} acc</span>
+                        {Number.isFinite(pStats.acceptance_rate) && (
+                          <span className="ml-1 text-[10px] font-semibold text-indigo-600">
+                            ({pStats.acceptance_rate}%)
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3 pl-3 text-right">
+                        <span className="font-semibold text-gray-900">{pStats.messages_sent ?? 0}</span>
+                        <span className="text-gray-500"> sent · {pStats.messages_replied ?? 0} rep</span>
+                        {Number.isFinite(pStats.reply_rate) && (
+                          <span className="ml-1 text-[10px] font-semibold text-purple-600">
+                            ({pStats.reply_rate}%)
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

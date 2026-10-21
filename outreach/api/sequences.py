@@ -5,7 +5,7 @@ Supports sequence graph validation, compiling, saving, and template retrieval.
 import logging
 import re
 from typing import Any, Literal
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
@@ -64,6 +64,11 @@ class ValidateSequenceRequest(BaseModel):
 
 class SaveSequenceRequest(ValidateSequenceRequest):
     campaign_id: str = Field(min_length=1, max_length=200)
+
+
+class LiveEditSequenceRequest(SaveSequenceRequest):
+    reengage_completed_leads: StrictBool = True
+    resume_failed_on_deleted_steps: StrictBool = True
 
 
 class SaveTemplateRequest(ValidateSequenceRequest):
@@ -581,3 +586,163 @@ async def save_campaign_sequence(
         raise HTTPException(status_code=409, detail="Campaign changed while saving the sequence")
 
     return {"status": "success", "message": "Sequence saved and compiled successfully"}
+
+
+@router.post("/live-edit")
+async def live_edit_campaign_sequence(
+    req: LiveEditSequenceRequest,
+    current_user: dict = require_outreach_permission('sequence:update'),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Edits an active, paused, or draft campaign sequence in place without rebuilding the campaign.
+    Supports extending past the end of sequence to pull completed leads back into newly appended steps,
+    and advancing leads sitting on deleted non-branching steps.
+    """
+    ws_id = _workspace_id(current_user)
+    campaign = await db.outreach_campaigns.find_one(_campaign_filter(req.campaign_id, current_user))
+    if not campaign:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+
+    try:
+        compiled_dag, analysis = _authoring_graph(req)
+        _require_executable_analysis(analysis)
+    except DAGValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    prior_seq = await load_sequence(db, ws_id, req.campaign_id, campaign=campaign)
+    prior_dag = (prior_seq or {}).get("compiled_dag") or {}
+    prior_nodes = prior_dag.get("nodes") or {}
+    new_nodes = compiled_dag.get("nodes") or {}
+
+    import uuid
+    now = datetime.now(timezone.utc)
+    current_version = int((prior_seq or {}).get("version", 0) or 0)
+    new_version = current_version + 1
+    pointer = str(uuid.uuid4())
+    expected_revision = int(campaign.get("authorization_revision", 0) or 0)
+    new_revision = expected_revision + 1
+
+    doc: dict[str, Any] = {
+        "campaign_id": req.campaign_id,
+        "user_id": _user_id(current_user),
+        "workspace_id": ws_id,
+        "nodes": req.nodes,
+        "edges": req.edges,
+        "compiled_dag": compiled_dag,
+        "compiler_contract_version": 1,
+        "version": new_version,
+        "updated_at": now,
+        "is_deleted": False,
+    }
+    if req.tree is not None:
+        doc["tree"] = req.tree
+
+    await db.outreach_sequence_versions.insert_one({**doc, "_id": pointer})
+    rev_filter = expected_revision if "authorization_revision" in campaign else {"$exists": False}
+    updated_camp = await db.outreach_campaigns.update_one(
+        {"id": req.campaign_id, "workspace_id": ws_id, "is_deleted": {"$ne": True}, "authorization_revision": rev_filter},
+        {"$set": {"sequence_version_id": pointer, "updated_at": now}, "$inc": {"authorization_revision": 1}},
+    )
+    if getattr(updated_camp, "matched_count", 0) == 0:
+        raise HTTPException(status_code=409, detail="Campaign changed while saving the live sequence")
+
+    await db.outreach_sequences.update_one(
+        {"workspace_id": ws_id, "campaign_id": req.campaign_id},
+        {"$set": doc},
+        upsert=True,
+    )
+
+    reengaged_count = 0
+    migrated_deleted_count = 0
+
+    # 1. Detect previously terminal steps that now have a new successor step (`next_default`)
+    extended_successors: list[str] = []
+    for node_id, old_node in prior_nodes.items():
+        if not isinstance(old_node, dict):
+            continue
+        was_terminal = old_node.get("next_default") is None and not any((old_node.get("branches") or {}).values())
+        new_node = new_nodes.get(node_id)
+        if was_terminal and isinstance(new_node, dict):
+            next_step_id = new_node.get("next_default")
+            if isinstance(next_step_id, str) and next_step_id in new_nodes:
+                extended_successors.append(next_step_id)
+
+    if req.reengage_completed_leads and extended_successors:
+        target_step_id = extended_successors[0]
+        target_node = new_nodes.get(target_step_id, {})
+        delay_h = int(target_node.get("delay_hours", 0) or 0)
+        reengage_res = await db.outreach_leads.update_many(
+            {
+                "workspace_id": ws_id,
+                "campaign_id": req.campaign_id,
+                "execution_state": "finished",
+                "has_replied": {"$ne": True},
+                "do_not_contact": {"$ne": True},
+            },
+            {
+                "$set": {
+                    "current_node_id": target_step_id,
+                    "execution_state": "waiting_delay" if delay_h > 0 else "queued",
+                    "next_action_due_at": now + timedelta(hours=delay_h),
+                    "sequence_version": new_version,
+                    "authorized_revision": new_revision,
+                    "updated_at": now,
+                }
+            },
+        )
+        reengaged_count = int(getattr(reengage_res, "modified_count", 0) or 0)
+
+    # 2. Migrate leads sitting on deleted non-branching steps to their successor or root
+    deleted_node_ids = set(prior_nodes.keys()) - set(new_nodes.keys())
+    fallback_root = (compiled_dag.get("root_node_ids") or [None])[0]
+    for del_id in deleted_node_ids:
+        old_node = prior_nodes.get(del_id) or {}
+        next_target = old_node.get("next_default")
+        if next_target not in new_nodes:
+            next_target = fallback_root
+        if next_target and next_target in new_nodes:
+            states_to_move = ["queued", "waiting_delay", "in_progress"]
+            if req.resume_failed_on_deleted_steps:
+                states_to_move.append("failed")
+            mig_res = await db.outreach_leads.update_many(
+                {
+                    "workspace_id": ws_id,
+                    "campaign_id": req.campaign_id,
+                    "current_node_id": del_id,
+                    "execution_state": {"$in": states_to_move},
+                    "has_replied": {"$ne": True},
+                },
+                {
+                    "$set": {
+                        "current_node_id": next_target,
+                        "execution_state": "queued",
+                        "failure_reason": None,
+                        "sequence_version": new_version,
+                        "authorized_revision": new_revision,
+                        "updated_at": now,
+                    }
+                },
+            )
+            migrated_deleted_count += int(getattr(mig_res, "modified_count", 0) or 0)
+
+    # 3. Sync remaining active leads onto the new sequence version & revision
+    await db.outreach_leads.update_many(
+        {
+            "workspace_id": ws_id,
+            "campaign_id": req.campaign_id,
+            "current_node_id": {"$in": list(new_nodes.keys())},
+            "execution_state": {"$in": ["queued", "waiting_delay", "in_progress"]},
+            "has_replied": {"$ne": True},
+        },
+        {"$set": {"sequence_version": new_version, "authorized_revision": new_revision, "updated_at": now}},
+    )
+
+    return {
+        "status": "success",
+        "message": "Live sequence updated successfully",
+        "version": new_version,
+        "authorization_revision": new_revision,
+        "reengaged_completed_leads": reengaged_count,
+        "migrated_deleted_step_leads": migrated_deleted_count,
+    }

@@ -56,8 +56,14 @@ class ReplyContext(BaseModel):
 
 class ReplyRequest(BaseModel):
     body: str = Field(..., min_length=1, max_length=8000)
+    attachment_url: str | None = Field(default=None, max_length=2000)
+    attachment_name: str | None = Field(default=None, max_length=255)
     request_id: uuid.UUID | None = None
     context: ReplyContext | None = None
+
+
+class EditMessageRequest(BaseModel):
+    body: str = Field(..., min_length=1, max_length=8000)
 
 
 def _reply_request_job_id(workspace_id: str, actor_id: str, request_id: uuid.UUID) -> str:
@@ -275,9 +281,14 @@ async def send_thread_reply(
     from celery_workers.tasks.outreach import send_inbox_reply
     from outreach.core.manual_actions import ManualActions
     from pymongo.errors import DuplicateKeyError
+    reply_content: dict[str, Any] = {"body": req.body.strip()}
+    if req.attachment_url and req.attachment_url.strip():
+        reply_content["attachment_url"] = req.attachment_url.strip()
+        if req.attachment_name and req.attachment_name.strip():
+            reply_content["attachment_name"] = req.attachment_name.strip()
     try:
         options = {'expected_target': req.context.model_dump()} if req.context else {}
-        await ManualActions(db).queue(job_id, ws_id, account_id, thread_id, "inbox_reply", "reply", {"body": req.body.strip()}, user_id, **options)
+        await ManualActions(db).queue(job_id, ws_id, account_id, thread_id, "inbox_reply", "reply", reply_content, user_id, **options)
     except (DuplicateKeyError, ValueError) as exc:
         raise HTTPException(409, "A reply is already pending or its content needs review") from exc
     await db.outreach_inbox_jobs.insert_one({
@@ -289,6 +300,110 @@ async def send_thread_reply(
     except Exception as exc:
         logger.warning("Inbox reply publish deferred (%s)", type(exc).__name__)
     return {"status": "queued", "job_id": job_id}
+
+
+@router.patch("/{thread_id}/messages/{message_id}")
+async def edit_thread_message(
+    thread_id: str,
+    message_id: str,
+    req: EditMessageRequest,
+    current_user: dict = require_outreach_permission("inbox:reply"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Edits a previously sent LinkedIn message within the 1-hour (3600s) LinkedIn edit window.
+    Verifies sender ownership, 1-hour window, dispatches to VoyagerClient, and updates thread history.
+    """
+    ws_id = resolved_workspace_id(current_user)
+    new_body = req.body.strip()
+    if not new_body:
+        raise HTTPException(status_code=422, detail="Message body cannot be blank")
+
+    thread = await db.outreach_inbox_threads.find_one({"id": thread_id, "workspace_id": ws_id})
+    if not thread:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+
+    messages = list(thread.get("messages") or [])
+    target_idx = -1
+    target_msg = None
+    for idx, msg in enumerate(messages):
+        if str(msg.get("id")) == message_id:
+            target_idx = idx
+            target_msg = msg
+            break
+
+    if target_msg is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found in thread")
+
+    sender_type = str(target_msg.get("sender_type") or "")
+    if sender_type not in {"user", MessageSenderType.USER.value}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only messages sent by you can be edited")
+
+    now = datetime.now(timezone.utc)
+    msg_ts = target_msg.get("timestamp")
+    if isinstance(msg_ts, str):
+        try:
+            msg_ts = datetime.fromisoformat(msg_ts.replace("Z", "+00:00"))
+        except ValueError:
+            msg_ts = None
+    if isinstance(msg_ts, datetime) and msg_ts.tzinfo is None:
+        msg_ts = msg_ts.replace(tzinfo=timezone.utc)
+
+    if not isinstance(msg_ts, datetime):
+        raise HTTPException(status_code=409, detail="Message timestamp is unavailable; cannot verify 1-hour edit window")
+
+    elapsed_seconds = (now - msg_ts).total_seconds()
+    if elapsed_seconds > 3600:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="LinkedIn messages can only be edited within 1 hour of sending",
+        )
+
+    # If live mode and non-demo thread, call VoyagerClient.edit_conversation_message
+    if not thread.get("is_demo") and thread.get("conversation_urn"):
+        account_id = thread.get("account_id")
+        account = await db.outreach_accounts.find_one({"id": account_id, "workspace_id": ws_id}) if account_id else None
+        if account and (account.get("session_cookie_enc") or account.get("encrypted_session_cookie")):
+            from outreach.engine.voyager_client import VoyagerClient
+            from utils.encryption import decrypt_token
+            enc = account.get("session_cookie_enc") or account.get("encrypted_session_cookie")
+            try:
+                li_at = decrypt_token(enc)
+            except Exception:
+                li_at = "mock_li_at_cookie"
+            async with VoyagerClient(li_at_cookie=li_at) as client:
+                edit_res = await client.edit_conversation_message(
+                    thread_urn=thread["conversation_urn"],
+                    message_id=message_id,
+                    new_body=new_body,
+                )
+                if not edit_res.get("success"):
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        detail=edit_res.get("error") or "LinkedIn rejected the message edit",
+                    )
+
+    updated_msg = dict(target_msg)
+    updated_msg["body"] = new_body
+    updated_msg["edited_at"] = now
+    messages[target_idx] = updated_msg
+
+    update_fields: dict[str, Any] = {"messages": messages}
+    if target_idx == len(messages) - 1:
+        update_fields["last_message_snippet"] = new_body[:200]
+
+    await db.outreach_inbox_threads.update_one(
+        {"id": thread_id, "workspace_id": ws_id},
+        {"$set": update_fields},
+    )
+
+    return {
+        "status": "edited",
+        "thread_id": thread_id,
+        "message_id": message_id,
+        "body": new_body,
+        "edited_at": now.isoformat(),
+    }
 
 
 @router.get('/requests/{request_id}')

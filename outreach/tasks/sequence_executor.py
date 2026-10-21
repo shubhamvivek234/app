@@ -15,7 +15,7 @@ from outreach.models import LeadExecutionState, SequenceNodeType
 from outreach.core.rate_limiter import OutboundRateLimiter
 from outreach.core.proxy_manager import JITProxyManager
 from outreach.core.paid_access import get_active_entitlement, sender_is_ready
-from outreach.core.dag_compiler import contains_ai_prompt_token, interpolate_template
+from outreach.core.dag_compiler import contains_ai_prompt_token, interpolate_template, select_step_variant
 from outreach.core.safety_shield import SafetyShield
 from outreach.core.sequence_capabilities import sequence_capability_map
 from outreach.core.authorization import authorization_snapshot, canonical_hash, dispatch_block_reason
@@ -43,10 +43,16 @@ _OUTBOUND_ACTIONS = {
     SequenceNodeType.SEND_MESSAGE.value: "messages",
     SequenceNodeType.VOICE_NOTE.value: "voice_notes",
     SequenceNodeType.LIKE_LAST_POST.value: "post_likes",
+    SequenceNodeType.FOLLOW.value: "follows",
+    SequenceNodeType.COMMENT_LAST_POST.value: "comments",
+    SequenceNodeType.ENDORSE_SKILLS.value: "profile_visits",
+    SequenceNodeType.WITHDRAW_INVITE.value: "profile_visits",
+    SequenceNodeType.INMAIL.value: "inmails",
     SequenceNodeType.SEND_EMAIL.value: "email_sends",
 }
 _CONFIRMED_STATUSES = {
     "viewed", "invite_sent", "message_sent", "voice_note_sent", "liked", "sent",
+    "followed", "commented", "endorsed", "inmail_sent", "withdrawn",
     "accepted", "found", "not_found", "completed", "confirmed", "skipped",
 }
 
@@ -77,7 +83,12 @@ async def _preflight_dispatch(db, lead: dict, expected: dict, node_type: str, *,
             return 'sequence_review_required'
         if node_type == 'connection_request' and current_lead.get('is_connected') is True:
             return 'already_connected'
-        for text in content_templates(current_node).values():
+        if node_type == 'connection_request' and current_lead.get('withdrawn_at'):
+            from outreach.core.paid_access import _utc
+            withdrawn_dt = _utc(current_lead.get('withdrawn_at'))
+            if withdrawn_dt and (datetime.now(timezone.utc) - withdrawn_dt) < timedelta(days=21):
+                return 'reconnect_cooldown_21_days'
+        for text in content_templates({"id": current_lead.get('current_node_id'), **current_node}, lead=current_lead).values():
             rendered = interpolate_template(text, current_lead)
             if '{{' in rendered or '}}' in rendered:
                 return 'sequence_variables_missing'
@@ -633,7 +644,7 @@ class SequenceExecutor:
         operation_owner = str(uuid.uuid4())
         intent_id = ""
         operation_id = f"{lead_id}:{curr_node_id}"
-        if node_type not in (SequenceNodeType.IF_CONNECTED,):
+        if node_type not in (SequenceNodeType.IF_CONNECTED, SequenceNodeType.OPEN_PROFILE_CHECK):
             import inspect
             tasks_col = getattr(db, "outreach_tasks", None)
             find_one = getattr(tasks_col, "find_one", None) if tasks_col is not None else None
@@ -664,7 +675,7 @@ class SequenceExecutor:
                     )
 
         if action_result is None:
-            if node_type != SequenceNodeType.IF_CONNECTED:
+            if node_type not in (SequenceNodeType.IF_CONNECTED, SequenceNodeType.OPEN_PROFILE_CHECK):
                 blocked = await _preflight_dispatch(db, lead, expected_authorization, node_type)
                 if blocked:
                     return {"status": blocked, "action": node_type}
@@ -688,7 +699,7 @@ class SequenceExecutor:
                 except RequestDenied as exc:
                     return {"status": exc.reason, "action": node_type, "not_submitted": True}
 
-            if node_type not in (SequenceNodeType.IF_CONNECTED,):
+            if node_type not in (SequenceNodeType.IF_CONNECTED, SequenceNodeType.OPEN_PROFILE_CHECK):
                 outbox = ExecutionOutbox(db)
                 intent = await outbox.ensure(
                     workspace_id=workspace_id, campaign_id=lead["campaign_id"], lead_id=lead_id,
@@ -716,6 +727,8 @@ class SequenceExecutor:
                 if claim_state in {"completed", "accepted", "skipped"}:
                     action_result = {"status": "skipped" if claim_state == "skipped" else "confirmed"}
 
+        selected_variant_id, effective_config = select_step_variant({"id": curr_node_id, **node}, lead)
+
         if node_type == SequenceNodeType.VISIT_PROFILE:
             if action_result is None:
                 action_result = await _dispatch_action(db, lead, expected_authorization, node_type, operation_id,
@@ -723,7 +736,7 @@ class SequenceExecutor:
 
         elif node_type == SequenceNodeType.CONNECTION_REQUEST:
             if action_result is None:
-                note_template = node.get("config", {}).get("note", "")
+                note_template = effective_config.get("note", "")
                 custom_note = interpolate_template(note_template, lead) if note_template else ""
                 action_result = await _dispatch_action(db, lead, expected_authorization, node_type, operation_id,
                     intent_id, operation_owner, lambda: voyager.send_connection_invite(
@@ -732,21 +745,101 @@ class SequenceExecutor:
 
         elif node_type == SequenceNodeType.SEND_MESSAGE:
             if action_result is None:
-                body_template = node.get("config", {}).get("body", "Hi {{first_name}}")
+                body_template = effective_config.get("body", "Hi {{first_name}}")
                 msg_body = interpolate_template(body_template, lead)
+                attachment_url = effective_config.get("attachment_url")
+                attachment_name = effective_config.get("attachment_name")
                 action_result = await _dispatch_action(db, lead, expected_authorization, node_type, operation_id,
                     intent_id, operation_owner, lambda: voyager.send_direct_message(
                     lead.get("linkedin_urn") or lead["linkedin_url"], msg_body,
+                    **({"attachment_url": attachment_url, "attachment_name": attachment_name} if attachment_url else {}),
                 ), content=msg_body)
 
         elif node_type == SequenceNodeType.LIKE_LAST_POST:
             if action_result is None:
-                action_config = node.get("config", {})
+                action_config = effective_config
                 action_result = await _dispatch_action(db, lead, expected_authorization, node_type, operation_id,
                     intent_id, operation_owner, lambda: voyager.like_last_post(
                     lead.get("linkedin_urn") or lead["linkedin_url"],
                     max_age_days=action_config.get("max_post_age_days", 30),
                 ), skip_empty_post=action_config.get("skip_if_no_posts", True))
+
+        elif node_type == SequenceNodeType.FOLLOW:
+            if action_result is None:
+                action_result = await _dispatch_action(db, lead, expected_authorization, node_type, operation_id,
+                    intent_id, operation_owner, lambda: voyager.follow_profile(
+                    lead.get("linkedin_urn") or lead["linkedin_url"],
+                ))
+
+        elif node_type == SequenceNodeType.ENDORSE_SKILLS:
+            if action_result is None:
+                skill_name = effective_config.get("skill_name") or lead.get("top_skill") or None
+                action_result = await _dispatch_action(db, lead, expected_authorization, node_type, operation_id,
+                    intent_id, operation_owner, lambda: voyager.endorse_top_skill(
+                    lead.get("linkedin_urn") or lead["linkedin_url"],
+                    skill_name=skill_name,
+                ))
+
+        elif node_type == SequenceNodeType.WITHDRAW_INVITE:
+            if action_result is None:
+                action_result = await _dispatch_action(db, lead, expected_authorization, node_type, operation_id,
+                    intent_id, operation_owner, lambda: voyager.withdraw_invitation(
+                    lead.get("linkedin_urn") or lead["linkedin_url"],
+                ))
+
+        elif node_type == SequenceNodeType.COMMENT_LAST_POST:
+            if action_result is None:
+                action_config = effective_config
+                comment_template = action_config.get("comment") or action_config.get("body") or "Great insights on this, {{first_name}}!"
+                comment_body = interpolate_template(comment_template, lead)
+                action_result = await _dispatch_action(db, lead, expected_authorization, node_type, operation_id,
+                    intent_id, operation_owner, lambda: voyager.comment_last_post(
+                    lead.get("linkedin_urn") or lead["linkedin_url"],
+                    comment_text=comment_body,
+                    max_age_days=action_config.get("max_post_age_days", 30),
+                ), content=comment_body, skip_empty_post=action_config.get("skip_if_no_posts", True))
+
+        elif node_type == SequenceNodeType.INMAIL:
+            if action_result is None:
+                action_config = effective_config
+                subject_template = action_config.get("subject") or "Quick question, {{first_name}}"
+                body_template = action_config.get("body") or "Hi {{first_name}}"
+                inmail_subject = interpolate_template(subject_template, lead).strip()
+                inmail_body = interpolate_template(body_template, lead)
+                attachment_url = action_config.get("attachment_url")
+                attachment_name = action_config.get("attachment_name")
+                action_result = await _dispatch_action(db, lead, expected_authorization, node_type, operation_id,
+                    intent_id, operation_owner, lambda: voyager.send_inmail(
+                    lead.get("linkedin_urn") or lead["linkedin_url"],
+                    inmail_subject,
+                    inmail_body,
+                    **({"attachment_url": attachment_url, "attachment_name": attachment_name} if attachment_url else {}),
+                ), content={"subject": inmail_subject, "body": inmail_body})
+
+        elif node_type == SequenceNodeType.OPEN_PROFILE_CHECK:
+            open_signal = lead.get("is_open_profile")
+            if open_signal is None and voyager is not None:
+                open_signal = await voyager.check_open_profile(lead.get("linkedin_urn") or lead["linkedin_url"])
+            now = datetime.now(timezone.utc)
+            if open_signal is None:
+                reason = "Open Profile eligibility could not be verified. Review this lead manually."
+                await _advance_lead(db, lead, {
+                    "execution_state": LeadExecutionState.WAITING_TRIGGER,
+                    "next_action_due_at": None,
+                    "failure_reason": reason,
+                    "updated_at": now,
+                })
+                return {"status": "condition_needs_review", "reason": reason}
+            branches = node.get("branches", {})
+            next_node_id = branches.get("positive") if open_signal else branches.get("negative")
+            updates = {
+                **successor_fields(compiled, next_node_id, now),
+                "is_open_profile": bool(open_signal),
+                "updated_at": now,
+            }
+            if not await _advance_lead(db, lead, updates):
+                return {"status": "lead_changed"}
+            return {"status": "branch_advanced", "next_node_id": next_node_id, "condition_met": bool(open_signal)}
 
         elif node_type == SequenceNodeType.VOICE_NOTE:
             if action_result is None:
@@ -815,9 +908,18 @@ class SequenceExecutor:
             return {"status": result_status, "action": node_type, "not_submitted": True}
         if node_type != SequenceNodeType.IF_CONNECTED:
             status_code = action_result.get("status_code") or action_result.get("http_status")
+            resp_text = str(action_result.get("text") or action_result.get("error") or "")
+            if (node_type == SequenceNodeType.CONNECTION_REQUEST
+                    and isinstance(status_code, int)
+                    and SafetyShield.is_weekly_invite_limit_error(status_code, resp_text)):
+                await SafetyShield.record_weekly_invite_limit(
+                    account["id"], resp_text or f"Weekly invite limit (HTTP {status_code})", db,
+                    workspace_id=workspace_id,
+                )
+                return {"status": "weekly_invite_limit_reached", "action": node_type, "not_submitted": True}
             if (node_type not in (SequenceNodeType.FIND_EMAIL, SequenceNodeType.SEND_EMAIL)
                     and isinstance(status_code, int)
-                    and SafetyShield.should_trip_circuit_breaker(status_code, str(action_result.get("text") or ""))):
+                    and SafetyShield.should_trip_circuit_breaker(status_code, resp_text)):
                 await SafetyShield.trip_circuit_breaker(
                     account["id"], f"LinkedIn returned HTTP {status_code}", db,
                     workspace_id=workspace_id,
@@ -845,13 +947,18 @@ class SequenceExecutor:
                 recorded_status = "accepted" if node_type == SequenceNodeType.SEND_EMAIL else (
                     "skipped" if result_status == "skipped" else "completed"
                 )
+                task_updates: dict[str, Any] = {
+                    "status": recorded_status,
+                    "provider_message_id": action_result.get("provider_message_id"),
+                    "provider_thread_id": action_result.get("provider_thread_id"),
+                    "updated_at": datetime.now(timezone.utc),
+                }
+                if selected_variant_id is not None:
+                    task_updates["variant_id"] = selected_variant_id
                 try:
                     confirmation = await db.outreach_tasks.update_one(
                         {"id": operation_id, "workspace_id": workspace_id, "status": "dispatching", "owner_token": operation_owner},
-                        {"$set": {"status": recorded_status,
-                                  "provider_message_id": action_result.get("provider_message_id"),
-                                  "provider_thread_id": action_result.get("provider_thread_id"),
-                                  "updated_at": datetime.now(timezone.utc)}},
+                        {"$set": task_updates},
                     )
                     if getattr(confirmation, "matched_count", 0) == 0:
                         return await _pause_uncertain(db, lead, operation_id, "Action reporting changed; review its saved execution evidence.")
@@ -965,10 +1072,17 @@ class SequenceExecutor:
 
         transition = successor_fields(compiled, next_node_id, datetime.now(timezone.utc))
         next_due = transition['next_action_due_at']
+        now_done = datetime.now(timezone.utc)
         update_fields: dict[str, Any] = {
             **transition, "last_action_taken": action_name,
-            "last_action_at": datetime.now(timezone.utc), "updated_at": datetime.now(timezone.utc),
+            "last_action_at": now_done, "updated_at": now_done,
         }
+        if node_type == SequenceNodeType.WITHDRAW_INVITE:
+            update_fields["withdrawn_at"] = now_done
+        if selected_variant_id is not None:
+            existing_variants = dict(lead.get("ab_variants_assigned") or {})
+            existing_variants[curr_node_id] = selected_variant_id
+            update_fields["ab_variants_assigned"] = existing_variants
 
         if not await _advance_lead(db, lead, update_fields):
             return {"status": "lead_changed", "action": action_name}

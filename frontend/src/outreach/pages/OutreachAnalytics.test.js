@@ -262,4 +262,55 @@ describe('OutreachAnalytics component', () => {
     await act(async () => resolve(ok(mockAnalyticsData)));
     expect(container.textContent).toContain('2 associated replies (40%)');
   });
+
+  it('renders sequence conversion funnel and team sender performance table with Activity Control quotas', async () => {
+    const enrichedData = {
+      ...mockAnalyticsData,
+      sequence_funnel: {
+        total_leads: 100,
+        profile_visits: 80,
+        requests_sent: 60,
+        requests_accepted: 24,
+        acceptance_rate: 40.0,
+        messages_sent: 20,
+        messages_replied: 8,
+        reply_rate: 40.0,
+      },
+      team_performance: [
+        {
+          account_id: 'sender-1',
+          account_name: 'Alice Sender',
+          vanity_name: 'alice-sales',
+          status: 'active',
+          premium_product: 'sales_navigator',
+          activity_control_enabled: true,
+          warmup_level: 4,
+          daily_usage_today: { connection_invites: 18, messages: 42, profile_visits: 30 },
+          effective_limits: { connection_invites: 75, messages: 150, profile_visits: 150 },
+          period_stats: {
+            requests_sent: 60,
+            requests_accepted: 24,
+            acceptance_rate: 40.0,
+            messages_sent: 20,
+            messages_replied: 8,
+            reply_rate: 40.0,
+          },
+        },
+      ],
+    };
+
+    global.fetch = jest.fn((url) => {
+      if (url.includes('/campaigns')) return Promise.resolve(ok([]));
+      if (url.includes('/accounts')) return Promise.resolve(ok([{ id: 'sender-1', account_name: 'Alice Sender' }]));
+      return Promise.resolve(ok(enrichedData));
+    });
+
+    await act(async () => root.render(<OutreachAnalytics />));
+    expect(container.textContent).toContain('Sequence Step Conversion Funnel');
+    expect(container.textContent).toContain('Team & Sender Account Performance');
+    expect(container.textContent).toContain('Activity Control · Lvl 4');
+    expect(container.textContent).toContain('Sales Navigator');
+    expect(container.textContent).toContain('18 / 75');
+    expect(container.textContent).toContain('42 / 150');
+  });
 });

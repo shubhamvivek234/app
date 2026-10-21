@@ -15,7 +15,15 @@ _LINKEDIN_SUPPORTED = {
     SequenceNodeType.SEND_MESSAGE.value,
     SequenceNodeType.VOICE_NOTE.value,
     SequenceNodeType.LIKE_LAST_POST.value,
+    SequenceNodeType.FOLLOW.value,
+    SequenceNodeType.COMMENT_LAST_POST.value,
+    SequenceNodeType.WITHDRAW_INVITE.value,
     SequenceNodeType.IF_CONNECTED.value,
+}
+_EXTENDED_LINKEDIN_STEPS = {
+    SequenceNodeType.ENDORSE_SKILLS.value,
+    SequenceNodeType.INMAIL.value,
+    SequenceNodeType.OPEN_PROFILE_CHECK.value,
 }
 _EMAIL_SUPPORTED = {
     SequenceNodeType.FIND_EMAIL.value,
@@ -43,7 +51,8 @@ def sequence_capabilities() -> list[dict[str, object]]:
         type_name = node_type.value
         email = type_name in _EMAIL_SUPPORTED
         data = type_name == SequenceNodeType.HAS_DATA_IN_COLUMN.value
-        supported = type_name in _LINKEDIN_SUPPORTED or email or data
+        extended_linkedin = type_name in _EXTENDED_LINKEDIN_STEPS and _enabled("OUTREACH_EXTENDED_SEQUENCE_ACTIONS_ENABLED")
+        supported = type_name in _LINKEDIN_SUPPORTED or extended_linkedin or email or data
         feature_enabled = True
         if type_name == SequenceNodeType.FIND_EMAIL.value:
             feature_enabled = _enabled("OUTREACH_HUNTER_ENABLED")

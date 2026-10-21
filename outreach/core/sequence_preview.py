@@ -11,9 +11,21 @@ from outreach.core.sequence_contract import DAGValidationError, bounded_json, de
 
 CONTRACT_VERSION = 1
 WAIT_KINDS = {'connection_request', 'if_connected', 'send_message', 'voice_note'}
-STANDARD_VARIABLES = {'first_name', 'last_name', 'full_name', 'headline', 'company_name', 'job_title', 'industry', 'location_raw', 'location'}
-_FIELDS = {'connection_request': ('note',), 'send_message': ('body',), 'voice_note': ('script',), 'send_email': ('subject', 'body')}
-_TOKEN = re.compile(r'\{\{([A-Za-z_][A-Za-z0-9_]{0,99})\}\}')
+STANDARD_VARIABLES = {
+    'first_name', 'last_name', 'full_name', 'headline', 'company_name', 'company',
+    'job_title', 'position', 'industry', 'location_raw', 'location', 'country',
+    'connections_count', 'number_of_connections', 'top_skill', 'company_location',
+    'summary', 'school', 'years_in_company', 'years_in_role', 'mutual_connections',
+}
+_FIELDS = {
+    'connection_request': ('note',),
+    'send_message': ('body',),
+    'voice_note': ('script',),
+    'send_email': ('subject', 'body'),
+    'comment_last_post': ('comment',),
+    'inmail': ('subject', 'body'),
+}
+_TOKEN = re.compile(r'\{\{\s*([A-Za-z_][A-Za-z0-9_]{0,99})(?:\s*\|\s*(?:\"[^\"{}]{0,200}\"|' + r"'[^'{}]{0,200}'|[^|{}]{1,200}?))?\s*\}\}")
 
 
 def same_execution_graph(one: dict, two: dict) -> bool:
@@ -62,9 +74,42 @@ def timeout_days(node: dict) -> int:
     return node['config'].get('timeout_days', 3 if node['type'] == 'if_connected' else 7)
 
 
-def content_templates(node: dict) -> dict[str, str]:
-    defaults = {'note': '', 'body': 'Hi {{first_name}}', 'script': 'Hey {{first_name}}, saw your work at {{company_name}} and wanted to send a quick voice note!'}
-    return {field: node['config'].get(field, '' if node['type'] == 'send_email' else defaults.get(field, '')) for field in _FIELDS.get(node['type'], ())}
+def content_templates(node: dict, lead: dict | None = None) -> dict[str, str]:
+    from outreach.core.dag_compiler import select_step_variant
+    defaults = {
+        'note': '',
+        'body': 'Hi {{first_name}}',
+        'script': 'Hey {{first_name}}, saw your work at {{company_name}} and wanted to send a quick voice note!',
+        'comment': 'Great insights on this, {{first_name}}!',
+        'subject': 'Quick question, {{first_name}}',
+    }
+    _, effective_config = select_step_variant(node, lead)
+    return {field: effective_config.get(field, '' if node['type'] in {'send_email', 'inmail'} else defaults.get(field, '')) for field in _FIELDS.get(node['type'], ())}
+
+
+def all_variant_templates(node: dict) -> list[tuple[str | None, dict[str, str]]]:
+    defaults = {
+        'note': '',
+        'body': 'Hi {{first_name}}',
+        'script': 'Hey {{first_name}}, saw your work at {{company_name}} and wanted to send a quick voice note!',
+        'comment': 'Great insights on this, {{first_name}}!',
+        'subject': 'Quick question, {{first_name}}',
+    }
+    fields = _FIELDS.get(node['type'], ())
+    config = node.get('config') or {}
+    variants = config.get('variants')
+    if isinstance(variants, list) and variants:
+        result = []
+        for v in variants:
+            if isinstance(v, dict):
+                merged = {**config, **v}
+                result.append((v.get('id'), {
+                    field: merged.get(field, '' if node['type'] in {'send_email', 'inmail'} else defaults.get(field, ''))
+                    for field in fields
+                }))
+        if result:
+            return result
+    return [(None, content_templates(node))]
 
 
 def analyze_sequence(compiled: dict) -> dict:
@@ -91,24 +136,24 @@ def analyze_sequence(compiled: dict) -> dict:
             issue('unsupported_step', identity, 'This step has no supported campaign runner.', 'error')
         if contains_ai_prompt_token(config):
             issue('unfinished_ai_prompt', identity, 'Replace the AI prompt marker with reviewed message copy.', 'error')
-        copies = content_templates(node)
-        if sum(len(value) for value in copies.values() if isinstance(value, str)) > MAX_RENDER_CHARS:
-            issue('message_copy_too_large', identity, 'Message copy exceeds the 10,000-character review bound.', 'error')
-        for field, text in content_templates(node).items():
-            if not isinstance(text, str) or field != 'note' and not text.strip():
-                issue('invalid_message_copy', identity, f'{field} needs nonempty text.', 'error')
-                continue
-            residue = _TOKEN.sub('', text)
-            if '{{' in residue or '}}' in residue:
-                issue('invalid_template_token', identity, 'Use complete supported {{variable_name}} tokens.', 'error')
-            if _TOKEN.search(text):
-                issue('sample_fields_required', identity, 'Review variable values and generic/empty fallbacks for your audience.', 'warning')
+        for variant_id, copies in all_variant_templates(node):
+            if sum(len(value) for value in copies.values() if isinstance(value, str)) > MAX_RENDER_CHARS:
+                issue('message_copy_too_large', identity, 'Message copy exceeds the 10,000-character review bound.', 'error')
+            for field, text in copies.items():
+                if not isinstance(text, str) or field != 'note' and not text.strip():
+                    issue('invalid_message_copy', identity, f'{field} needs nonempty text.', 'error')
+                    continue
+                residue = _TOKEN.sub('', text)
+                if '{{' in residue or '}}' in residue:
+                    issue('invalid_template_token', identity, 'Use complete supported {{variable_name}} tokens.', 'error')
+                if _TOKEN.search(text):
+                    issue('sample_fields_required', identity, 'Review variable values and generic/empty fallbacks for your audience.', 'warning')
         if kind in {'send_message', 'voice_note'} and node['branches'].get('positive'):
             issue('work_after_reply_stop', identity, 'Replies stop outreach; a Replied path cannot promise successor work.', 'error')
         for (connected, email), witness in states[identity].items():
             path = (*witness, identity)
             if kind in {'send_message', 'voice_note'}:
-                if connected in {'no', 'invited'}:
+                if connected in {'no', 'invited', 'withdrawn'}:
                     issue('message_without_connection_guard', identity, 'Add a positive connection check before messaging this path.', 'error', path)
                 elif connected == 'unknown':
                     issue('connection_required_at_execution', identity, 'This path requires a usable existing connection at execution.', 'warning', path)
@@ -116,6 +161,10 @@ def analyze_sequence(compiled: dict) -> dict:
                 issue('invite_on_connected_path', identity, 'Do not invite a connection on a known connected path.', 'error', path)
             if kind == 'connection_request' and connected == 'invited':
                 issue('invite_already_requested_on_path', identity, 'This path already requested a connection; wait for an observation instead of inviting again.', 'error', path)
+            if kind == 'connection_request' and connected == 'withdrawn' and node.get('delay_hours', 0) < 504:
+                issue('reconnect_before_21_days', identity, 'Withdrawing an invitation and reconnecting requires at least a 21-day (504h) delay.', 'error', path)
+            if kind == 'withdraw_invite' and connected == 'yes':
+                issue('withdraw_on_connected_path', identity, 'Do not withdraw a connection request on a known connected path.', 'error', path)
             if kind == 'send_email':
                 if email == 'no':
                     issue('email_without_availability_guard', identity, 'A negative email path needs new usable-email evidence before sending.', 'error', path)
@@ -128,6 +177,8 @@ def analyze_sequence(compiled: dict) -> dict:
                     next_connected = ('yes' if branch == 'positive' else
                                       'invited' if kind == 'connection_request' or connected == 'invited' else
                                       'no' if branch == 'negative' else connected)
+                elif kind == 'withdraw_invite':
+                    next_connected = 'withdrawn'
                 if kind == 'if_email_available':
                     next_email = 'yes' if branch == 'positive' else 'no'
                 if kind == 'find_email':

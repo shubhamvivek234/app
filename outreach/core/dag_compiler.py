@@ -8,25 +8,55 @@ from outreach.models import SequenceNodeType
 from outreach.core.sequence_contract import DAGValidationError, graph_envelope, branch_kind, MAX_RENDER_CHARS
 
 
+_TEMPLATE_TAG_RE = re.compile(
+    r"\{\{\s*([A-Za-z_][A-Za-z0-9_]{0,99})(?:\s*\|\s*(?:\"([^\"{}]{0,200})\"|'([^'{}]{0,200})'|([^|{}]{1,200}?)))?\s*\}\}"
+)
+
+
 def interpolate_template(template_str: str, lead: dict[str, Any]) -> str:
-    """Replaces dynamic tags like {{first_name}} and {{company_name}} with lead attributes."""
+    """Replaces dynamic tags like {{first_name}}, {{top_skill | "leadership"}}, and {{company_name}} with lead attributes."""
     first_name = lead.get("first_name") or "there"
     last_name = lead.get("last_name") or ""
-    company = lead.get("company_name") or "your company"
-    title = lead.get("job_title") or ""
+    company = lead.get("company_name") or lead.get("company") or "your company"
+    title = lead.get("job_title") or lead.get("position") or ""
     custom_variables = lead.get("custom_variables") or {}
     if not isinstance(custom_variables, dict):
         raise DAGValidationError("Message variables need review.")
+
+    def _str_field(key: str, *aliases: str) -> str:
+        for k in (key, *aliases):
+            val = lead.get(k)
+            if val is not None and str(val).strip():
+                return str(val).strip()
+            cval = custom_variables.get(k)
+            if cval is not None and str(cval).strip():
+                return str(cval).strip()
+        return ""
+
+    location_val = lead.get("location_raw") or lead.get("location") or custom_variables.get("location") or ""
+    connections_val = _str_field("connections_count", "number_of_connections", "connections")
     built_in_variables = {
         "first_name": first_name,
         "last_name": last_name,
-        "full_name": " ".join(part for part in (first_name, last_name) if part).strip(),
-        "headline": lead.get("headline") or (f"{title} at {company}" if title else company),
+        "full_name": " ".join(part for part in (first_name if lead.get("first_name") else "", last_name) if part).strip() or first_name,
+        "headline": lead.get("headline") or custom_variables.get("headline") or (f"{title} at {company}" if title else company),
         "company_name": company,
+        "company": company,
         "job_title": title,
-        "industry": lead.get("industry") or custom_variables.get("industry") or "",
-        "location_raw": lead.get("location_raw") or lead.get("location") or "",
-        "location": lead.get("location_raw") or lead.get("location") or "",
+        "position": title,
+        "industry": _str_field("industry"),
+        "location_raw": location_val,
+        "location": location_val,
+        "country": _str_field("country", "country_code"),
+        "connections_count": connections_val,
+        "number_of_connections": connections_val,
+        "top_skill": _str_field("top_skill", "skills"),
+        "company_location": _str_field("company_location", "hq_location"),
+        "summary": _str_field("summary", "about", "bio"),
+        "school": _str_field("school", "education", "university"),
+        "years_in_company": _str_field("years_in_company", "company_tenure"),
+        "years_in_role": _str_field("years_in_role", "role_tenure"),
+        "mutual_connections": _str_field("mutual_connections", "shared_connections"),
     }
 
     if not isinstance(template_str, str) or not isinstance(custom_variables, dict):
@@ -34,9 +64,17 @@ def interpolate_template(template_str: str, lead: dict[str, Any]) -> str:
     values = {**custom_variables, **built_in_variables}
     parts, total, cursor = [], 0, 0
     # Resolve once. Values cannot recursively introduce more substitutions.
-    for match in re.finditer(r"\{\{([A-Za-z_][A-Za-z0-9_]{0,99})\}\}", template_str):
+    for match in _TEMPLATE_TAG_RE.finditer(template_str):
         prefix = template_str[cursor:match.start()]
-        replacement = str(values[match.group(1)]) if match.group(1) in values else match.group()
+        var_name = match.group(1)
+        fallback = next((g.strip() if idx == 4 and g is not None else g for idx, g in enumerate(match.groups()[1:], start=2) if g is not None), None)
+        if var_name in values:
+            raw_val = str(values[var_name])
+            replacement = raw_val if raw_val.strip() or fallback is None else fallback
+        elif fallback is not None:
+            replacement = fallback
+        else:
+            replacement = match.group()
         total += len(prefix) + len(replacement)
         if total > MAX_RENDER_CHARS:
             raise DAGValidationError("Rendered message exceeds the 10,000-character review bound.")
@@ -45,6 +83,43 @@ def interpolate_template(template_str: str, lead: dict[str, Any]) -> str:
     if total + len(suffix) > MAX_RENDER_CHARS:
         raise DAGValidationError("Rendered message exceeds the 10,000-character review bound.")
     return ''.join((*parts, suffix))
+
+
+def select_step_variant(
+    node: dict[str, Any],
+    lead: dict[str, Any] | None = None,
+) -> tuple[str | None, dict[str, Any]]:
+    """
+    Deterministically selects an A/B/C message variant for a lead at a sequence step.
+    Returns (variant_id, merged_config). If no variants exist, returns (None, config).
+    """
+    import hashlib
+
+    base_config = dict(node.get("config") or {})
+    variants = base_config.get("variants")
+    if not isinstance(variants, list) or not variants:
+        return None, base_config
+
+    valid_variants = [v for v in variants if isinstance(v, dict) and isinstance(v.get("id"), str) and v["id"].strip()]
+    if not valid_variants:
+        return None, base_config
+
+    node_id = str(node.get("id") or "step")
+    lead_obj = lead or {}
+    assigned_map = lead_obj.get("ab_variants_assigned")
+    if isinstance(assigned_map, dict) and isinstance(assigned_map.get(node_id), str):
+        forced_id = assigned_map[node_id].strip()
+        for v in valid_variants:
+            if v["id"].strip() == forced_id:
+                merged = {**base_config, **{k: val for k, val in v.items() if k != "id"}}
+                return forced_id, merged
+
+    lead_key = str(lead_obj.get("id") or lead_obj.get("linkedin_url") or "sample")
+    digest = hashlib.sha256(f"{lead_key}:{node_id}".encode("utf-8")).digest()
+    chosen = valid_variants[int.from_bytes(digest[:4], "big") % len(valid_variants)]
+    variant_id = chosen["id"].strip()
+    merged = {**base_config, **{k: val for k, val in chosen.items() if k != "id"}}
+    return variant_id, merged
 
 
 def contains_ai_prompt_token(value: Any) -> bool:

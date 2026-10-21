@@ -21,6 +21,7 @@ const ACTION_DEFINITIONS = [
   { type: 'comment_last_post', label: 'Comment on last post', desc: 'Engage with AI comment', icon: MessageCircle, color: 'text-purple-600 bg-purple-50' },
   { type: 'reply_to_comment', label: 'Reply to comment', desc: 'Respond to prospect reply', icon: CornerDownRight, color: 'text-indigo-600 bg-indigo-50' },
   { type: 'endorse_skills', label: 'Endorse skills', desc: 'Endorse their top skills', icon: CheckCircle2, color: 'text-indigo-600 bg-indigo-50' },
+  { type: 'withdraw_invite', label: 'Withdraw invite', desc: 'Withdraw pending invite (21d cooldown)', icon: X, color: 'text-amber-700 bg-amber-50' },
 ];
 
 const EMAIL_ACTION_DEFINITIONS = [
@@ -86,8 +87,17 @@ const VARIABLE_PILLS = [
   '{{headline}}',
   '{{company_name}}',
   '{{job_title}}',
+  '{{position}}',
   '{{industry}}',
   '{{location_raw}}',
+  '{{company_location}}',
+  '{{connections_count}}',
+  '{{top_skill}}',
+  '{{school}}',
+  '{{years_in_company}}',
+  '{{years_in_role}}',
+  '{{mutual_connections}}',
+  '{{summary}}',
 ];
 
 export { flattenTreeToDAG } from './sequenceGraph';
@@ -309,6 +319,26 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [sequenceReviewOpen, setSequenceReviewOpen] = useState(false);
   const [previewData, setPreviewData] = useState(null);
+  const [activeVariantTab, setActiveVariantTab] = useState('A');
+  const [stepLeadsDrawer, setStepLeadsDrawer] = useState({ open: false, nodeId: null, title: '', loading: false, data: null });
+
+  const openStepLeadsDrawer = async (step, e) => {
+    if (e) e.stopPropagation();
+    if (!campaignId || campaignId === 'new') return;
+    setStepLeadsDrawer({ open: true, nodeId: step.id, title: step.title, loading: true, data: null });
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/v1/outreach/campaigns/${campaignId}/sequence-step-leads?node_id=${encodeURIComponent(step.id)}`, {
+        credentials: 'include',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (!res.ok) throw new Error('Failed to load step leads');
+      const data = await res.json();
+      setStepLeadsDrawer({ open: true, nodeId: step.id, title: step.title, loading: false, data });
+    } catch {
+      setStepLeadsDrawer({ open: true, nodeId: step.id, title: step.title, loading: false, data: { counts: {}, leads: [] } });
+    }
+  };
   const [previewLoading, setPreviewLoading] = useState(false);
   const [showVariablePicker, setShowVariablePicker] = useState(false);
   const [showCreatePrompt, setShowCreatePrompt] = useState(false);
@@ -932,12 +962,21 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
             )}
             {nodeCounts[step.id] !== undefined && nodeCounts[step.id] > 0 && (
               <div className="mt-1.5 flex items-center gap-1.5">
-                <span
+                <button
+                  type="button"
+                  onClick={(e) => openStepLeadsDrawer(step, e)}
                   data-testid={`lead-count-${step.id}`}
-                  className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 border border-indigo-200/80 shadow-2xs"
+                  className="inline-flex items-center gap-1 rounded-full bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700 border border-indigo-200/80 shadow-2xs transition-colors"
                 >
                   <Users className="w-2.5 h-2.5" />
                   {nodeCounts[step.id]} {nodeCounts[step.id] === 1 ? 'lead waiting' : 'leads waiting'}
+                </button>
+              </div>
+            )}
+            {Array.isArray(step.config?.variants) && step.config.variants.length > 1 && (
+              <div className="mt-1 flex items-center gap-1">
+                <span className="inline-flex items-center gap-1 rounded-md bg-violet-50 px-1.5 py-0.5 text-[9px] font-bold text-violet-700 border border-violet-200">
+                  A/B Test ({step.config.variants.map((v) => v.id).join('/')})
                 </span>
               </div>
             )}
@@ -1674,25 +1713,117 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
             {selectedStep.type === 'send_message' && (
               <div className="space-y-4 pt-2 border-t border-gray-100">
                 <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-bold text-gray-900">A/B Message Variants (up to 3)</label>
+                    <div className="flex items-center gap-1">
+                      {['A', 'B', 'C'].map((vid) => {
+                        const variants = Array.isArray(selectedStep.config?.variants) ? selectedStep.config.variants : [];
+                        const exists = vid === 'A' || variants.some((v) => v.id === vid);
+                        return (
+                          <button
+                            key={vid}
+                            type="button"
+                            onClick={() => {
+                              if (!exists) {
+                                const baseBody = selectedStep.config?.body || '';
+                                const nextVariants = variants.length
+                                  ? [...variants, { id: vid, body: '' }]
+                                  : [{ id: 'A', body: baseBody }, { id: vid, body: '' }];
+                                setTree((prev) =>
+                                  updateNode(prev, selectedStep.id, {
+                                    config: { ...selectedStep.config, variants: nextVariants },
+                                  })
+                                );
+                              }
+                              setActiveVariantTab(vid);
+                            }}
+                            className={`px-2 py-0.5 text-[11px] font-bold rounded-lg border transition-colors ${
+                              activeVariantTab === vid
+                                ? 'bg-indigo-600 text-white border-indigo-600'
+                                : exists
+                                ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                : 'bg-gray-50 text-gray-400 border-gray-200 hover:text-gray-700'
+                            }`}
+                          >
+                            {exists ? `Variant ${vid}` : `+ ${vid}`}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                   {renderEditorToolbar()}
-                  <label className="block text-xs font-bold text-gray-900 mb-1">Direct Message Copy</label>
+                  <label className="block text-xs font-bold text-gray-900 mb-1">
+                    Direct Message Copy {Array.isArray(selectedStep.config?.variants) && selectedStep.config.variants.length > 1 ? `(Variant ${activeVariantTab})` : ''}
+                  </label>
                   <textarea
                     rows={4}
-                    value={selectedStep.config?.body || ''}
-                    onChange={(e) =>
+                    value={
+                      Array.isArray(selectedStep.config?.variants) && selectedStep.config.variants.some((v) => v.id === activeVariantTab)
+                        ? (selectedStep.config.variants.find((v) => v.id === activeVariantTab)?.body || '')
+                        : (selectedStep.config?.body || '')
+                    }
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const variants = Array.isArray(selectedStep.config?.variants) ? selectedStep.config.variants : [];
+                      const nextVariants = variants.length
+                        ? variants.map((v) => (v.id === activeVariantTab ? { ...v, body: val } : v))
+                        : undefined;
+                      const primaryBody = activeVariantTab === 'A' ? val : (selectedStep.config?.body || val);
                       setTree((prev) =>
                         updateNode(prev, selectedStep.id, {
-                          config: { ...selectedStep.config, body: e.target.value },
-                          isActionRequired: e.target.value.trim().length === 0,
-                          subtitle: e.target.value.trim().length > 0 ? e.target.value.slice(0, 32) + '...' : 'Action required',
+                          config: {
+                            ...selectedStep.config,
+                            body: primaryBody,
+                            ...(nextVariants ? { variants: nextVariants } : {}),
+                          },
+                          isActionRequired: primaryBody.trim().length === 0,
+                          subtitle: primaryBody.trim().length > 0 ? primaryBody.slice(0, 32) + '...' : 'Action required',
                         })
-                      )
-                    }
+                      );
+                    }}
                     placeholder="Hi {{first_name}}, thanks for connecting! Loved your recent thoughts on..."
                     className="w-full rounded-xl border border-gray-200 p-3 text-xs focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 resize-none font-sans"
                   />
                 </div>
+                <div className="pt-2 border-t border-gray-100 space-y-2">
+                  <label className="block text-xs font-bold text-gray-900">File Attachment (Optional)</label>
+                  <input
+                    type="url"
+                    value={selectedStep.config?.attachment_url || ''}
+                    onChange={(e) =>
+                      setTree((prev) =>
+                        updateNode(prev, selectedStep.id, {
+                          config: { ...selectedStep.config, attachment_url: e.target.value },
+                        })
+                      )
+                    }
+                    placeholder="https://... (PDF, Deck, Case Study URL)"
+                    className="w-full rounded-xl border border-gray-200 px-3 py-1.5 text-xs focus:border-indigo-600"
+                  />
+                  <input
+                    type="text"
+                    value={selectedStep.config?.attachment_name || ''}
+                    onChange={(e) =>
+                      setTree((prev) =>
+                        updateNode(prev, selectedStep.id, {
+                          config: { ...selectedStep.config, attachment_name: e.target.value },
+                        })
+                      )
+                    }
+                    placeholder="Attachment filename (e.g. Unravler-Overview.pdf)"
+                    className="w-full rounded-xl border border-gray-200 px-3 py-1.5 text-xs focus:border-indigo-600"
+                  />
+                </div>
                 {renderConditionRuleSelector()}
+              </div>
+            )}
+
+            {/* WITHDRAW INVITE CONFIGURATION */}
+            {selectedStep.type === 'withdraw_invite' && (
+              <div className="space-y-4 pt-2 border-t border-gray-100">
+                <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl text-xs text-amber-900 leading-relaxed">
+                  <strong>Withdraw Connection Request:</strong> Automatically withdraws a pending LinkedIn invitation if the prospect has not accepted yet. LinkedIn enforces a mandatory <strong>21-day (504h) cooldown</strong> before you can re-invite a prospect after withdrawing.
+                </div>
               </div>
             )}
 
@@ -2476,6 +2607,85 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
                 Close Preview
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* STEP LEADS QUEUE & FAILED LEADS DRAWER */}
+      {stepLeadsDrawer.open && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="absolute top-0 right-0 bottom-0 w-[420px] max-w-[95vw] h-full max-h-full bg-white border-l border-gray-200 shadow-2xl z-50 flex flex-col overflow-hidden animate-slide-left"
+        >
+          <div className="flex items-center justify-between p-4 border-b border-gray-100 shrink-0">
+            <div>
+              <h3 className="font-bold text-gray-900 text-sm">Step Queue: {stepLeadsDrawer.title}</h3>
+              <p className="text-[11px] text-gray-400">Leads currently waiting, completed, or failed at this step</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setStepLeadsDrawer({ open: false, nodeId: null, title: '', loading: false, data: null })}
+              className="p-1.5 text-gray-400 hover:bg-gray-100 rounded-lg"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4 space-y-3 text-left">
+            {stepLeadsDrawer.loading ? (
+              <div className="py-12 text-center text-xs text-gray-400">Loading leads at this step...</div>
+            ) : (
+              <>
+                <div className="grid grid-cols-4 gap-2 text-center">
+                  <div className="p-2 rounded-xl bg-indigo-50 border border-indigo-100">
+                    <div className="text-sm font-bold text-indigo-700">{stepLeadsDrawer.data?.counts?.queued || 0}</div>
+                    <div className="text-[10px] text-indigo-600 font-semibold">Queued</div>
+                  </div>
+                  <div className="p-2 rounded-xl bg-amber-50 border border-amber-100">
+                    <div className="text-sm font-bold text-amber-700">{stepLeadsDrawer.data?.counts?.in_progress || 0}</div>
+                    <div className="text-[10px] text-amber-600 font-semibold">Waiting</div>
+                  </div>
+                  <div className="p-2 rounded-xl bg-emerald-50 border border-emerald-100">
+                    <div className="text-sm font-bold text-emerald-700">{stepLeadsDrawer.data?.counts?.completed || 0}</div>
+                    <div className="text-[10px] text-emerald-600 font-semibold">Done</div>
+                  </div>
+                  <div className="p-2 rounded-xl bg-rose-50 border border-rose-100">
+                    <div className="text-sm font-bold text-rose-700">{stepLeadsDrawer.data?.counts?.failed || 0}</div>
+                    <div className="text-[10px] text-rose-600 font-semibold">Failed</div>
+                  </div>
+                </div>
+                {(stepLeadsDrawer.data?.leads || []).map((item) => (
+                  <div key={item.lead_id} className="p-3 rounded-xl border border-gray-200 bg-white space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-gray-900">
+                        {item.first_name} {item.last_name}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        {item.ab_variant && (
+                          <span className="px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 text-[10px] font-bold border border-violet-200">
+                            Var {item.ab_variant}
+                          </span>
+                        )}
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          item.step_status === 'failed'
+                            ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                            : item.step_status === 'completed'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                        }`}>
+                          {item.step_status}
+                        </span>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-gray-500">{item.job_title} {item.company_name ? `at ${item.company_name}` : ''}</p>
+                    {item.failure_reason && (
+                      <p className="text-[11px] text-rose-600 font-medium bg-rose-50/70 px-2 py-1 rounded-lg mt-1">
+                        {item.failure_reason}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         </div>
       )}

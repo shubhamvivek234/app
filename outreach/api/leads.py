@@ -388,6 +388,20 @@ async def import_leads_urls(
         include_rejections=True,
         _import_scope=context,
     )
+    if hasattr(db, "outreach_import_reports") and hasattr(db.outreach_import_reports, "insert_one"):
+        try:
+            await db.outreach_import_reports.insert_one({
+                "id": f"rep_{uuid.uuid4().hex[:12]}",
+                "workspace_id": workspace_id,
+                "campaign_id": req.campaign_id,
+                "source": "pasted_urls",
+                "imported_count": result.get("imported_count", 0),
+                "skipped_duplicates": result.get("skipped_duplicates", 0),
+                "skipped_do_not_contact": result.get("skipped_do_not_contact", 0),
+                "created_at": datetime.now(timezone.utc),
+            })
+        except Exception:
+            pass
 
     return scoped_result(context, result)
 
@@ -455,6 +469,20 @@ async def import_leads_csv(
         include_rejections=True,
         _import_scope=context,
     )
+    if hasattr(db, "outreach_import_reports") and hasattr(db.outreach_import_reports, "insert_one"):
+        try:
+            await db.outreach_import_reports.insert_one({
+                "id": f"rep_{uuid.uuid4().hex[:12]}",
+                "workspace_id": workspace_id,
+                "campaign_id": req.campaign_id,
+                "source": "csv",
+                "imported_count": result.get("imported_count", 0),
+                "skipped_duplicates": result.get("skipped_duplicates", 0),
+                "skipped_do_not_contact": result.get("skipped_do_not_contact", 0),
+                "created_at": datetime.now(timezone.utc),
+            })
+        except Exception:
+            pass
 
     return scoped_result(context, result)
 
@@ -897,8 +925,11 @@ async def list_leads(
 
 EXPORT_COLUMNS = (
     "first_name", "last_name", "linkedin_url", "company_name", "job_title",
-    "location", "email", "phone", "campaign_id", "pipeline_stage",
-    "execution_state", "tags", "created_at", "last_action_taken", "last_action_at", "custom_variables",
+    "location", "company_location", "email", "phone", "industry",
+    "connections_count", "followers_count", "summary", "top_skill", "school",
+    "degree", "years_in_role", "years_at_company", "is_open_profile", "is_premium",
+    "campaign_id", "pipeline_stage", "execution_state", "tags", "created_at",
+    "last_action_taken", "last_action_at", "custom_variables",
 )
 
 
@@ -1276,6 +1307,192 @@ class AddLeadNoteRequest(BaseModel):
 
 class PauseLeadRequest(BaseModel):
     reason: str | None = None
+
+
+class TransferLeadsRequest(BaseModel):
+    lead_ids: list[str] = Field(..., min_length=1, max_length=500)
+    target_campaign_id: str = Field(..., min_length=1, max_length=200)
+    mode: str = Field(default="move", pattern=r"^(move|copy)$")
+    reset_progress: bool = Field(default=True)
+
+
+@router.post("/transfer")
+async def transfer_leads_to_campaign(
+    req: TransferLeadsRequest,
+    current_user: dict = _lead_permission("lead:update"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Bulk transfers (`move` or `copy`) selected leads into an existing target campaign
+    with duplicate and Do-Not-Contact suppression checks.
+    """
+    ws_id = _workspace_id(current_user)
+    target_campaign = await _require_campaign(req.target_campaign_id, current_user, db)
+    if target_campaign.get("status") == "warming_up":
+        raise HTTPException(status_code=409, detail="Pause conditional launch on target campaign before transferring leads")
+
+    source_leads = await db.outreach_leads.find({
+        "id": {"$in": list(dict.fromkeys(req.lead_ids))},
+        **workspace_scope(ws_id),
+    }).to_list(length=500)
+    if not source_leads:
+        raise HTTPException(status_code=404, detail="No matching leads found to transfer")
+
+    # Fetch existing leads in target campaign to prevent duplicates
+    existing_target = await db.outreach_leads.find({
+        "campaign_id": req.target_campaign_id,
+        **workspace_scope(ws_id),
+    }).to_list(length=5000)
+    existing_urls = {
+        str(d.get("linkedin_url") or "").strip().lower().rstrip("/")
+        for d in existing_target
+        if d.get("linkedin_url")
+    }
+
+    # Check workspace DNC exclusions
+    dnc_indices = await check_compound_suppression(ws_id, source_leads, db)
+
+    seq_doc = await load_sequence(db, ws_id, req.target_campaign_id, campaign=target_campaign)
+    root_nodes = ((seq_doc or {}).get("compiled_dag") or {}).get("root_node_ids") or []
+    initial_node_id = root_nodes[0] if root_nodes else None
+
+    now = datetime.now(timezone.utc)
+    transferred_ids: list[str] = []
+    skipped_duplicates = 0
+    skipped_dnc = 0
+    source_campaign_decrements: dict[str, int] = {}
+
+    for idx, lead in enumerate(source_leads):
+        if bool(lead.get("do_not_contact")) or idx in dnc_indices:
+            skipped_dnc += 1
+            continue
+        if lead.get("campaign_id") == req.target_campaign_id:
+            skipped_duplicates += 1
+            continue
+        norm_url = str(lead.get("linkedin_url") or "").strip().lower().rstrip("/")
+        if norm_url and norm_url in existing_urls:
+            skipped_duplicates += 1
+            continue
+        if norm_url:
+            existing_urls.add(norm_url)
+
+        old_campaign_id = lead.get("campaign_id")
+        if req.mode == "move":
+            update_fields: dict[str, Any] = {
+                "campaign_id": req.target_campaign_id,
+                "previous_campaign_id": old_campaign_id,
+                "updated_at": now,
+            }
+            if req.reset_progress:
+                update_fields.update({
+                    "execution_state": "queued",
+                    "pipeline_stage": "in_campaign",
+                    "current_node_id": initial_node_id,
+                    "next_action_due_at": now,
+                    "pause_reason": None,
+                })
+            await db.outreach_leads.update_one(
+                {"id": lead["id"], **workspace_scope(ws_id)},
+                {"$set": update_fields},
+            )
+            if hasattr(db, "outreach_tasks") and hasattr(db.outreach_tasks, "update_many"):
+                await db.outreach_tasks.update_many(
+                    {"lead_id": lead["id"], **workspace_scope(ws_id), "status": "pending"},
+                    {"$set": {"status": "skipped", "skip_reason": "Lead transferred to another campaign", "resolved_at": now}},
+                )
+            if old_campaign_id:
+                source_campaign_decrements[old_campaign_id] = source_campaign_decrements.get(old_campaign_id, 0) + 1
+            transferred_ids.append(lead["id"])
+        else:
+            new_lead = dict(lead)
+            new_lead.pop("_id", None)
+            new_lead["id"] = f"lead_{uuid.uuid4().hex[:12]}"
+            new_lead["campaign_id"] = req.target_campaign_id
+            new_lead["previous_campaign_id"] = old_campaign_id
+            new_lead["execution_state"] = "queued"
+            new_lead["pipeline_stage"] = "in_campaign"
+            new_lead["current_node_id"] = initial_node_id
+            new_lead["next_action_due_at"] = now
+            new_lead["pause_reason"] = None
+            new_lead["created_at"] = now
+            new_lead["updated_at"] = now
+            await db.outreach_leads.insert_one(new_lead)
+            transferred_ids.append(new_lead["id"])
+
+    if transferred_ids:
+        await db.outreach_campaigns.update_one(
+            _campaign_filter(req.target_campaign_id, current_user),
+            {"$inc": {"leads_count": len(transferred_ids)}},
+        )
+        for src_cid, dec_count in source_campaign_decrements.items():
+            await db.outreach_campaigns.update_one(
+                _campaign_filter(src_cid, current_user),
+                {"$inc": {"leads_count": -dec_count}},
+            )
+
+    return {
+        "status": "transferred",
+        "mode": req.mode,
+        "target_campaign_id": req.target_campaign_id,
+        "transferred_count": len(transferred_ids),
+        "transferred_lead_ids": transferred_ids,
+        "skipped_duplicates": skipped_duplicates,
+        "skipped_do_not_contact": skipped_dnc,
+    }
+
+
+@router.get("/import-reports")
+async def list_import_reports(
+    campaign_id: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: dict = _lead_permission("lead:read"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Returns saved lead collection / import reports (imported count, duplicate skips,
+    DNC exclusions, invalid rows, and search crawl job summaries) for auditing.
+    """
+    ws_id = _workspace_id(current_user)
+    reports: list[dict[str, Any]] = []
+
+    query: dict[str, Any] = {**workspace_scope(ws_id)}
+    if campaign_id:
+        query["campaign_id"] = campaign_id
+
+    if hasattr(db, "outreach_import_reports") and hasattr(db.outreach_import_reports, "find"):
+        cursor = db.outreach_import_reports.find(query)
+        if hasattr(cursor, "sort"):
+            cursor = cursor.sort("created_at", -1)
+        if hasattr(cursor, "__await__"):
+            cursor = await cursor
+        docs = await cursor.to_list(length=limit) if hasattr(cursor, "to_list") else (cursor if isinstance(cursor, list) else [])
+        for d in docs:
+            item = dict(d)
+            item.pop("_id", None)
+            reports.append(item)
+
+    if hasattr(db, "outreach_import_jobs") and hasattr(db.outreach_import_jobs, "find"):
+        jcursor = db.outreach_import_jobs.find(query)
+        if hasattr(jcursor, "sort"):
+            jcursor = jcursor.sort("created_at", -1)
+        if hasattr(jcursor, "__await__"):
+            jcursor = await jcursor
+        jdocs = await jcursor.to_list(length=limit) if hasattr(jcursor, "to_list") else (jcursor if isinstance(jcursor, list) else [])
+        for jd in jdocs:
+            reports.append({
+                "id": jd.get("id"),
+                "campaign_id": jd.get("campaign_id"),
+                "source": jd.get("search_type") or "linkedin_search",
+                "search_url": jd.get("search_url"),
+                "status": jd.get("status"),
+                "imported_count": jd.get("total_imported", 0),
+                "staged_count": jd.get("total_staged", 0),
+                "skipped_duplicates": jd.get("duplicates_skipped", 0),
+                "stop_reason": jd.get("stop_reason"),
+                "created_at": jd.get("created_at"),
+            })
+
+    return {"reports": reports[:limit]}
 
 
 @router.get("/{lead_id}/activity")

@@ -52,6 +52,23 @@ class UpdateLimitsRequest(BaseModel):
     post_likes: int | None = None
     comments: int | None = None
     email_sends: int | None = None
+    activity_control_enabled: bool | None = None
+    connections_count: int | None = Field(default=None, ge=0, le=50000)
+    high_volume_mode: bool | None = None
+
+
+class ActivityControlRequest(BaseModel):
+    activity_control_enabled: bool | None = None
+    connections_count: int | None = Field(default=None, ge=0, le=50000)
+    warmup_level: int | None = Field(default=None, ge=1, le=4)
+    connection_invites: int | None = Field(default=None, ge=0, le=75)
+    messages: int | None = Field(default=None, ge=0, le=150)
+    profile_visits: int | None = Field(default=None, ge=0, le=150)
+    inmails: int | None = Field(default=None, ge=0, le=50)
+    follows: int | None = Field(default=None, ge=0, le=100)
+    post_likes: int | None = Field(default=None, ge=0, le=100)
+    comments: int | None = Field(default=None, ge=0, le=50)
+    email_sends: int | None = Field(default=None, ge=0, le=150)
 
 
 def _sanitize_account(acc: dict[str, Any]) -> dict[str, Any]:
@@ -202,11 +219,21 @@ async def update_account_limits(
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
 
+    from outreach.core.safety_shield import WarmUpGovernor
+    high_vol = bool(req.high_volume_mode or account.get("activity_control_enabled"))
     updates: dict[str, Any] = {}
-    for field, val in req.model_dump(exclude_unset=True).items():
+    payload = req.model_dump(exclude_unset=True)
+    if "activity_control_enabled" in payload and payload["activity_control_enabled"] is not None:
+        updates["activity_control_enabled"] = bool(payload.pop("activity_control_enabled"))
+        high_vol = high_vol or updates["activity_control_enabled"]
+    if "connections_count" in payload and payload["connections_count"] is not None:
+        updates["connections_count"] = int(payload.pop("connections_count"))
+    payload.pop("high_volume_mode", None)
+
+    for field, val in payload.items():
         if val is not None:
-            # Enforce max limit of 35 per day to prevent aggressive spamming bans
-            capped_val = min(max(val, 0), 35)
+            field_cap = WarmUpGovernor.HARD_CEILINGS.get(field, 75) if high_vol else 35
+            capped_val = min(max(val, 0), field_cap)
             updates[f"limits.{field}"] = capped_val
 
     if updates:
@@ -215,6 +242,41 @@ async def update_account_limits(
 
     updated_account = await db.outreach_accounts.find_one({"id": account_id, "workspace_id": ws_id})
     return _sanitize_account(updated_account)
+
+
+@router.patch("/{account_id}/activity-control")
+async def update_activity_control(
+    account_id: str,
+    req: ActivityControlRequest,
+    current_user: dict = require_outreach_permission('account:connect'),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Configures Dripify-style Activity Control (dynamic warm-up + up to 75 invites / 150 messages per day)."""
+    from outreach.core.safety_shield import WarmUpGovernor
+
+    ws_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    account = await db.outreach_accounts.find_one({"id": account_id, "workspace_id": ws_id})
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+
+    updates: dict[str, Any] = {}
+    payload = req.model_dump(exclude_unset=True)
+    for top_field in ("activity_control_enabled", "connections_count", "warmup_level"):
+        if top_field in payload and payload[top_field] is not None:
+            updates[top_field] = payload.pop(top_field)
+
+    for field, val in payload.items():
+        if val is not None and field in WarmUpGovernor.HARD_CEILINGS:
+            updates[f"limits.{field}"] = min(max(int(val), 0), WarmUpGovernor.HARD_CEILINGS[field])
+
+    if updates:
+        updates["updated_at"] = datetime.now(timezone.utc)
+        await db.outreach_accounts.update_one({"id": account_id, "workspace_id": ws_id}, {"$set": updates})
+
+    updated_account = await db.outreach_accounts.find_one({"id": account_id, "workspace_id": ws_id})
+    sanitized = _sanitize_account(updated_account)
+    sanitized["activity_control"] = WarmUpGovernor.compute_activity_control_summary(updated_account)
+    return sanitized
 
 
 @router.delete("/{account_id}")

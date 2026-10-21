@@ -195,3 +195,185 @@ async def test_email_only_sender_never_needs_a_linkedin_cookie(monkeypatch):
         result = await SequenceExecutor.execute_lead_step("lead_a", db)
     assert result["status"] == "success"
     voyager.assert_not_called()
+
+
+def test_dripify_parity_variables_and_pipe_fallbacks():
+    from outreach.core.dag_compiler import interpolate_template
+
+    lead = {
+        "first_name": "Maya",
+        "last_name": "Lin",
+        "company_name": "Acme AI",
+        "job_title": "VP of Sales",
+        "connections_count": 840,
+        "top_skill": "Enterprise SaaS",
+        "company_location": "Austin, TX",
+        "school": "Stanford University",
+        "years_in_company": "3 years",
+        "years_in_role": "2 years",
+        "mutual_connections": "12",
+    }
+    tpl = (
+        "Hi {{first_name}}, saw you lead {{position}} at {{company}} in {{company_location}} "
+        "with {{number_of_connections}} connections and {{top_skill}} expertise "
+        "(fallback: {{missing_var | 'default_val'}})."
+    )
+    rendered = interpolate_template(tpl, lead)
+    assert rendered == (
+        "Hi Maya, saw you lead VP of Sales at Acme AI in Austin, TX "
+        "with 840 connections and Enterprise SaaS expertise (fallback: default_val)."
+    )
+
+
+def test_activity_control_governor_scales_by_age_connections_and_tier():
+    from outreach.core.safety_shield import WarmUpGovernor
+
+    now = datetime(2026, 10, 21, 12, 0, tzinfo=timezone.utc)
+    # New account (3 days old) with < 100 connections
+    low_conn_account = {
+        "warmup_started_at": now - timedelta(days=3),
+        "connections_count": 50,
+        "premium_product": "classic",
+        "limits": {"connection_invites": 75, "messages": 150, "profile_visits": 150},
+    }
+    low_limits = WarmUpGovernor.get_activity_control_limits(low_conn_account, now=now)
+    assert low_limits["connection_invites"] <= 10
+    assert low_limits["messages"] <= 25
+
+    # Mature account (30 days old) with 1,200 connections & Sales Navigator
+    mature_sn_account = {
+        "warmup_started_at": now - timedelta(days=30),
+        "connections_count": 1200,
+        "premium_product": "sales_navigator",
+        "limits": {"connection_invites": 75, "messages": 150, "profile_visits": 150},
+    }
+    mature_limits = WarmUpGovernor.get_activity_control_limits(mature_sn_account, now=now)
+    assert mature_limits["connection_invites"] == 75
+    assert mature_limits["messages"] == 150
+    assert mature_limits["profile_visits"] == 150
+
+
+def test_extended_sequence_capabilities_support_follow_comment_and_gated_actions(monkeypatch):
+    from outreach.core.sequence_capabilities import sequence_capabilities
+
+    monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", "true")
+    base_catalog = {entry["type"]: entry for entry in sequence_capabilities()}
+    assert base_catalog["follow"]["supported"] is True
+    assert base_catalog["follow"]["live_enabled"] is True
+    assert base_catalog["comment_last_post"]["supported"] is True
+    assert base_catalog["comment_last_post"]["live_enabled"] is True
+
+    monkeypatch.setenv("OUTREACH_EXTENDED_SEQUENCE_ACTIONS_ENABLED", "true")
+    ext_catalog = {entry["type"]: entry for entry in sequence_capabilities()}
+    assert ext_catalog["endorse_skills"]["supported"] is True
+    assert ext_catalog["inmail"]["supported"] is True
+    assert ext_catalog["open_profile_check"]["supported"] is True
+    assert ext_catalog["withdraw_invite"]["supported"] is True
+
+
+def test_ab_testing_deterministic_variant_selection_and_preview():
+    from outreach.core.dag_compiler import DAGCompiler, select_step_variant
+    from outreach.core.sequence_preview import analyze_sequence
+
+    node = {
+        "id": "msg_step_1",
+        "type": "send_message",
+        "delay_hours": 24,
+        "config": {
+            "body": "Default body",
+            "variants": [
+                {"id": "A", "body": "Hi {{first_name}}, variant A"},
+                {"id": "B", "body": "Hi {{first_name}}, variant B"},
+                {"id": "C", "body": "Hi {{first_name}}, variant C"},
+            ],
+        },
+    }
+    lead_1 = {"id": "lead_alpha", "linkedin_url": "https://linkedin.com/in/alpha"}
+
+    vid_1a, cfg_1a = select_step_variant(node, lead_1)
+    vid_1b, cfg_1b = select_step_variant(node, lead_1)
+    assert vid_1a == vid_1b
+    assert cfg_1a["body"] == cfg_1b["body"]
+    assert vid_1a in {"A", "B", "C"}
+
+    # Respects sticky pre-assigned variant on lead
+    lead_sticky = {"id": "lead_alpha", "ab_variants_assigned": {"msg_step_1": "C"}}
+    vid_sticky, cfg_sticky = select_step_variant(node, lead_sticky)
+    assert vid_sticky == "C"
+    assert cfg_sticky["body"] == "Hi {{first_name}}, variant C"
+
+    # Sequence preview validates all A/B/C variants
+    compiled = DAGCompiler.validate_and_compile([node], [])
+    analysis = analyze_sequence(compiled)
+    assert [i for i in analysis["issues"] if i["severity"] == "error"] == []
+
+
+def test_withdraw_invite_21_day_cooldown_validation(monkeypatch):
+    from outreach.core.dag_compiler import DAGCompiler
+    from outreach.core.sequence_preview import analyze_sequence
+
+    monkeypatch.setenv("OUTREACH_EXTENDED_SEQUENCE_ACTIONS_ENABLED", "true")
+    # Reconnect after withdraw with only 48 hours (< 504 hours / 21 days) -> error
+    nodes = [
+        {"id": "n1", "type": "connection_request", "delay_hours": 0, "config": {"note": ""}},
+        {"id": "n2", "type": "withdraw_invite", "delay_hours": 72, "config": {}},
+        {"id": "n3", "type": "connection_request", "delay_hours": 48, "config": {"note": ""}},
+    ]
+    edges = [
+        {"source": "n1", "target": "n2", "condition_type": "negative"},
+        {"source": "n2", "target": "n3", "condition_type": "default"},
+    ]
+    res_short = analyze_sequence(DAGCompiler.validate_and_compile(nodes, edges))
+    error_codes = {e["code"] for e in res_short["issues"] if e["severity"] == "error"}
+    assert "reconnect_before_21_days" in error_codes
+
+    # Reconnect after withdraw with 504 hours (21 days) -> valid
+    nodes[2]["delay_hours"] = 504
+    res_ok = analyze_sequence(DAGCompiler.validate_and_compile(nodes, edges))
+    assert "reconnect_before_21_days" not in {e["code"] for e in res_ok["issues"] if e["severity"] == "error"}
+
+
+@pytest.mark.asyncio
+async def test_weekly_invite_limit_isolates_connection_invites_only():
+    from outreach.core.safety_shield import SafetyShield
+    from outreach.core.rate_limiter import OutboundRateLimiter
+
+    assert SafetyShield.is_weekly_invite_limit_error("You've reached the weekly invitation limit") is True
+    assert SafetyShield.is_weekly_invite_limit_error("Normal network timeout") is False
+
+    now = datetime.now(timezone.utc)
+    future_reset = now + timedelta(days=4)
+    account = {
+        "id": "acc_1",
+        "workspace_id": "ws_1",
+        "status": "active",
+        "weekly_invite_limit_reached": True,
+        "weekly_invite_reset_at": future_reset,
+        "limits": {"connection_invites": 40, "messages": 80, "profile_visits": 100},
+        "counters": {"date": now.strftime("%Y-%m-%d"), "connection_invites": 5, "messages": 10, "profile_visits": 10},
+    }
+
+    class _UpdateResult:
+        matched_count = 1
+
+    class _FakeAccounts:
+        async def update_one(self, filt, update):
+            return _UpdateResult()
+
+    class _FakeDB:
+        outreach_accounts = _FakeAccounts()
+
+    # Connection invites are blocked while weekly invite cap is active
+    allowed_invite = await OutboundRateLimiter.check_and_increment_daily_limit(account, "connection_invites", _FakeDB())
+    assert allowed_invite is False
+
+    # Direct messages and profile visits continue unaffected!
+    allowed_message = await OutboundRateLimiter.check_and_increment_daily_limit(account, "messages", _FakeDB())
+    assert allowed_message is True
+
+
+def test_custom_name_scrubber_strips_user_terms():
+    from outreach.core.name_cleaner import clean_first_name
+
+    cleaned = clean_first_name("Dr. Elena (Hiring!) Ex-Meta", custom_scrub_terms=["Dr.", "Ex-Meta"])
+    assert cleaned == "Elena"

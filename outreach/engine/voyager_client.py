@@ -314,6 +314,19 @@ class VoyagerClient:
                 if not isinstance(current_position, dict):
                     current_position = {}
 
+                skills = profile.get("skills") or data.get("skillView", {}).get("elements") or []
+                top_skill = ""
+                if isinstance(skills, list) and skills:
+                    first_skill = skills[0]
+                    top_skill = first_skill.get("name", "") if isinstance(first_skill, dict) else str(first_skill)
+
+                educations = profile.get("educations") or data.get("educationView", {}).get("elements") or []
+                school_name = ""
+                if isinstance(educations, list) and educations:
+                    first_edu = educations[0]
+                    if isinstance(first_edu, dict):
+                        school_name = first_edu.get("schoolName", "")
+
                 return {
                     "full_name": full_name,
                     "headline": profile.get("headline", ""),
@@ -321,6 +334,13 @@ class VoyagerClient:
                     "profile_urn": profile_urn,
                     "company": current_position.get("companyName", "") or profile.get("companyName", ""),
                     "job_title": current_position.get("title", "") or profile.get("occupation", ""),
+                    "industry": profile.get("industryName", ""),
+                    "summary": profile.get("summary", ""),
+                    "company_location": current_position.get("locationName", "") or profile.get("geoLocationName", ""),
+                    "connections_count": profile.get("connectionsCount") or profile.get("numConnections"),
+                    "top_skill": top_skill,
+                    "school": school_name,
+                    "is_open_profile": bool(profile.get("openLink") or profile.get("premiumOpenLink")),
                     "verified": bool(entity_urn and full_name),
                 }
         except RequestDenied:
@@ -402,13 +422,23 @@ class VoyagerClient:
             logger.error("Voyager send_connection_invite error: %s", type(exc).__name__)
             return {"status": "error", "error": "LinkedIn request could not be confirmed", "status_code": getattr(exc, "status_code", None)}
 
-    async def send_direct_message(self, recipient_urn: str, message_body: str) -> dict[str, Any]:
+    async def send_direct_message(
+        self,
+        recipient_urn: str,
+        message_body: str,
+        attachment_url: str | None = None,
+        attachment_name: str | None = None,
+    ) -> dict[str, Any]:
         """
-        Sends a standard text direct message to a 1st degree connection.
+        Sends a standard text direct message (with optional attachment) to a 1st degree connection.
         """
         if self.is_mock:
             logger.info("VoyagerClient [MOCK]: Dispatched DM to %s: %s", recipient_urn, message_body[:40])
-            return {"status": "message_sent", "timestamp": datetime.now(timezone.utc).isoformat()}
+            res: dict[str, Any] = {"status": "message_sent", "timestamp": datetime.now(timezone.utc).isoformat()}
+            if attachment_url:
+                res["attachment_url"] = attachment_url
+                res["attachment_name"] = attachment_name or "attachment"
+            return res
 
         if not self.request_envelope:
             raise RequestDenied("content_approval_required")
@@ -419,9 +449,12 @@ class VoyagerClient:
             return {"status": "failed", "error": "Could not resolve this LinkedIn profile to a verified member ID."}
 
         url = f"{VOYAGER_BASE_URL}/messaging/conversations"
+        msg_obj: dict[str, Any] = {"body": message_body}
+        if attachment_url:
+            msg_obj["attachments"] = [{"name": attachment_name or "document", "reference": attachment_url}]
         payload = {
             "recipients": [resolved_urn],
-            "message": {"body": message_body},
+            "message": msg_obj,
         }
         try:
             async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15.0) as client:
@@ -468,6 +501,181 @@ class VoyagerClient:
             if update.get("post_urn"):
                 return await self.like_update(update["post_urn"])
         return {"status": "failed", "error": f"No post found within the last {max_age} days"}
+
+    async def follow_profile(self, profile_urn: str) -> dict[str, Any]:
+        """
+        Follows a target LinkedIn member profile.
+        """
+        if self.is_mock:
+            logger.info("VoyagerClient [MOCK]: Followed profile %s", profile_urn)
+            return {"status": "followed", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+        resolved_urn = await self._resolve_profile_urn(profile_urn)
+        if not resolved_urn:
+            return {"status": "failed", "error": "Could not resolve this LinkedIn profile to a verified member ID."}
+
+        url = f"{VOYAGER_BASE_URL}/feed/follows"
+        payload = {"urn": resolved_urn}
+        try:
+            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15.0) as client:
+                resp = await self._request(client, "POST", url, headers=self._get_headers(), json=payload, action="visit")
+                if resp.status_code in (200, 201, 202, 204):
+                    return {"status": "followed", "http_status": resp.status_code}
+                return {"status": "failed", "status_code": resp.status_code, "text": resp.text[:200]}
+        except RequestDenied:
+            raise
+        except Exception as exc:
+            logger.error("Voyager follow_profile error: %s", type(exc).__name__)
+            return {"status": "error", "error": "LinkedIn request could not be confirmed", "status_code": getattr(exc, "status_code", None)}
+
+    async def endorse_top_skill(self, profile_urn: str, skill_name: str | None = None) -> dict[str, Any]:
+        """
+        Endorses the top skill on a target LinkedIn profile.
+        """
+        if self.is_mock:
+            logger.info("VoyagerClient [MOCK]: Endorsed skill for %s (skill=%s)", profile_urn, skill_name or "top")
+            return {"status": "endorsed", "skill": skill_name or "Leadership", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+        resolved_urn = await self._resolve_profile_urn(profile_urn)
+        if not resolved_urn:
+            return {"status": "failed", "error": "Could not resolve this LinkedIn profile to a verified member ID."}
+
+        url = f"{VOYAGER_BASE_URL}/identity/profiles/{resolved_urn}/skillEndorsements"
+        payload = {"skillName": skill_name} if skill_name else {}
+        try:
+            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15.0) as client:
+                resp = await self._request(client, "POST", url, headers=self._get_headers(), json=payload, action="visit")
+                if resp.status_code in (200, 201, 202, 204):
+                    return {"status": "endorsed", "http_status": resp.status_code}
+                return {"status": "failed", "status_code": resp.status_code, "text": resp.text[:200]}
+        except RequestDenied:
+            raise
+        except Exception as exc:
+            logger.error("Voyager endorse_top_skill error: %s", type(exc).__name__)
+            return {"status": "error", "error": "LinkedIn request could not be confirmed", "status_code": getattr(exc, "status_code", None)}
+
+    async def withdraw_invitation(self, profile_urn: str) -> dict[str, Any]:
+        """
+        Withdraws a pending outbound connection invitation to a prospect on LinkedIn.
+        """
+        if self.is_mock:
+            logger.info("VoyagerClient [MOCK]: Withdrew pending invitation for %s", profile_urn)
+            return {"status": "withdrawn", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+        resolved_urn = await self._resolve_profile_urn(profile_urn)
+        if not resolved_urn:
+            return {"status": "failed", "error": "Could not resolve this LinkedIn profile to a verified member ID."}
+
+        url = f"{VOYAGER_BASE_URL}/relationships/invitations"
+        payload = {"action": "withdraw", "inviteeProfileUrn": resolved_urn}
+        try:
+            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15.0) as client:
+                resp = await self._request(client, "POST", url, headers=self._get_headers(), json=payload, action="visit")
+                if resp.status_code in (200, 201, 202, 204):
+                    return {"status": "withdrawn", "http_status": resp.status_code}
+                return {"status": "failed", "status_code": resp.status_code, "text": resp.text[:200]}
+        except RequestDenied:
+            raise
+        except Exception as exc:
+            logger.error("Voyager withdraw_invitation error: %s", type(exc).__name__)
+            return {"status": "error", "error": "LinkedIn request could not be confirmed", "status_code": getattr(exc, "status_code", None)}
+
+    async def send_inmail(
+        self,
+        recipient_urn: str,
+        subject: str,
+        message_body: str,
+        attachment_url: str | None = None,
+        attachment_name: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Sends a LinkedIn InMail to a 2nd/3rd degree lead (Open Profile or Sales Navigator/Premium).
+        """
+        if self.is_mock:
+            logger.info("VoyagerClient [MOCK]: Sent InMail to %s: %s", recipient_urn, subject[:30])
+            res: dict[str, Any] = {"status": "inmail_sent", "subject": subject, "timestamp": datetime.now(timezone.utc).isoformat()}
+            if attachment_url:
+                res["attachment_url"] = attachment_url
+                res["attachment_name"] = attachment_name or "attachment"
+            return res
+
+        if not self.request_envelope:
+            raise RequestDenied("content_approval_required")
+        self.request_envelope.assert_content("message", recipient_urn, {"subject": subject, "body": message_body})
+
+        resolved_urn = await self._resolve_profile_urn(recipient_urn)
+        if not resolved_urn:
+            return {"status": "failed", "error": "Could not resolve this LinkedIn profile to a verified member ID."}
+
+        url = f"{VOYAGER_BASE_URL}/messaging/conversations"
+        msg_obj: dict[str, Any] = {"body": message_body}
+        if attachment_url:
+            msg_obj["attachments"] = [{"name": attachment_name or "document", "reference": attachment_url}]
+        payload = {
+            "recipients": [resolved_urn],
+            "subject": subject,
+            "message": msg_obj,
+            "subtype": "INMAIL",
+        }
+        try:
+            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15.0) as client:
+                resp = await self._request(client, "POST", url, headers=self._get_headers(), json=payload, action="message")
+                if resp.status_code in (200, 201):
+                    return {"status": "inmail_sent"}
+                return {"status": "failed", "status_code": resp.status_code, "text": resp.text[:200]}
+        except RequestDenied:
+            raise
+        except Exception as exc:
+            logger.error("Voyager send_inmail error: %s", type(exc).__name__)
+            return {"status": "error", "error": "LinkedIn request could not be confirmed", "status_code": getattr(exc, "status_code", None)}
+
+    async def comment_last_post(self, profile_urn: str, comment_text: str, max_age_days: int = 30) -> dict[str, Any]:
+        """
+        Comments on the prospect's most recent post within max_age_days.
+        """
+        if self.is_mock:
+            logger.info("VoyagerClient [MOCK]: Commented on last post for %s: %s", profile_urn, comment_text[:40])
+            return {"status": "commented", "comment_text": comment_text, "timestamp": datetime.now(timezone.utc).isoformat()}
+
+        resolved_urn = await self._resolve_profile_urn(profile_urn)
+        if not resolved_urn:
+            return {"status": "failed", "error": "Could not resolve this LinkedIn profile to a verified member ID."}
+        updates = await self.fetch_profile_recent_updates(resolved_urn, count=20)
+        if not updates:
+            return {"status": "failed", "error": "No recent post found for this profile"}
+        max_age = max(1, int(max_age_days))
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max_age)
+        for update in updates:
+            published_at = update.get("published_at")
+            if isinstance(published_at, (int, float)):
+                published_at = datetime.fromtimestamp(published_at / (1000 if published_at > 10**12 else 1), tz=timezone.utc)
+            elif isinstance(published_at, str):
+                try:
+                    published_at = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+                    if published_at.tzinfo is None:
+                        published_at = published_at.replace(tzinfo=timezone.utc)
+                except ValueError:
+                    published_at = None
+            if published_at is None or published_at < cutoff:
+                continue
+            if update.get("post_urn"):
+                return await self.comment_on_update(update["post_urn"], comment_text)
+        return {"status": "failed", "error": f"No post found within the last {max_age} days"}
+
+    async def check_open_profile(self, profile_identifier: str) -> bool | None:
+        """
+        Checks if a prospect's LinkedIn profile has Open Profile enabled (eligible for free InMail).
+        """
+        if self.is_mock:
+            return True
+        parsed = urlparse(profile_identifier)
+        vanity_name = parsed.path.rstrip("/").split("/")[-1] if "/in/" in (parsed.path or "") else profile_identifier.strip().strip("/")
+        if not vanity_name or "/" in vanity_name:
+            return None
+        info = await self.fetch_profile_info(vanity_name)
+        if not info.get("verified"):
+            return None
+        return bool(info.get("is_open_profile"))
 
     async def send_voice_note(self, recipient_urn: str, audio_bytes: bytes, transcript: str = "") -> dict[str, Any]:
         """
@@ -558,28 +766,39 @@ class VoyagerClient:
             logger.error("Voyager fetch_conversations error: %s", type(exc).__name__)
             raise
 
-    async def send_conversation_reply(self, thread_urn: str, message_body: str) -> dict[str, Any]:
+    async def send_conversation_reply(
+        self,
+        thread_urn: str,
+        message_body: str,
+        attachment_url: str | None = None,
+        attachment_name: str | None = None,
+    ) -> dict[str, Any]:
         """
-        Replies directly inside an existing conversation thread.
+        Replies directly inside an existing conversation thread (with optional attachment).
         """
         if self.is_mock:
             logger.info("VoyagerClient [MOCK]: Sent reply to thread %s: %s", thread_urn, message_body[:40])
-            return {
+            res: dict[str, Any] = {
                 "status": "sent",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
+            if attachment_url:
+                res["attachment_url"] = attachment_url
+                res["attachment_name"] = attachment_name or "attachment"
+            return res
 
         if not self.request_envelope:
             raise RequestDenied("content_approval_required")
         self.request_envelope.assert_content("reply", thread_urn, {"body": message_body})
 
         url = f"{VOYAGER_BASE_URL}/messaging/conversations/{thread_urn}/events"
+        msg_create: dict[str, Any] = {"body": message_body}
+        if attachment_url:
+            msg_create["attachments"] = [{"name": attachment_name or "document", "reference": attachment_url}]
         payload = {
             "eventCreate": {
                 "value": {
-                    "com.linkedin.voyager.messaging.create.MessageCreate": {
-                        "body": message_body,
-                    }
+                    "com.linkedin.voyager.messaging.create.MessageCreate": msg_create
                 }
             }
         }
@@ -594,6 +813,38 @@ class VoyagerClient:
         except Exception as exc:
             logger.error("Voyager send_conversation_reply error: %s", type(exc).__name__)
             return {"status": "error", "error": "LinkedIn request could not be confirmed", "status_code": getattr(exc, "status_code", None)}
+
+    async def edit_conversation_message(
+        self,
+        thread_urn: str,
+        message_id: str,
+        new_body: str,
+    ) -> dict[str, Any]:
+        """
+        Edits a previously sent LinkedIn message within 1 hour of sending.
+        """
+        if self.is_mock:
+            logger.info("VoyagerClient [MOCK]: Edited message %s in thread %s", message_id, thread_urn)
+            return {
+                "status": "edited",
+                "message_id": message_id,
+                "body": new_body,
+                "edited_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+        url = f"{VOYAGER_BASE_URL}/messaging/conversations/{thread_urn}/events/{message_id}"
+        payload = {"patch": {"$set": {"body": new_body}}}
+        try:
+            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15.0) as client:
+                resp = await self._request(client, "POST", url, headers=self._get_headers(), json=payload)
+                if resp.status_code in (200, 201, 202, 204):
+                    return {"status": "edited", "message_id": message_id, "edited_at": datetime.now(timezone.utc).isoformat()}
+                return {"status": "failed", "status_code": resp.status_code}
+        except RequestDenied:
+            raise
+        except Exception as exc:
+            logger.error("Voyager edit_conversation_message error: %s", type(exc).__name__)
+            return {"status": "error", "error": "LinkedIn message edit could not be confirmed", "status_code": getattr(exc, "status_code", None)}
 
     async def fetch_profile_recent_updates(self, profile_urn: str, count: int = 5) -> list[dict[str, Any]]:
         """

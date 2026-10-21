@@ -129,6 +129,18 @@ def graph_envelope(nodes: Any, edges: Any) -> None:
                 raise DAGValidationError("Recent-post age requires whole days from 1 to 365.")
             if type(config.get('skip_if_no_posts', True)) is not bool:
                 raise DAGValidationError("Skip-if-no-posts requires an explicit boolean.")
+        if 'variants' in node.get('config', {}):
+            variants = node['config']['variants']
+            if not isinstance(variants, list) or not 1 <= len(variants) <= 3:
+                raise DAGValidationError("A/B testing supports 1 to 3 message variants per step.")
+            seen_ids = set()
+            for v in variants:
+                if not isinstance(v, dict) or not isinstance(v.get('id'), str) or not 1 <= len(v['id'].strip()) <= 20:
+                    raise DAGValidationError("Every A/B test variant requires a unique scalar ID (e.g. A, B, C).")
+                vid = v['id'].strip()
+                if vid in seen_ids:
+                    raise DAGValidationError(f"Duplicate A/B test variant ID: {vid}.")
+                seen_ids.add(vid)
     for edge in edges:
         if not isinstance(edge, dict) or not identity(edge.get('source')) or not identity(edge.get('target')):
             raise DAGValidationError("Every connection needs scalar source and target IDs.")

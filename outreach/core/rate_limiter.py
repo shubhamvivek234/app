@@ -119,9 +119,35 @@ class OutboundRateLimiter:
         If under limit, increments counter and returns True. Otherwise returns False.
         """
         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        now_utc = datetime.now(timezone.utc)
+        if action_field == "connection_invites":
+            if account.get("weekly_invite_limit_reached") is True:
+                reset_raw = account.get("weekly_invite_reset_at")
+                reset_dt = None
+                if isinstance(reset_raw, datetime):
+                    reset_dt = reset_raw if reset_raw.tzinfo else reset_raw.replace(tzinfo=timezone.utc)
+                elif isinstance(reset_raw, str):
+                    try:
+                        reset_dt = datetime.fromisoformat(reset_raw.replace("Z", "+00:00"))
+                        if reset_dt.tzinfo is None:
+                            reset_dt = reset_dt.replace(tzinfo=timezone.utc)
+                    except ValueError:
+                        reset_dt = None
+                if reset_dt is None or reset_dt > now_utc:
+                    return False
+
         # Fetch limits (default to 20 if unset)
         limits = account.get("limits") or {}
         account_max = limits.get(action_field, 20)
+        if account.get("activity_control_enabled") is True or account.get("status") == "warming":
+            from outreach.core.safety_shield import WarmUpGovernor
+            controlled = WarmUpGovernor.get_activity_control_limits(account)
+            account_max = min(account_max, controlled.get(action_field, account_max))
+            if action_field == "connection_invites":
+                tier = str(account.get("premium_product") or "classic").lower()
+                weekly_ceiling = WarmUpGovernor.WEEKLY_INVITE_CEILINGS.get(tier, 100)
+                if int(account.get("weekly_invites_sent") or 0) >= weekly_ceiling:
+                    return False
         campaign_max = (campaign_limits or {}).get(action_field, account_max)
         max_allowed = min(account_max, campaign_max)
         if max_allowed <= 0:
