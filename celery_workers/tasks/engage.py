@@ -296,3 +296,122 @@ async def _perform_action(post_id: str, workspace_id: str, account_id: str,
     if not job or job.get("source") != "engage" or job.get("account_id") != account_id or job.get("target_id") != post_id or job.get("action") != action:
         return {"status": "unapproved_legacy_job"}
     return await ManualActions(db).run(workspace_id, action_id)
+
+
+@celery_app.task(name="celery_workers.tasks.engage.run_scheduled_auto_fetches", queue="outreach", acks_late=True)
+def run_scheduled_auto_fetches() -> dict:
+    return run_async(_run_scheduled_auto_fetches())
+
+
+async def _run_scheduled_auto_fetches(db=None) -> dict:
+    """Daily automatic post refresh for Engage lists with auto_fetch_enabled during sender working hours."""
+    from datetime import timedelta
+    import uuid
+    from outreach.core.paid_access import live_actions_enabled
+    from outreach.core.rate_limiter import OutboundRateLimiter
+    from outreach.core.suppression import mutate_suppression
+
+    if is_shutting_down() or not live_actions_enabled():
+        return {"disabled": True, "queued": 0}
+    db = db or await _db()
+    now = datetime.now(timezone.utc)
+    daily_cutoff = now - timedelta(hours=20)
+    stale_fetch_cutoff = now - timedelta(hours=2)
+
+    candidates = await db.outreach_engage_lists.find({
+        "auto_fetch_enabled": True,
+        "$and": [
+            {"$or": [
+                {"last_auto_fetched_at": {"$exists": False}},
+                {"last_auto_fetched_at": None},
+                {"last_auto_fetched_at": {"$lte": daily_cutoff}},
+            ]},
+            {"$or": [
+                {"fetch_status": {"$nin": ["queued", "running"]}},
+                {"fetch_started_at": {"$lt": stale_fetch_cutoff}},
+            ]},
+        ],
+    }).limit(50).to_list(50)
+
+    queued = 0
+    skipped_working_hours = 0
+    skipped_no_sender = 0
+    for engage_list in candidates:
+        if is_shutting_down():
+            break
+        list_id = engage_list["id"]
+        workspace_id = engage_list["workspace_id"]
+        contact_count = await db.outreach_engage_contacts.count_documents({
+            "list_id": list_id, "workspace_id": workspace_id,
+        })
+        if not contact_count:
+            continue
+        preferred_sender_id = engage_list.get("auto_fetch_account_id")
+        account_query = {"workspace_id": workspace_id, "status": "active", "is_deleted": {"$ne": True}}
+        if preferred_sender_id:
+            account_query["id"] = preferred_sender_id
+        account = await db.outreach_accounts.find_one(account_query)
+        if not account and preferred_sender_id:
+            account = await db.outreach_accounts.find_one({
+                "workspace_id": workspace_id, "status": "active", "is_deleted": {"$ne": True},
+            })
+        if not account or not await sender_is_ready(db, workspace_id, account):
+            skipped_no_sender += 1
+            continue
+        schedule = {
+            "timezone": account.get("working_timezone", "UTC"),
+            "start_time": account.get("working_hours_start", "09:00"),
+            "end_time": account.get("working_hours_end", "17:00"),
+            "days": [0, 1, 2, 3, 4],
+        }
+        if not OutboundRateLimiter.is_within_working_hours(schedule, now):
+            skipped_working_hours += 1
+            continue
+
+        run_id = uuid.uuid4().hex
+        async def claim(current):
+            parent = await current.outreach_engage_lists.find_one({"id": list_id, **workspace_scope(workspace_id)})
+            if not parent:
+                return False
+            changed = await current.outreach_engage_lists.update_one(
+                {"_id": parent["_id"], "id": list_id, **workspace_scope(workspace_id), "$or": [
+                    {"fetch_status": {"$nin": ["queued", "running"]}},
+                    {"fetch_started_at": {"$lt": stale_fetch_cutoff}},
+                ]},
+                {"$set": {
+                    "fetch_status": "queued",
+                    "fetch_run_id": run_id,
+                    "fetch_error": "",
+                    "fetch_started_at": now,
+                    "last_auto_fetched_at": now,
+                }},
+            )
+            return changed.matched_count == 1
+        try:
+            claimed = await mutate_suppression(db, workspace_id, claim)
+        except Exception:
+            claimed = False
+        if not claimed:
+            continue
+        try:
+            celery_app.send_task(
+                "celery_workers.tasks.engage.fetch_posts",
+                args=[list_id, workspace_id, account["id"], run_id],
+                queue="outreach",
+                ignore_result=True,
+            )
+            queued += 1
+        except Exception as exc:
+            logger.warning("Scheduled auto-fetch queue failed for list %s (%s)", list_id, type(exc).__name__)
+    return {
+        "queued": queued,
+        "skipped_working_hours": skipped_working_hours,
+        "skipped_no_sender": skipped_no_sender,
+    }
+
+
+celery_app.conf.beat_schedule["run-scheduled-engage-auto-fetches"] = {
+    "task": "celery_workers.tasks.engage.run_scheduled_auto_fetches",
+    "schedule": 1800.0,
+    "options": {"queue": "outreach"},
+}

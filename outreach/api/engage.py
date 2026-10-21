@@ -45,6 +45,13 @@ class AddContactsRequest(BaseModel):
     profile_urls: List[str] = Field(default_factory=list)
     csv_text: Optional[str] = None
     sender_account_id: Optional[str] = None
+    source_campaign_id: Optional[str] = None
+    link_warmup_campaign: bool = False
+
+
+class PushContactsToCampaignRequest(BaseModel):
+    campaign_id: str
+    only_warmed_up: bool = True
 
 
 class LikePostRequest(BaseModel):
@@ -68,6 +75,11 @@ class AICommentRequest(BaseModel):
 class EngageListSettingsRequest(BaseModel):
     campaign_id: str | None = None
     warmup_hours: int = Field(default=24, ge=0, le=168)
+    name: str | None = None
+    emoji: str | None = None
+    description: str | None = None
+    auto_fetch_enabled: bool | None = None
+    auto_fetch_account_id: str | None = None
 
 
 class CreateEngageDraftRequest(BaseModel):
@@ -242,11 +254,48 @@ async def get_engage_list(
         raise HTTPException(status_code=404, detail="Engagement list not found")
 
     contacts = await db.outreach_engage_contacts.find({"list_id": list_id, "workspace_id": workspace_id}, {"_id": 0}).to_list(1000)
+    now = datetime.now(timezone.utc)
+    posts_by_contact: dict[str, list[dict]] = {}
+    if hasattr(db, "outreach_engage_posts") and hasattr(db.outreach_engage_posts, "find"):
+        try:
+            post_docs = await db.outreach_engage_posts.find(
+                {"list_id": list_id, "workspace_id": workspace_id},
+                {"_id": 0, "contact_id": 1, "status": 1, "liked_at": 1, "commented_at": 1, "published_at": 1},
+            ).to_list(10000)
+            for p in post_docs or []:
+                cid = p.get("contact_id")
+                if cid:
+                    posts_by_contact.setdefault(cid, []).append(p)
+        except Exception:
+            posts_by_contact = {}
+
+    warmed_up_count = 0
     for contact in contacts:
         if contact.get("enrichment_status") != "verified":
             contact.update({"full_name": "", "headline": "", "avatar_url": "", "profile_urn": "",
                             "enrichment_status": contact.get("enrichment_status") or "unverified"})
+        c_posts = posts_by_contact.get(contact.get("id"), [])
+        engaged_times: list[datetime] = []
+        for p in c_posts:
+            for field in ("liked_at", "commented_at"):
+                val = p.get(field)
+                if isinstance(val, datetime):
+                    engaged_times.append(val if val.tzinfo else val.replace(tzinfo=timezone.utc))
+        last_engaged = max(engaged_times) if engaged_times else None
+        if last_engaged and last_engaged >= now - timedelta(days=7):
+            contact["warmup_status"] = "warmed_up"
+            contact["last_engaged_at"] = last_engaged.isoformat()
+            warmed_up_count += 1
+        elif len(c_posts) == 0:
+            contact["warmup_status"] = "no_recent_posts"
+            contact["last_engaged_at"] = last_engaged.isoformat() if last_engaged else None
+        else:
+            contact["warmup_status"] = "needs_engagement"
+            contact["last_engaged_at"] = last_engaged.isoformat() if last_engaged else None
+        contact["posts_count"] = len(c_posts)
+
     engage_list["contacts"] = contacts
+    engage_list["warmed_up_contacts_count"] = warmed_up_count
     return engage_list
 
 
@@ -273,24 +322,54 @@ async def update_engage_list_settings(
     workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
     from outreach.core.suppression import mutate_suppression, SuppressionUnavailable
 
+    if req.name is not None and not req.name.strip():
+        raise HTTPException(status_code=400, detail="List name cannot be empty")
+
     async def apply(current):
         db = current
-        await _reject_armed_list_changes(list_id, workspace_id, db, campaign_id=req.campaign_id)
-        if req.campaign_id:
-            campaign = await db.outreach_campaigns.find_one({
-                "id": req.campaign_id, **workspace_scope(workspace_id), "is_deleted": {"$ne": True},
-            })
-            if not campaign:
-                raise HTTPException(status_code=404, detail="Campaign not found in this workspace")
-            if campaign.get("status") != "draft":
-                raise HTTPException(status_code=409, detail="Only draft campaigns can be linked to a warm-up list")
+        fields_set = getattr(req, "model_fields_set", set())
+        updating_campaign = "campaign_id" in fields_set or "warmup_hours" in fields_set or not fields_set
+        if updating_campaign:
+            await _reject_armed_list_changes(list_id, workspace_id, db, campaign_id=req.campaign_id)
+            if req.campaign_id:
+                campaign = await db.outreach_campaigns.find_one({
+                    "id": req.campaign_id, **workspace_scope(workspace_id), "is_deleted": {"$ne": True},
+                })
+                if not campaign:
+                    raise HTTPException(status_code=404, detail="Campaign not found in this workspace")
+                if campaign.get("status") != "draft":
+                    raise HTTPException(status_code=409, detail="Only draft campaigns can be linked to a warm-up list")
+
+        updates: dict[str, Any] = {"updated_at": datetime.now(timezone.utc)}
+        response_payload: dict[str, Any] = {}
+        if updating_campaign:
+            updates["campaign_id"] = req.campaign_id
+            updates["warmup_hours"] = req.warmup_hours
+            response_payload["campaign_id"] = req.campaign_id
+            response_payload["warmup_hours"] = req.warmup_hours
+        if req.name is not None:
+            updates["name"] = req.name.strip()
+            response_payload["name"] = updates["name"]
+        if req.emoji is not None:
+            updates["emoji"] = req.emoji.strip() or "🎯"
+            response_payload["emoji"] = updates["emoji"]
+        if req.description is not None:
+            updates["description"] = req.description.strip()
+            response_payload["description"] = updates["description"]
+        if req.auto_fetch_enabled is not None:
+            updates["auto_fetch_enabled"] = bool(req.auto_fetch_enabled)
+            response_payload["auto_fetch_enabled"] = updates["auto_fetch_enabled"]
+        if "auto_fetch_account_id" in fields_set:
+            updates["auto_fetch_account_id"] = req.auto_fetch_account_id or None
+            response_payload["auto_fetch_account_id"] = updates["auto_fetch_account_id"]
+
         result = await db.outreach_engage_lists.update_one(
             {"id": list_id, **workspace_scope(workspace_id)},
-            {"$set": {"campaign_id": req.campaign_id, "warmup_hours": req.warmup_hours, "updated_at": datetime.now(timezone.utc)}},
+            {"$set": updates},
         )
         if not result.matched_count:
             raise HTTPException(status_code=404, detail="Engagement list not found")
-        return {"campaign_id": req.campaign_id, "warmup_hours": req.warmup_hours}
+        return response_payload
     try:
         return await mutate_suppression(db, workspace_id, apply)
     except SuppressionUnavailable:
@@ -450,7 +529,11 @@ async def update_engage_draft(
         if req.status is not None:
             updates["status"] = req.status
             if req.status == "completed":
-                updates["completion_source"] = "self_reported"
+                updates["completion_source"] = (
+                    "linkedin_confirmed"
+                    if post.get("status") == "commented" and isinstance(post.get("commented_at"), datetime)
+                    else "self_reported"
+                )
                 updates["completed_at"] = updates["updated_at"]
         result = await db.outreach_engage_drafts.update_one({**query, "status": "pending"}, {"$set": updates})
         if not result.modified_count:
@@ -541,6 +624,22 @@ async def add_contacts_to_list(
             raise HTTPException(status_code=404, detail="Engagement list not found")
 
         extracted_urls = list(req.profile_urls)
+        source_campaign = None
+
+        if req.source_campaign_id:
+            source_campaign = await db.outreach_campaigns.find_one({
+                "id": req.source_campaign_id, **workspace_scope(workspace_id), "is_deleted": {"$ne": True},
+            })
+            if not source_campaign:
+                raise HTTPException(status_code=404, detail="Source campaign not found in this workspace")
+            campaign_leads = await db.outreach_leads.find({
+                "campaign_id": req.source_campaign_id, **workspace_scope(workspace_id),
+                "is_deleted": {"$ne": True}, "execution_state": {"$ne": "staged"},
+            }).to_list(1000)
+            for lead in campaign_leads:
+                raw_url = (lead.get("linkedin_url") or "").strip()
+                if raw_url:
+                    extracted_urls.append(raw_url)
 
         if req.csv_text:
             try:
@@ -567,7 +666,12 @@ async def add_contacts_to_list(
         invalid_count = sum(not url for url in cleaned_urls)
         cleaned_urls = list(dict.fromkeys(url for url in cleaned_urls if url))
         if not cleaned_urls:
-            raise HTTPException(status_code=400, detail="Add at least one valid LinkedIn /in/ profile URL.")
+            raise HTTPException(
+                status_code=400,
+                detail="No valid LinkedIn /in/ profile URLs found in the selected campaign."
+                if req.source_campaign_id
+                else "Add at least one valid LinkedIn /in/ profile URL.",
+            )
         current_count = await db.outreach_engage_contacts.count_documents({"list_id": list_id, **workspace_scope(workspace_id)})
         if current_count + len(cleaned_urls) > 1000:
             raise HTTPException(status_code=400, detail="Engagement lists are limited to 1,000 contacts. Split this upload into smaller lists.")
@@ -596,7 +700,9 @@ async def add_contacts_to_list(
         # Pin publication to this list generation and one enrichment run.
         new_count = await db.outreach_engage_contacts.count_documents({"list_id": list_id, **workspace_scope(workspace_id)})
         run_id = uuid.uuid4().hex if added_count else None
-        values = {"contacts_count": new_count}
+        values: dict[str, Any] = {"contacts_count": new_count}
+        if req.link_warmup_campaign and source_campaign and source_campaign.get("status") == "draft":
+            values["campaign_id"] = req.source_campaign_id
         if added_count:
             values.update(enrichment_run_id=run_id, enrichment_status="queued" if account else "waiting_for_sender", enrichment_error="")
         await db.outreach_engage_lists.update_one({"_id": engage_list["_id"], "id": list_id, **workspace_scope(workspace_id)}, {"$set": values})
@@ -621,6 +727,122 @@ async def add_contacts_to_list(
 
     return {"status": "success", "added_count": added_count, "invalid_count": invalid_count,
             "total_contacts": new_count, "enrichment_status": "queued" if account and added_count else "waiting_for_sender" if added_count else "idle"}
+
+
+@router.post("/lists/{list_id}/push-to-campaign")
+async def push_contacts_to_campaign(
+    list_id: str,
+    req: PushContactsToCampaignRequest,
+    current_user: dict = require_outreach_permission('engage:manage'),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Push engaged (or all) contacts from this Engage list into a target campaign."""
+    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    from outreach.core.suppression import mutate_suppression, SuppressionUnavailable
+    from outreach.models import OutreachLead, LeadExecutionState
+    from outreach.core.lead_importer import build_lead_identifiers
+
+    async def apply(current):
+        db = current
+        engage_list = await db.outreach_engage_lists.find_one({"id": list_id, **workspace_scope(workspace_id)})
+        if not engage_list:
+            raise HTTPException(status_code=404, detail="Engagement list not found")
+        campaign = await db.outreach_campaigns.find_one({
+            "id": req.campaign_id, **workspace_scope(workspace_id), "is_deleted": {"$ne": True},
+        })
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Target campaign not found")
+        if campaign.get("status") in {"warming_up", "active"} or campaign.get("launch_claim_token"):
+            raise HTTPException(status_code=409, detail="Pause the target campaign before pushing new leads into it")
+
+        contacts = await db.outreach_engage_contacts.find({
+            "list_id": list_id, **workspace_scope(workspace_id),
+        }).to_list(1000)
+        if not contacts:
+            raise HTTPException(status_code=400, detail="No contacts in this list to push")
+
+        if req.only_warmed_up:
+            now = datetime.now(timezone.utc)
+            engaged_posts = await db.outreach_engage_posts.find({
+                "list_id": list_id, **workspace_scope(workspace_id),
+                "status": {"$in": ["liked", "commented"]},
+            }).to_list(10000)
+            warmed_contact_ids = set()
+            for p in engaged_posts:
+                cid = p.get("contact_id")
+                if not cid:
+                    continue
+                times = [v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+                         for f in ("liked_at", "commented_at")
+                         if isinstance((v := p.get(f)), datetime)]
+                if times and max(times) >= now - timedelta(days=7):
+                    warmed_contact_ids.add(cid)
+            contacts = [c for c in contacts if c.get("id") in warmed_contact_ids]
+            if not contacts:
+                raise HTTPException(status_code=400, detail="No contacts have confirmed engagement in the past 7 days yet.")
+
+        pushed_count = 0
+        skipped_duplicates = 0
+        now = datetime.now(timezone.utc)
+        for c in contacts:
+            cleaned_url = normalize_linkedin_url(c.get("profile_url", ""))
+            if not cleaned_url:
+                continue
+            existing = await db.outreach_leads.find_one({
+                "campaign_id": req.campaign_id, **workspace_scope(workspace_id),
+                "linkedin_url": cleaned_url, "is_deleted": {"$ne": True},
+            })
+            if existing:
+                skipped_duplicates += 1
+                continue
+            verified = c.get("enrichment_status") == "verified"
+            full_name = (c.get("full_name") or "").strip() if verified else ""
+            parts = full_name.split(" ", 1) if full_name else ["", ""]
+            first_name = parts[0]
+            last_name = parts[1] if len(parts) > 1 else ""
+            ident = build_lead_identifiers(
+                raw_url=cleaned_url,
+                member_urn=c.get("profile_urn") if verified else None,
+                vanity_name=c.get("vanity_name"),
+            )
+            lead_doc = OutreachLead(
+                workspace_id=workspace_id,
+                campaign_id=req.campaign_id,
+                linkedin_url=cleaned_url,
+                linkedin_urn=(c.get("profile_urn") or None) if verified else None,
+                identifiers=ident,
+                first_name=first_name,
+                last_name=last_name,
+                company_name=(c.get("company") or "") if verified else "",
+                job_title=(c.get("job_title") or c.get("headline") or "") if verified else "",
+                source="engage_list",
+                source_metadata={"engage_list_id": list_id, "engage_contact_id": c.get("id")},
+                pipeline_stage="in_campaign",
+                execution_state=LeadExecutionState.QUEUED,
+                created_at=now,
+            ).model_dump()
+            await db.outreach_leads.insert_one(lead_doc)
+            pushed_count += 1
+
+        if pushed_count:
+            total_leads = await db.outreach_leads.count_documents({
+                "campaign_id": req.campaign_id, **workspace_scope(workspace_id), "is_deleted": {"$ne": True},
+            })
+            await db.outreach_campaigns.update_one(
+                {"id": req.campaign_id, **workspace_scope(workspace_id)},
+                {"$set": {"leads_count": total_leads, "updated_at": now}, "$inc": {"lead_admission_revision": 1}},
+            )
+        return {
+            "status": "success",
+            "pushed_count": pushed_count,
+            "skipped_duplicates": skipped_duplicates,
+            "campaign_id": req.campaign_id,
+        }
+
+    try:
+        return await mutate_suppression(db, workspace_id, apply)
+    except SuppressionUnavailable:
+        raise HTTPException(503, "Could not confirm lead push. Reload before retrying.") from None
 
 
 @router.delete("/lists/{list_id}/contacts/{contact_id}")
@@ -795,6 +1017,10 @@ async def get_engage_posts_feed(
     status_filter: str = "pending",
     skip: int = 0,
     limit: int = 50,
+    contact_id: str | None = None,
+    search: str | None = None,
+    sort_by: str = "recent_fetched",
+    fresh_only: bool = False,
     current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
@@ -804,12 +1030,32 @@ async def get_engage_posts_feed(
 
     if skip < 0 or limit < 1 or limit > 100:
         raise HTTPException(status_code=400, detail="Invalid post pagination")
+    if sort_by not in {"recent_fetched", "published_at", "reactions"}:
+        raise HTTPException(status_code=400, detail="Invalid sort_by option")
 
     query: dict[str, Any] = {"list_id": list_id, "workspace_id": workspace_id}
     if status_filter != "all":
         query["status"] = status_filter
+    if contact_id:
+        query["contact_id"] = contact_id
+    if search and search.strip():
+        escaped = re.escape(search.strip())
+        query["$or"] = [
+            {"author_name": {"$regex": escaped, "$options": "i"}},
+            {"content_text": {"$regex": escaped, "$options": "i"}},
+            {"author_headline": {"$regex": escaped, "$options": "i"}},
+        ]
+    if fresh_only:
+        cutoff_iso = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        query["published_at"] = {"$gte": cutoff_iso}
 
-    cursor = db.outreach_engage_posts.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit)
+    sort_field = {
+        "recent_fetched": "created_at",
+        "published_at": "published_at",
+        "reactions": "reactions_count",
+    }[sort_by]
+
+    cursor = db.outreach_engage_posts.find(query, {"_id": 0}).sort(sort_field, -1).skip(skip).limit(limit)
     posts = await cursor.to_list(limit)
     contact_ids = list({post.get("contact_id") for post in posts if post.get("contact_id")})
     if contact_ids:

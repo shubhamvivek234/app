@@ -93,43 +93,14 @@ def _warn_if_serverless_broker(url: str) -> None:
 default_exchange = Exchange("default", type="direct")
 
 CELERY_QUEUES = (
-    # SLA: immediate — dedicated worker pool
     Queue("high_priority", default_exchange, routing_key="high_priority"),
-    # SLA: < 30 seconds
     Queue("default", default_exchange, routing_key="default"),
-    # SLA: light publish work (text/image) with higher parallelism
-    Queue("publish_light", default_exchange, routing_key="publish_light"),
-    # SLA: heavy publish work (video / long-running uploads) isolated from light work
-    Queue("publish_video", default_exchange, routing_key="publish_video"),
-    # SLA: < 2 minutes — media workers only
-    Queue("media_processing", default_exchange, routing_key="media_processing"),
     # SLA: LinkedIn Outbound & Sequence Engine worker pool
     Queue("outreach", default_exchange, routing_key="outreach"),
-    # Manual / admin review
     Queue("dead_letter", default_exchange, routing_key="dead_letter"),
 )
 
 _TASK_MODULES = (
-    "celery_workers.tasks.publish",
-    "celery_workers.tasks.media",
-    "celery_workers.tasks.scheduler",
-    "celery_workers.tasks.cleanup",
-    "celery_workers.tasks.tokens",
-    "celery_workers.tasks.reconcile",
-    "celery_workers.tasks.poll_status",
-    "celery_workers.tasks.recurring",
-    "celery_workers.tasks.analytics",
-    "celery_workers.tasks.bulk_import",
-    "celery_workers.tasks.ai_caption",
-    "celery_workers.tasks.gdpr",
-    "celery_workers.tasks.subscription_check",
-    "celery_workers.tasks.api_version_monitor",
-    "celery_workers.tasks.container_status",
-    "celery_workers.tasks.grace_period_reminders",
-    "celery_workers.tasks.approval_reminders",
-    "celery_workers.tasks.rss_poller",
-    "celery_workers.tasks.notifications",
-    "celery_workers.tasks.auto_plug",
     "celery_workers.tasks.outreach",
     "celery_workers.tasks.engage",
     "celery_workers.tasks.mailbox",
@@ -138,14 +109,8 @@ _TASK_MODULES = (
 )
 
 _SCHEDULE_MODULES = (
-    "celery_workers.tasks.scheduler",
-    "celery_workers.tasks.recurring",
-    "celery_workers.tasks.analytics",
-    "celery_workers.tasks.poll_status",
-    "celery_workers.tasks.approval_reminders",
-    "celery_workers.tasks.rss_poller",
-    "celery_workers.tasks.auto_plug",
     "celery_workers.tasks.outreach",
+    "celery_workers.tasks.engage",
     "celery_workers.tasks.mailbox",
     "celery_workers.tasks.voice_preparation",
     "celery_workers.tasks.voice_studio",

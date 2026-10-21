@@ -302,6 +302,8 @@ class SequenceNodeType(str, Enum):
     OPEN_PROFILE_CHECK = "open_profile_check"
     HAS_DATA_IN_COLUMN = "has_data_in_column"
     IF_EMAIL_AVAILABLE = "if_email_available"
+    # CRM & Pipeline Actions
+    ADD_TAG = "add_tag"
 
 
 class SequenceNode(BaseModel):
@@ -548,6 +550,9 @@ class EngageList(BaseModel):
     pending_posts_count: int = 0
     campaign_id: str | None = None
     warmup_hours: int = 24
+    auto_fetch_enabled: bool = False
+    auto_fetch_account_id: str | None = None
+    last_auto_fetched_at: datetime | None = None
     fetch_status: str = "idle"
     fetch_error: str = ""
     enrichment_status: str = "idle"

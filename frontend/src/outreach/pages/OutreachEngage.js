@@ -20,6 +20,8 @@ import {
   Upload,
   Download,
   Clock3,
+  Search,
+  Pencil,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import './OutreachEngageReport.css';
@@ -66,6 +68,31 @@ export default function OutreachEngage() {
   const [contactUrlInput, setContactUrlInput] = useState('');
   const [contactUrlsList, setContactUrlsList] = useState([]);
   const [csvText, setCsvText] = useState('');
+  const [importCampaignId, setImportCampaignId] = useState('');
+  const [linkImportedCampaign, setLinkImportedCampaign] = useState(true);
+
+  // Edit List Modal
+  const [showEditListModal, setShowEditListModal] = useState(false);
+  const [editListName, setEditListName] = useState('');
+  const [editListEmoji, setEditListEmoji] = useState('🎯');
+  const [editListDesc, setEditListDesc] = useState('');
+
+  // Feed Search, Sort & Filter
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedContactFilter, setSelectedContactFilter] = useState('');
+  const [sortBy, setSortBy] = useState('recent_fetched');
+  const [hideOldPosts, setHideOldPosts] = useState(false);
+
+  // Contacts Tab Filter & Push to Campaign
+  const [contactWarmupFilter, setContactWarmupFilter] = useState('all');
+  const [pushTargetCampaignId, setPushTargetCampaignId] = useState('');
+  const [pushOnlyWarmedUp, setPushOnlyWarmedUp] = useState(true);
+  const [pushingToCampaign, setPushingToCampaign] = useState(false);
+
+  // Inline AI & Draft Review approval states
+  const [inlineAiLoading, setInlineAiLoading] = useState({});
+  const [draftAutoLikes, setDraftAutoLikes] = useState({});
+  const [approvingDraftId, setApprovingDraftId] = useState(null);
 
   // AI Comment Modal
   const [aiModalPost, setAiModalPost] = useState(null);
@@ -189,6 +216,11 @@ export default function OutreachEngage() {
     setActiveList(list);
     setActiveTab('posts');
     setSelectedPosts(new Set());
+    setSearchQuery('');
+    setSelectedContactFilter('');
+    setSortBy('recent_fetched');
+    setHideOldPosts(false);
+    setContactWarmupFilter('all');
     setStats(null);
     setDrafts([]);
     setDraftPendingCount(0);
@@ -364,6 +396,8 @@ export default function OutreachEngage() {
         body: JSON.stringify({
           profile_urls: contactUrlsList,
           csv_text: csvText || null,
+          source_campaign_id: importCampaignId || null,
+          link_warmup_campaign: Boolean(importCampaignId && linkImportedCampaign),
           sender_account_id: selectedAccountId,
         }),
       });
@@ -376,6 +410,7 @@ export default function OutreachEngage() {
         setContactUrlsList([]);
         setCsvText('');
         setContactUrlInput('');
+        setImportCampaignId('');
         fetchLists();
         // Refresh active list details
         await fetchListDetail(activeList.id);
@@ -591,8 +626,8 @@ export default function OutreachEngage() {
   };
 
   const toggleSelectAll = () => {
-    const selectable = posts.filter((post) => post.status === 'pending' && !post.action_queued_at);
-    if (selectedPosts.size === selectable.length) {
+    const selectable = visiblePosts.filter((post) => post.status === 'pending' && !post.action_queued_at);
+    if (selectedPosts.size === selectable.length && selectable.length > 0) {
       setSelectedPosts(new Set());
     } else {
       setSelectedPosts(new Set(selectable.map((p) => p.id)));
@@ -766,20 +801,217 @@ export default function OutreachEngage() {
     toast.success(campaignId ? 'Campaign warm-up linked' : 'Campaign unlinked');
   };
 
+  const handleToggleAutoFetch = async (enabled) => {
+    if (!activeList) return;
+    if (enabled && !selectedAccountId) {
+      toast.error('Select a LinkedIn sender first to enable daily auto-fetch');
+      return;
+    }
+    const res = await fetch(`/api/v1/outreach/engage/lists/${activeList.id}/settings`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: authHeaders(true),
+      body: JSON.stringify({
+        auto_fetch_enabled: enabled,
+        auto_fetch_account_id: enabled ? selectedAccountId : null,
+      }),
+    }).catch(() => null);
+    if (!res?.ok) {
+      toast.error(res ? await readError(res, 'Could not update auto-fetch setting') : 'Network error updating settings');
+      return;
+    }
+    await fetchListDetail(activeList.id);
+    toast.success(enabled ? 'Daily auto-fetch enabled' : 'Daily auto-fetch disabled');
+  };
+
+  const openEditListModal = () => {
+    if (!activeList) return;
+    setEditListName(activeList.name || '');
+    setEditListEmoji(activeList.emoji || '🎯');
+    setEditListDesc(activeList.description || '');
+    setShowEditListModal(true);
+  };
+
+  const handleUpdateListMetadata = async (e) => {
+    e.preventDefault();
+    if (!activeList || !editListName.trim()) return;
+    const res = await fetch(`/api/v1/outreach/engage/lists/${activeList.id}/settings`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: authHeaders(true),
+      body: JSON.stringify({
+        name: editListName.trim(),
+        emoji: editListEmoji,
+        description: editListDesc.trim(),
+      }),
+    }).catch(() => null);
+    if (!res?.ok) {
+      toast.error(res ? await readError(res, 'Could not update list details') : 'Network error updating list');
+      return;
+    }
+    setShowEditListModal(false);
+    await fetchListDetail(activeList.id);
+    fetchLists();
+    toast.success('List details updated');
+  };
+
+  const handleInlineAiComment = async (post, tone) => {
+    setInlineAiLoading((prev) => ({ ...prev, [post.id]: tone }));
+    try {
+      const res = await fetch('/api/v1/outreach/engage/ai-comment', {
+        method: 'POST',
+        credentials: 'include',
+        headers: authHeaders(true),
+        body: JSON.stringify({
+          post_text: post.content_text,
+          author_headline: post.author_headline,
+          tone,
+          custom_prompt: '',
+          writing_style_id: selectedStyleId || null,
+        }),
+      });
+      if (!res.ok) throw new Error(await readError(res, 'AI comment generation failed'));
+      const data = await res.json();
+      const firstComment = (data.comments || [])[0];
+      if (firstComment) {
+        setCommentDrafts((prev) => ({
+          ...prev,
+          [post.id]: {
+            ...(prev[post.id] || { autoLike: true }),
+            text: firstComment,
+          },
+        }));
+        toast.success(`Generated ${tone} comment!`);
+      }
+    } catch (error) {
+      toast.error(error.message || 'AI comment generation failed');
+    } finally {
+      setInlineAiLoading((prev) => {
+        const next = { ...prev };
+        delete next[post.id];
+        return next;
+      });
+    }
+  };
+
+  const handleApproveAndPostDraft = async (draft) => {
+    if (!selectedAccountId) {
+      toast.error('Select a LinkedIn sender first');
+      return;
+    }
+    const commentText = (draftEdits[draft.id] ?? draft.comment_text)?.trim();
+    if (!commentText) {
+      toast.error('Draft comment cannot be empty');
+      return;
+    }
+    const autoLike = draftAutoLikes[draft.id] ?? true;
+    setApprovingDraftId(draft.id);
+    setDraftBusy(true);
+    try {
+      const res = await fetch(`/api/v1/outreach/engage/posts/${draft.post_id}/comment`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: authHeaders(true),
+        body: JSON.stringify({
+          comment_text: commentText,
+          auto_like: autoLike,
+          sender_account_id: selectedAccountId,
+        }),
+      });
+      if (!res.ok) throw new Error(await readError(res, 'Could not queue LinkedIn comment'));
+      await waitForPostAction(draft.post_id, 'commented');
+      const patchRes = await fetch(`/api/v1/outreach/engage/lists/${activeList.id}/drafts/${draft.id}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: authHeaders(true),
+        body: JSON.stringify({ comment_text: commentText, status: 'completed' }),
+      });
+      if (!patchRes.ok) throw new Error(await readError(patchRes, 'Comment posted, but draft status could not be updated'));
+      await fetchDrafts(activeList.id);
+      await fetchListDetail(activeList.id);
+      fetchPosts(activeList.id, statusFilter);
+      fetchStats(activeList.id);
+      fetchLists();
+      toast.success('Approved & posted comment to LinkedIn!');
+    } catch (error) {
+      toast.error(error.message || 'Failed to approve and post draft');
+    } finally {
+      setApprovingDraftId(null);
+      setDraftBusy(false);
+    }
+  };
+
+  const handlePushContactsToCampaign = async () => {
+    if (!activeList || !pushTargetCampaignId) {
+      toast.error('Select a target campaign first');
+      return;
+    }
+    setPushingToCampaign(true);
+    try {
+      const res = await fetch(`/api/v1/outreach/engage/lists/${activeList.id}/push-to-campaign`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: authHeaders(true),
+        body: JSON.stringify({
+          campaign_id: pushTargetCampaignId,
+          only_warmed_up: pushOnlyWarmedUp,
+        }),
+      });
+      if (!res.ok) throw new Error(await readError(res, 'Could not push contacts to campaign'));
+      const data = await res.json();
+      toast.success(`Pushed ${data.pushed_count} lead${data.pushed_count !== 1 ? 's' : ''} to campaign (${data.skipped_count} already in campaign)`);
+    } catch (error) {
+      toast.error(error.message || 'Failed to push contacts to campaign');
+    } finally {
+      setPushingToCampaign(false);
+    }
+  };
+
+  const visiblePosts = posts
+    .filter((post) => {
+      if (selectedContactFilter && post.contact_id !== selectedContactFilter) return false;
+      if (hideOldPosts && postAge(post.published_at).old) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        const matchAuthor = (post.author_name || '').toLowerCase().includes(q);
+        const matchHeadline = (post.author_headline || '').toLowerCase().includes(q);
+        const matchText = (post.content_text || '').toLowerCase().includes(q);
+        if (!matchAuthor && !matchHeadline && !matchText) return false;
+      }
+      return true;
+    })
+    .slice()
+    .sort((a, b) => {
+      if (sortBy === 'reactions') return (b.reactions_count || 0) - (a.reactions_count || 0);
+      if (sortBy === 'published_at') {
+        const da = a.published_at ? new Date(a.published_at).getTime() : 0;
+        const db = b.published_at ? new Date(b.published_at).getTime() : 0;
+        return (Number.isNaN(db) ? 0 : db) - (Number.isNaN(da) ? 0 : da);
+      }
+      return 0;
+    });
+
+  const allContacts = activeList?.contacts || [];
+  const warmedUpContactsCount = activeList?.warmed_up_contacts_count ?? allContacts.filter((c) => c.warmup_status === 'warmed_up').length;
+  const visibleContacts = allContacts.filter((c) => {
+    if (contactWarmupFilter === 'all') return true;
+    return (c.warmup_status || 'no_recent_posts') === contactWarmupFilter;
+  });
+
   shortcutActions.current = { like: handleLikePost, discard: handleDiscardPost };
 
   useEffect(() => {
-    if (!activeList || activeTab !== 'posts' || aiModalPost || showAddContactsModal || showCreateModal) return undefined;
+    if (!activeList || activeTab !== 'posts' || aiModalPost || showAddContactsModal || showCreateModal || showEditListModal) return undefined;
     const onKeyDown = (event) => {
       if (event.altKey || event.ctrlKey || event.metaKey ||
         ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
-        const next = Math.max(0, Math.min(posts.length - 1, activePostIndex + (event.key === 'ArrowDown' ? 1 : -1)));
+        const next = Math.max(0, Math.min(visiblePosts.length - 1, activePostIndex + (event.key === 'ArrowDown' ? 1 : -1)));
         setActivePostIndex(next);
         document.querySelectorAll('[data-engage-post]')[next]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
       }
-      const post = posts[activePostIndex];
+      const post = visiblePosts[activePostIndex];
       if (!post) return;
       if (event.key.toLowerCase() === 'l' && post.status === 'pending') shortcutActions.current.like(post.id);
       if (event.key.toLowerCase() === 'd' && post.status === 'pending') shortcutActions.current.discard(post.id);
@@ -787,7 +1019,7 @@ export default function OutreachEngage() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeList, activeTab, aiModalPost, showAddContactsModal, showCreateModal, posts, activePostIndex, selectedAccountId]);
+  }, [activeList, activeTab, aiModalPost, showAddContactsModal, showCreateModal, showEditListModal, visiblePosts, activePostIndex, selectedAccountId]);
 
   return (
     <div className="flex-1 h-full overflow-y-auto bg-neutral-50/50 p-6 md:p-8">
@@ -926,8 +1158,19 @@ export default function OutreachEngage() {
               <div className="flex items-center gap-3">
                 <span className="text-2xl">{activeList.emoji || '🎯'}</span>
                 <div>
-                  <h1 className="text-xl font-bold text-gray-900 tracking-tight">{activeList.name}</h1>
-                  <p className="text-xs text-gray-500">Engage with your target prospect list</p>
+                  <div className="flex items-center gap-2">
+                    <h1 className="text-xl font-bold text-gray-900 tracking-tight">{activeList.name}</h1>
+                    <button
+                      type="button"
+                      onClick={openEditListModal}
+                      aria-label="Edit List"
+                      title="Edit List"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-gray-200 bg-white text-[11px] font-semibold text-gray-600 hover:text-indigo-600 hover:border-indigo-200 transition-colors"
+                    >
+                      <Pencil className="w-3 h-3" /> Edit
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-500">{activeList.description || 'Engage with your target prospect list'}</p>
                 </div>
               </div>
             </div>
@@ -1004,6 +1247,15 @@ export default function OutreachEngage() {
                 </select>
               </label>
             )}
+            <label className="flex items-center gap-1.5 text-gray-600 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={Boolean(activeList.auto_fetch_enabled)}
+                onChange={(event) => handleToggleAutoFetch(event.target.checked)}
+                className="w-3.5 h-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              <span>Daily auto-fetch</span>
+            </label>
             <button onClick={handleExport} className="ml-auto inline-flex items-center gap-1 text-indigo-600 font-semibold hover:text-indigo-800">
               <Download className="w-3.5 h-3.5" /> Export CSV
             </button>
@@ -1043,8 +1295,8 @@ export default function OutreachEngage() {
                 </div>
               )}
               {/* Filter controls */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   {['pending', 'liked', 'commented', 'discarded', 'all'].map((st) => (
                     <button
                       key={st}
@@ -1060,17 +1312,76 @@ export default function OutreachEngage() {
                   ))}
                 </div>
                 <span className="text-xs text-gray-400">
-                  {totalPosts} {statusFilter} post{totalPosts !== 1 ? 's' : ''} · Shortcuts: ↑/↓ navigate, L like, D dismiss, C comment
+                  {visiblePosts.length} of {totalPosts} {statusFilter} post{totalPosts !== 1 ? 's' : ''} · Shortcuts: ↑/↓ navigate, L like, D dismiss, C comment
                 </span>
               </div>
 
+              {/* Search, Sort & Author Filter Bar */}
+              <div className="bg-white border border-gray-200 rounded-xl p-2.5 flex flex-wrap items-center gap-2.5 text-xs">
+                <div className="relative flex-1 min-w-[200px]">
+                  <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="search"
+                    aria-label="Search posts"
+                    placeholder="Search posts by author, headline, or keyword…"
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-gray-200 text-gray-800 focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <select
+                  aria-label="Filter by contact"
+                  value={selectedContactFilter}
+                  onChange={(event) => setSelectedContactFilter(event.target.value)}
+                  className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-gray-800"
+                >
+                  <option value="">All contacts</option>
+                  {(activeList.contacts || []).map((c) => (
+                    <option key={c.id} value={c.id}>{c.full_name || c.profile_url}</option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Sort posts"
+                  value={sortBy}
+                  onChange={(event) => setSortBy(event.target.value)}
+                  className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-gray-800"
+                >
+                  <option value="recent_fetched">Sort: Recently Fetched</option>
+                  <option value="published_at">Sort: Newest on LinkedIn</option>
+                  <option value="reactions">Sort: Most Reactions</option>
+                </select>
+                <label className="flex items-center gap-1.5 text-gray-600 cursor-pointer select-none px-1">
+                  <input
+                    type="checkbox"
+                    checked={hideOldPosts}
+                    onChange={(event) => setHideOldPosts(event.target.checked)}
+                    className="w-3.5 h-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span>Fresh only (&lt;7d)</span>
+                </label>
+                {(searchQuery || selectedContactFilter || hideOldPosts || sortBy !== 'recent_fetched') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery('');
+                      setSelectedContactFilter('');
+                      setSortBy('recent_fetched');
+                      setHideOldPosts(false);
+                    }}
+                    className="text-indigo-600 font-semibold hover:text-indigo-800 px-1.5"
+                  >
+                    Reset filters
+                  </button>
+                )}
+              </div>
+
               {/* Bulk Action Bar */}
-              {posts.length > 0 && statusFilter === 'pending' && (
+              {visiblePosts.length > 0 && statusFilter === 'pending' && (
                 <div className="flex items-center justify-between bg-white border border-gray-200 rounded-xl px-4 py-2">
                   <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-600">
                     <input
                       type="checkbox"
-                      checked={selectedPosts.size === posts.filter((post) => post.status === 'pending' && !post.action_queued_at).length && selectedPosts.size > 0}
+                      checked={selectedPosts.size === visiblePosts.filter((post) => post.status === 'pending' && !post.action_queued_at).length && selectedPosts.size > 0}
                       onChange={toggleSelectAll}
                       className="w-3.5 h-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                     />
@@ -1104,14 +1415,14 @@ export default function OutreachEngage() {
                   <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
                   <p className="text-xs">Fetching and formatting prospect updates…</p>
                 </div>
-              ) : posts.length === 0 ? (
+              ) : visiblePosts.length === 0 ? (
                 <div className="bg-white border border-gray-200 rounded-3xl p-12 text-center max-w-lg mx-auto space-y-3">
                   <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto text-xl">
                     🎉
                   </div>
                   <h3 className="text-sm font-bold text-gray-900">All Caught Up!</h3>
                   <p className="text-xs text-gray-500 max-w-sm mx-auto">
-                    No {statusFilter} posts found in this list. Click "Fetch Latest Posts" or add more contacts to populate fresh feed updates.
+                    No {statusFilter} posts found matching your current filters. Click "Fetch Latest Posts" or adjust filters to see more updates.
                   </p>
                   <button
                     onClick={handleFetchLatestPosts}
@@ -1122,15 +1433,15 @@ export default function OutreachEngage() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-                  {posts.map((post) => {
+                  {visiblePosts.map((post) => {
                     const draft = commentDrafts[post.id] || { text: '', autoLike: true };
                     const age = postAge(post.published_at);
                     return (
                       <div
                         key={post.id}
                         data-engage-post={post.id}
-                        onClick={() => setActivePostIndex(posts.findIndex((item) => item.id === post.id))}
-                        className={`bg-white rounded-2xl border shadow-xs hover:shadow-md transition-shadow p-5 flex flex-col justify-between space-y-4 ${posts[activePostIndex]?.id === post.id ? 'border-indigo-300' : 'border-gray-200'}`}
+                        onClick={() => setActivePostIndex(visiblePosts.findIndex((item) => item.id === post.id))}
+                        className={`bg-white rounded-2xl border shadow-xs hover:shadow-md transition-shadow p-5 flex flex-col justify-between space-y-4 ${visiblePosts[activePostIndex]?.id === post.id ? 'border-indigo-300' : 'border-gray-200'}`}
                       >
                         {/* Author Header */}
                         <div className="flex items-start justify-between gap-3">
@@ -1157,9 +1468,19 @@ export default function OutreachEngage() {
                             </div>
                             <div className="min-w-0">
                               <div className="flex items-center gap-1.5">
-                                <h4 className="text-xs font-bold text-gray-900 truncate">
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    if (post.contact_id) {
+                                      setSelectedContactFilter((current) => current === post.contact_id ? '' : post.contact_id);
+                                    }
+                                  }}
+                                  title={post.contact_id ? 'Filter feed by this contact' : undefined}
+                                  className="text-xs font-bold text-gray-900 hover:text-indigo-600 truncate text-left"
+                                >
                                   {post.author_name || 'LinkedIn Member'}
-                                </h4>
+                                </button>
                                 <span className="w-4 h-4 bg-[#0A66C2] text-white rounded text-[9px] font-bold flex items-center justify-center shrink-0">
                                   in
                                 </span>
@@ -1257,6 +1578,26 @@ export default function OutreachEngage() {
 
                         {/* In-Line Comment Composer */}
                         <div className="space-y-2.5">
+                          <div className="flex items-center justify-between gap-1.5 flex-wrap">
+                            <span className="text-[11px] font-semibold text-gray-500">Quick AI tone:</span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {[
+                                { id: 'insightful', label: '💡 Insightful' },
+                                { id: 'questioning', label: '❓ Questioning' },
+                                { id: 'supportive', label: '🤝 Supportive' },
+                              ].map((pill) => (
+                                <button
+                                  key={pill.id}
+                                  type="button"
+                                  disabled={Boolean(inlineAiLoading[post.id]) || !['pending', 'liked'].includes(post.status)}
+                                  onClick={() => handleInlineAiComment(post, pill.id)}
+                                  className="px-2 py-0.5 rounded-lg border border-indigo-100 bg-indigo-50/70 hover:bg-indigo-100 text-indigo-700 text-[11px] font-medium transition-colors disabled:opacity-50"
+                                >
+                                  {inlineAiLoading[post.id] === pill.id ? 'Generating…' : pill.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
                           <div className="relative">
                             <textarea
                               rows={3}
@@ -1337,11 +1678,11 @@ export default function OutreachEngage() {
             </div>
           )}
 
-          {/* Manual draft queue: no LinkedIn write occurs here. */}
+          {/* Draft & Review queue */}
           {activeTab === 'drafts' && (
             <div className="space-y-4">
               <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-xs text-indigo-900">
-                Review and edit suggestions here, then copy and publish them yourself on LinkedIn. Marking a draft done is self-reported and never counts as confirmed engagement or unlocks campaign warm-up.
+                Review and edit suggestions here. Click <strong>Approve &amp; Post Comment</strong> to publish via your connected LinkedIn sender (counts toward verified engagement &amp; warm-up), or copy and publish manually on LinkedIn. Marking a draft done manually is self-reported and never counts as confirmed engagement or unlocks campaign warm-up.
               </div>
               {drafts.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-gray-300 bg-white p-10 text-center text-sm text-gray-500">
@@ -1357,20 +1698,39 @@ export default function OutreachEngage() {
                   <textarea id={`draft-${draft.id}`} rows={3} value={draftEdits[draft.id] ?? draft.comment_text}
                     onChange={(event) => setDraftEdits((previous) => ({ ...previous, [draft.id]: event.target.value }))}
                     className="w-full rounded-xl border border-gray-200 p-3 text-xs text-gray-800" />
-                  <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <button disabled={draftBusy || !draftEdits[draft.id]?.trim()} onClick={() => updateReviewDraft(draft.id, { comment_text: draftEdits[draft.id] })}
-                      className="rounded-lg border border-indigo-200 px-3 py-1.5 font-semibold text-indigo-700 disabled:opacity-50">Save edit</button>
-                    <button disabled={draftBusy || !draftEdits[draft.id]?.trim()} onClick={async () => {
-                      try { await navigator.clipboard.writeText(draftEdits[draft.id]); toast.success('Copied. Publish it yourself on LinkedIn.'); }
-                      catch (_) { toast.error('Could not copy draft. Select and copy the text manually.'); }
-                    }} className="rounded-lg border border-gray-200 px-3 py-1.5 font-semibold text-gray-700 disabled:opacity-50">Copy text</button>
-                    {draft.post_url?.startsWith('https://www.linkedin.com/') && (
-                      <a href={draft.post_url} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-gray-200 px-3 py-1.5 font-semibold text-gray-700">Open on LinkedIn ↗</a>
-                    )}
-                    <button disabled={draftBusy} onClick={() => updateReviewDraft(draft.id, { comment_text: draftEdits[draft.id], status: 'completed' })}
-                      className="rounded-lg bg-indigo-600 px-3 py-1.5 font-semibold text-white disabled:opacity-50">Mark done manually</button>
-                    <button disabled={draftBusy} onClick={() => updateReviewDraft(draft.id, { status: 'dismissed' })}
-                      className="rounded-lg px-3 py-1.5 font-semibold text-gray-500 disabled:opacity-50">Dismiss</button>
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <label className="flex items-center gap-1.5 text-gray-600 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={draftAutoLikes[draft.id] ?? true}
+                        onChange={(event) => setDraftAutoLikes((prev) => ({ ...prev, [draft.id]: event.target.checked }))}
+                        className="w-3.5 h-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span>Auto-like post on comment</span>
+                    </label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        disabled={draftBusy || !(draftEdits[draft.id] ?? draft.comment_text)?.trim() || !selectedAccountId}
+                        onClick={() => handleApproveAndPostDraft(draft)}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 px-3 py-1.5 font-semibold text-white disabled:opacity-50"
+                      >
+                        {approvingDraftId === draft.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                        Approve &amp; Post Comment
+                      </button>
+                      <button disabled={draftBusy || !draftEdits[draft.id]?.trim()} onClick={() => updateReviewDraft(draft.id, { comment_text: draftEdits[draft.id] })}
+                        className="rounded-lg border border-indigo-200 px-3 py-1.5 font-semibold text-indigo-700 disabled:opacity-50">Save edit</button>
+                      <button disabled={draftBusy || !draftEdits[draft.id]?.trim()} onClick={async () => {
+                        try { await navigator.clipboard.writeText(draftEdits[draft.id]); toast.success('Copied. Publish it yourself on LinkedIn.'); }
+                        catch (_) { toast.error('Could not copy draft. Select and copy the text manually.'); }
+                      }} className="rounded-lg border border-gray-200 px-3 py-1.5 font-semibold text-gray-700 disabled:opacity-50">Copy text</button>
+                      {draft.post_url?.startsWith('https://www.linkedin.com/') && (
+                        <a href={draft.post_url} target="_blank" rel="noopener noreferrer" className="rounded-lg border border-gray-200 px-3 py-1.5 font-semibold text-gray-700">Open on LinkedIn ↗</a>
+                      )}
+                      <button disabled={draftBusy} onClick={() => updateReviewDraft(draft.id, { comment_text: draftEdits[draft.id], status: 'completed' })}
+                        className="rounded-lg bg-indigo-600 px-3 py-1.5 font-semibold text-white disabled:opacity-50">Mark done manually</button>
+                      <button disabled={draftBusy} onClick={() => updateReviewDraft(draft.id, { status: 'dismissed' })}
+                        className="rounded-lg px-3 py-1.5 font-semibold text-gray-500 disabled:opacity-50">Dismiss</button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -1380,49 +1740,161 @@ export default function OutreachEngage() {
           {/* Contacts Tab */}
           {activeTab === 'contacts' && (
             <div className="bg-white rounded-2xl border border-gray-200 shadow-xs overflow-hidden">
-              <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-bold text-gray-900">List Contacts</h3>
-                  <p className="text-xs text-gray-500">Profiles monitored for recent LinkedIn activity</p>
+              <div className="p-4 border-b border-gray-100 space-y-3">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900">List Contacts</h3>
+                    <p className="text-xs text-gray-500">Profiles monitored for recent LinkedIn activity &amp; warm-up readiness</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {campaigns.length > 0 && allContacts.length > 0 && (
+                      <div className="flex items-center gap-1.5 bg-neutral-50 border border-gray-200 rounded-xl px-2.5 py-1 text-xs">
+                        <select
+                          aria-label="Target campaign for push"
+                          value={pushTargetCampaignId}
+                          onChange={(event) => setPushTargetCampaignId(event.target.value)}
+                          className="bg-transparent text-gray-800 font-medium focus:outline-none"
+                        >
+                          <option value="">Select campaign…</option>
+                          {campaigns.map((camp) => (
+                            <option key={camp.id} value={camp.id}>{camp.name}</option>
+                          ))}
+                        </select>
+                        <label className="flex items-center gap-1 text-[11px] text-gray-600 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={pushOnlyWarmedUp}
+                            onChange={(event) => setPushOnlyWarmedUp(event.target.checked)}
+                            className="w-3 h-3 rounded border-gray-300 text-indigo-600"
+                          />
+                          <span>Warmed up only</span>
+                        </label>
+                        <button
+                          type="button"
+                          disabled={!pushTargetCampaignId || pushingToCampaign}
+                          onClick={handlePushContactsToCampaign}
+                          className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          {pushingToCampaign ? 'Pushing…' : 'Push to Campaign'}
+                        </button>
+                      </div>
+                    )}
+                    <button
+                      onClick={() => setShowAddContactsModal(true)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 shadow-sm"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Add Profile URL
+                    </button>
+                  </div>
                 </div>
-                <button
-                  onClick={() => setShowAddContactsModal(true)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 shadow-sm"
-                >
-                  <Plus className="w-3.5 h-3.5" /> Add Profile URL
-                </button>
+
+                {/* Warm-Up Readiness Progress Bar & Filters */}
+                {allContacts.length > 0 && (
+                  <div className="bg-neutral-50 border border-gray-200/80 rounded-xl p-3 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-gray-700">
+                        {warmedUpContactsCount} / {allContacts.length} leads warmed up for campaign launch (past 7 days)
+                      </span>
+                      <span className="font-bold text-indigo-600">
+                        {Math.round((warmedUpContactsCount / allContacts.length) * 100)}%
+                      </span>
+                    </div>
+                    <div className="w-full h-2 rounded-full bg-gray-200 overflow-hidden">
+                      <div
+                        className="h-full bg-emerald-500 transition-all"
+                        style={{ width: `${Math.min(100, Math.round((warmedUpContactsCount / allContacts.length) * 100))}%` }}
+                      />
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                      {[
+                        { id: 'all', label: `All (${allContacts.length})` },
+                        { id: 'needs_engagement', label: `Needs Engagement (${allContacts.filter((c) => c.warmup_status === 'needs_engagement').length})` },
+                        { id: 'warmed_up', label: `Warmed Up (${warmedUpContactsCount})` },
+                        { id: 'no_recent_posts', label: `No Recent Posts (${allContacts.filter((c) => (c.warmup_status || 'no_recent_posts') === 'no_recent_posts').length})` },
+                      ].map((tab) => (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => setContactWarmupFilter(tab.id)}
+                          className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold transition-colors ${
+                            contactWarmupFilter === tab.id
+                              ? 'bg-indigo-600 text-white'
+                              : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-100'
+                          }`}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {!activeList.contacts || activeList.contacts.length === 0 ? (
+              {allContacts.length === 0 ? (
                 <div className="p-12 text-center text-gray-400 space-y-2">
                   <Users className="w-8 h-8 mx-auto text-gray-300" />
                   <p className="text-xs">No contacts in this list yet.</p>
                 </div>
+              ) : visibleContacts.length === 0 ? (
+                <div className="p-8 text-center text-xs text-gray-500">
+                  No contacts match the selected warm-up filter.
+                </div>
               ) : (
                 <div className="divide-y divide-gray-100">
-                  {activeList.contacts.map((c) => (
-                    <div key={c.id} className="p-4 flex items-center justify-between hover:bg-neutral-50/50 transition-colors">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-xs">
-                          {c.avatar_url ? <img src={c.avatar_url} alt="" className="w-full h-full rounded-full object-cover" /> : c.full_name?.charAt(0) || 'L'}
+                  {visibleContacts.map((c) => {
+                    const warmupStatus = c.warmup_status || 'no_recent_posts';
+                    const lastEngagedAge = c.last_engaged_at ? postAge(c.last_engaged_at).label : null;
+                    return (
+                      <div key={c.id} className="p-4 flex items-center justify-between hover:bg-neutral-50/50 transition-colors">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-full bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-xs">
+                            {c.avatar_url ? <img src={c.avatar_url} alt="" className="w-full h-full rounded-full object-cover" /> : c.full_name?.charAt(0) || 'L'}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h4 className="text-xs font-bold text-gray-900">{c.full_name || 'Unverified LinkedIn profile'}</h4>
+                              {warmupStatus === 'warmed_up' && (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                  Warmed up ✓{lastEngagedAge ? ` (${lastEngagedAge})` : ''}
+                                </span>
+                              )}
+                              {warmupStatus === 'needs_engagement' && (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">
+                                  Needs Engagement
+                                </span>
+                              )}
+                              {warmupStatus === 'no_recent_posts' && (
+                                <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                                  No recent posts
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-gray-500">{c.headline || (c.enrichment_status === 'pending' ? 'Verification pending' : c.profile_url)}</p>
+                          </div>
                         </div>
-                        <div>
-                          <h4 className="text-xs font-bold text-gray-900">{c.full_name || 'Unverified LinkedIn profile'}</h4>
-                          <p className="text-[11px] text-gray-500">{c.headline || (c.enrichment_status === 'pending' ? 'Verification pending' : c.profile_url)}</p>
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedContactFilter(c.id);
+                              setActiveTab('posts');
+                            }}
+                            className="text-xs text-gray-600 font-semibold hover:text-indigo-600"
+                          >
+                            Filter Feed
+                          </button>
+                          <button onClick={() => openContactHistory(c)} className="text-xs text-indigo-600 font-semibold hover:text-indigo-800">History</button>
+                          <a href={c.profile_url} target="_blank" rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+                            Profile <ExternalLink className="w-3 h-3" />
+                          </a>
+                          <button onClick={() => handleDeleteContact(c)} title="Remove contact" className="text-gray-400 hover:text-red-600">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <button onClick={() => openContactHistory(c)} className="text-xs text-indigo-600 font-semibold hover:text-indigo-800">History</button>
-                        <a href={c.profile_url} target="_blank" rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium">
-                          Profile <ExternalLink className="w-3 h-3" />
-                        </a>
-                        <button onClick={() => handleDeleteContact(c)} title="Remove contact" className="text-gray-400 hover:text-red-600">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -1572,6 +2044,36 @@ export default function OutreachEngage() {
                 />
               </div>
 
+              {campaigns.length > 0 && (
+                <div className="bg-indigo-50/50 border border-indigo-100 rounded-xl p-3 space-y-2">
+                  <label className="block text-xs font-semibold text-gray-800" htmlFor="import-campaign-select">
+                    Or Import Contacts from Campaign
+                  </label>
+                  <select
+                    id="import-campaign-select"
+                    value={importCampaignId}
+                    onChange={(event) => setImportCampaignId(event.target.value)}
+                    className="w-full text-xs p-2 border border-gray-200 rounded-lg bg-white text-gray-800"
+                  >
+                    <option value="">Don&apos;t import from a campaign</option>
+                    {campaigns.map((camp) => (
+                      <option key={camp.id} value={camp.id}>{camp.name}</option>
+                    ))}
+                  </select>
+                  {importCampaignId && (
+                    <label className="flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={linkImportedCampaign}
+                        onChange={(event) => setLinkImportedCampaign(event.target.checked)}
+                        className="w-3.5 h-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span>Also link this campaign for warm-up (if in draft)</span>
+                    </label>
+                  )}
+                </div>
+              )}
+
               <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
                 <button
                   type="button"
@@ -1588,6 +2090,79 @@ export default function OutreachEngage() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Edit List Metadata ────────────────────────────────────── */}
+      {showEditListModal && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl border border-gray-200 max-w-md w-full p-6 shadow-xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+              <h3 className="text-base font-bold text-gray-900">Edit Engagement List</h3>
+              <button onClick={() => setShowEditListModal(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateListMetadata} className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-gray-700" htmlFor="edit-list-name">List Name</label>
+                <input
+                  id="edit-list-name"
+                  type="text"
+                  value={editListName}
+                  onChange={(e) => setEditListName(e.target.value)}
+                  className="mt-1 w-full text-xs p-2.5 border border-gray-200 rounded-xl focus:border-indigo-500 focus:outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-700">Emoji Icon</label>
+                <div className="flex gap-2 mt-1">
+                  {['🎯', '💼', '🚀', '⭐', '🔥', '💡', '👑', '🤝'].map((em) => (
+                    <button
+                      type="button"
+                      key={em}
+                      onClick={() => setEditListEmoji(em)}
+                      className={`w-9 h-9 rounded-xl border text-base flex items-center justify-center transition-all ${
+                        editListEmoji === em ? 'border-indigo-600 bg-indigo-50 scale-105' : 'border-gray-200 hover:bg-neutral-50'
+                      }`}
+                    >
+                      {em}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-700" htmlFor="edit-list-desc">Description (Optional)</label>
+                <input
+                  id="edit-list-desc"
+                  type="text"
+                  value={editListDesc}
+                  onChange={(e) => setEditListDesc(e.target.value)}
+                  className="mt-1 w-full text-xs p-2.5 border border-gray-200 rounded-xl focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEditListModal(false)}
+                  className="px-4 py-2 rounded-xl border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-neutral-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 shadow-sm"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
