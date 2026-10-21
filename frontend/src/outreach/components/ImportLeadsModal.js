@@ -128,6 +128,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
       if (isScopeCurrent() && !controller.signal.aborted) setSourceCapabilityError('Search availability could not be confirmed. CSV and public profile imports remain available.');
     });
     return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, campaignId]);
   const [importResult, setImportResult] = useState(null);
   useEffect(() => {
@@ -170,6 +171,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
       }
     }).catch((failure) => { if (current && isScopeCurrent()) setError(failure.message); });
     return () => { current = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, campaignId]);
 
   useEffect(() => {
@@ -200,6 +202,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
       }
     };
     fetchAccounts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, campaignId]);
 
   const activeJobId = activeJob?.id;
@@ -246,6 +249,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
       current = false;
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, activeJobId, activeJobStatus, campaignId]);
 
   if (!isOpen) return null;
