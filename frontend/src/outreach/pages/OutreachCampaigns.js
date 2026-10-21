@@ -1227,7 +1227,7 @@ export default function OutreachCampaigns({
   });
 
   return (
-    <div className="max-w-6xl mx-auto px-6 py-8 space-y-4">
+    <div className="max-w-6xl mx-auto px-6 pt-8 pb-48 space-y-4">
       {/* Top Header matching media_1790104399010.png */}
       <div className="flex items-center justify-between">
         <div>
@@ -1344,19 +1344,34 @@ export default function OutreachCampaigns({
               : op.phase === 'restore_pending' ? 'Campaign restoration needs confirmation. It stays stopped until complete.'
                 : 'Campaign deletion needs confirmation. Finish cleanup using the same request.'}
           </span>
-          <button
-            disabled={deletionBusy[deletionKey(op)]}
-            onClick={() => runCampaignDeletion(op, op.phase !== 'deletion_pending')}
-            className="rounded-lg bg-[#5145cd] hover:bg-[#4338ca] text-white px-3 py-1 font-semibold text-xs transition-colors disabled:opacity-50"
-          >
-            {deletionBusy[deletionKey(op)] ? 'Checking…' : op.phase === 'deleted' ? 'Undo'
-              : op.phase === 'restore_pending' ? 'Finish restoration' : 'Finish deletion'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              disabled={deletionBusy[deletionKey(op)]}
+              onClick={() => runCampaignDeletion(op, op.phase !== 'deletion_pending')}
+              className="rounded-lg bg-[#5145cd] hover:bg-[#4338ca] text-white px-3 py-1 font-semibold text-xs transition-colors disabled:opacity-50"
+            >
+              {deletionBusy[deletionKey(op)] ? 'Checking…' : op.phase === 'deleted' ? 'Undo'
+                : op.phase === 'restore_pending' ? 'Finish restoration' : 'Finish deletion'}
+            </button>
+            {op.phase === 'deleted' && (
+              <button
+                type="button"
+                disabled={deletionBusy[deletionKey(op)]}
+                onClick={() => saveDeletionReference(op, true)}
+                aria-label="Dismiss deleted campaign notice"
+                title="Dismiss"
+                className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white hover:bg-gray-100 text-gray-600 hover:text-gray-900 px-2.5 py-1 font-semibold text-xs transition-colors disabled:opacity-50"
+              >
+                <X className="h-3.5 w-3.5" />
+                <span>Dismiss</span>
+              </button>
+            )}
+          </div>
         </div>
       ))}
 
       {/* Campaigns Table matching media_1790104399010.png */}
-      <div className="rounded-2xl border border-gray-200 bg-white shadow-2xs overflow-hidden">
+      <div className="rounded-2xl border border-gray-200 bg-white shadow-2xs overflow-visible">
         {loading ? (
           <div className="flex items-center justify-center py-20 text-gray-400">
             <RefreshCw className="h-6 w-6 animate-spin" />
@@ -1379,18 +1394,18 @@ export default function OutreachCampaigns({
             </button>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-visible">
             <table className="w-full text-left text-xs">
               <thead className="border-b border-gray-100 bg-gray-50/50 text-gray-400 uppercase font-semibold text-[10px] tracking-wider">
                 <tr>
-                  <th className="py-3 px-5">STATUS</th>
+                  <th className="py-3 px-5 rounded-tl-2xl">STATUS</th>
                   <th className="py-3 px-5">NAME</th>
                   <th className="py-3 px-5">LEADS DONE</th>
                   <th className="py-3 px-5">ACCEPTANCE</th>
                   <th className="py-3 px-5">REPLY</th>
                   <th className="py-3 px-5">SENDERS</th>
                   <th className="py-3 px-5">LAST ACTION</th>
-                  <th className="py-3 px-5 text-right"></th>
+                  <th className="py-3 px-5 text-right rounded-tr-2xl"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">

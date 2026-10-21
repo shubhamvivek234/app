@@ -81,4 +81,13 @@ describe('Campaign deletion recovery', () => {
     expect(sessionStorage.getItem(KEY)).toBe('{}');
     expect(container.textContent).not.toContain('deletion needs confirmation');
   });
+
+  it('allows dismissing a completed deletion notice and removes its reference from sessionStorage', async () => {
+    global.fetch = jest.fn(() => Promise.resolve(response([])));
+    await mount({ ...OP, phase: 'deleted' });
+    expect(container.textContent).toContain('Undo restores it paused');
+    await click('Dismiss');
+    expect(sessionStorage.getItem(KEY)).toBe('{}');
+    expect(container.textContent).not.toContain('Undo restores it paused');
+  });
 });
