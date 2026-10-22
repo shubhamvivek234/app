@@ -178,9 +178,14 @@ test('FAQ link is removed from headers, added to footers, and /faq page renders 
 test('data deletion link is removed from all footers, legal policies are updated, and contact page dispatches to contact@unravler.com', () => {
   for (const page of pages) {
     const html = read(page);
+    const headerMatch = html.match(/<header\b[\s\S]*?<\/header>/i);
+    if (headerMatch) {
+      assert.doesNotMatch(headerMatch[0], /class="nav-cta"/i, `${page} header must not contain Request access button`);
+    }
     const footerMatch = html.match(/<footer\b[\s\S]*?<\/footer>/i);
     assert.ok(footerMatch, `${page} must have a footer`);
     assert.doesNotMatch(footerMatch[0], /data-deletion/i, `${page} footer must not contain data-deletion link`);
+    assert.doesNotMatch(footerMatch[0], /Sign in to Outreach/i, `${page} footer must not contain Sign in to Outreach link`);
   }
 
   const privacyHtml = read('privacy.html');
