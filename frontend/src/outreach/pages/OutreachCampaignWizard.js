@@ -17,6 +17,11 @@ import {
   AlertCircle,
   ExternalLink,
   RefreshCw,
+  Filter,
+  MoreVertical,
+  Trash2,
+  Webhook,
+  LayoutTemplate,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import SequenceCanvas from '../components/sequence/SequenceCanvas';
@@ -146,8 +151,19 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
   const [warmupHours, setWarmupHours] = useState(24);
   const [leadsCount, setLeadsCount] = useState(0);
   const [enrolledLeads, setEnrolledLeads] = useState([]);
+  const [leadLists, setLeadLists] = useState([]);
+  const [openLeadListMenu, setOpenLeadListMenu] = useState('');
   const [loadingLeads, setLoadingLeads] = useState(false);
   const [leadsError, setLeadsError] = useState('');
+  const [campaignIntegrations, setCampaignIntegrations] = useState({
+    webhooks_enabled: false,
+    hubspot_enabled: false,
+  });
+  const [sequenceTemplatesOpen, setSequenceTemplatesOpen] = useState(false);
+  const [templateTab, setTemplateTab] = useState('prebuilt'); // 'prebuilt' | 'saved'
+  const [templateCategory, setTemplateCategory] = useState('all');
+  const [templateChannel, setTemplateChannel] = useState('all');
+  const [savedTemplates, setSavedTemplates] = useState([]);
   const templateSave = useTemplateSave(JSON.stringify([campaignId, activeCampaignId, currentStep]));
 
   const [schedule, setSchedule] = useState(createDefaultSchedule);
@@ -254,8 +270,50 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || 'Campaign leads could not be loaded.');
-      setEnrolledLeads(data.leads || []);
-      setLeadsCount(data.total ?? data.leads?.length ?? 0);
+      const rows = data.leads || [];
+      setEnrolledLeads(rows);
+      setLeadsCount(data.total ?? rows.length ?? 0);
+
+      // Refresh named lead lists from campaign detail or derive from loaded leads
+      try {
+        const campRes = await fetch(`/api/v1/outreach/campaigns/${targetCid}`, {
+          credentials: 'include',
+          headers: { Authorization: token ? `Bearer ${token}` : '' },
+        });
+        if (campRes.ok) {
+          const campData = await campRes.json().catch(() => ({}));
+          if (Array.isArray(campData.lead_lists) && campData.lead_lists.length > 0) {
+            setLeadLists(campData.lead_lists);
+          } else if (rows.length > 0) {
+            const grouped = {};
+            rows.forEach((l) => {
+              const ln = (l.list_name || '').trim() || 'Default Lead List';
+              if (!grouped[ln]) {
+                grouped[ln] = {
+                  list_name: ln,
+                  leads_count: 0,
+                  added_from_label: l.source_type === 'csv' ? 'CSV File' : 'LinkedIn Search',
+                  created_at: l.created_at || new Date().toISOString(),
+                  filter_rules: l.custom_variables?.filter_rules || {},
+                };
+              }
+              grouped[ln].leads_count += 1;
+            });
+            setLeadLists(Object.values(grouped));
+          } else {
+            setLeadLists([]);
+          }
+          if (campData.integrations && typeof campData.integrations === 'object') {
+            setCampaignIntegrations((prev) => ({
+              ...prev,
+              webhooks_enabled: Boolean(campData.integrations.webhooks_enabled),
+              hubspot_enabled: Boolean(campData.integrations.hubspot_enabled),
+            }));
+          }
+        }
+      } catch (_) {
+        // non-fatal
+      }
     } catch (err) {
       console.error('Failed to fetch enrolled leads:', err);
       setLeadsError(err.message || 'Campaign leads could not be loaded.');
@@ -264,9 +322,35 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
     }
   };
 
+  const handleDeleteLeadList = async (listName) => {
+    const targetCid = activeCampaignId || campaignId;
+    if (!targetCid || targetCid === 'new' || targetCid === 'new_campaign') return;
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(
+        `/api/v1/outreach/campaigns/${targetCid}/lead-lists?list_name=${encodeURIComponent(listName)}`,
+        {
+          method: 'DELETE',
+          credentials: 'include',
+          headers: { Authorization: token ? `Bearer ${token}` : '' },
+        }
+      );
+      if (res.ok) {
+        toast.success(`Removed lead list "${listName}"`);
+        setOpenLeadListMenu('');
+        fetchEnrolledLeads(targetCid);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'Could not remove lead list.');
+      }
+    } catch (err) {
+      toast.error(err.message || 'Could not remove lead list.');
+    }
+  };
+
   const launchPayload = React.useMemo(() => ({ name: campaignName,
-    sender_account_ids: selectedSenders, schedule, timezone, daily_limits: limits, status: 'active' }),
-  [campaignName, selectedSenders, schedule, timezone, limits]);
+    sender_account_ids: selectedSenders, schedule, timezone, daily_limits: limits, integrations: campaignIntegrations, status: 'active' }),
+  [campaignName, selectedSenders, schedule, timezone, limits, campaignIntegrations]);
   const { data: preflightData, loading: loadingPreflight, error: preflightError,
     refresh: fetchPreflight } = useCampaignReadiness(activeCampaignId, launchPayload, currentStep === 3);
   const launchContext = React.useRef('');
@@ -313,6 +397,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
         },
         limits,
         skip_team_campaign_leads: skipTeamCampaignLeads,
+        integrations: campaignIntegrations,
       };
 
       if (activeCampaignId && activeCampaignId !== 'new' && activeCampaignId !== 'new_campaign') {
@@ -392,6 +477,14 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
             if (data.schedule?.timezone) setTimezone(data.schedule.timezone);
             if (data.limits) setLimits(data.limits);
             if (typeof data.skip_team_campaign_leads === 'boolean') setSkipTeamCampaignLeads(data.skip_team_campaign_leads);
+            if (data.integrations && typeof data.integrations === 'object') {
+              setCampaignIntegrations((prev) => ({
+                ...prev,
+                webhooks_enabled: Boolean(data.integrations.webhooks_enabled),
+                hubspot_enabled: Boolean(data.integrations.hubspot_enabled),
+              }));
+            }
+            if (Array.isArray(data.lead_lists)) setLeadLists(data.lead_lists);
             setSelectedSenders(Array.isArray(data.sender_account_ids) ? data.sender_account_ids : []);
             if (initialStep) setCurrentStep(initialStep);
             else if (data.draft_step) setCurrentStep(data.draft_step);
@@ -855,36 +948,126 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                   </button>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div className="flex items-center gap-4">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">
-                        <CheckCircle2 className="h-6 w-6" />
-                      </div>
-                      <div>
-                        <h2 className="text-lg font-bold text-gray-900">
-                          {leadsCount} lead{leadsCount !== 1 ? 's' : ''} enrolled
-                        </h2>
-                        <p className="text-xs text-gray-500 mt-0.5">
-                          Prospects loaded into this campaign and queued for outbound steps.
-                        </p>
-                      </div>
+                <div className="space-y-5">
+                  {/* Dripify Lists of leads header & cards (Screenshot 5) */}
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-lg font-bold text-gray-900">Lists of leads</h2>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {leadsCount} lead{leadsCount !== 1 ? 's' : ''} enrolled across {(leadLists.length || 1)} lead list{(leadLists.length || 1) !== 1 ? 's' : ''}.
+                      </p>
                     </div>
                     <div className="flex items-center gap-3">
                       <button
+                        type="button"
                         onClick={() => setLeadsModalOpen(true)}
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 shadow-2xs transition-colors"
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 px-4 py-2 text-xs font-semibold text-white shadow-2xs transition-colors cursor-pointer"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Add a new list
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setLeadsModalOpen(true)}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 shadow-2xs transition-colors cursor-pointer"
                       >
                         <Plus className="h-3.5 w-3.5" />
                         Add more leads
                       </button>
                       <button
+                        type="button"
                         onClick={() => navigateToStep(2)}
-                        className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 px-4 py-2 text-xs font-semibold text-white shadow-2xs transition-colors"
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 px-4 py-2 text-xs font-semibold text-white shadow-2xs transition-colors cursor-pointer"
                       >
                         Proceed to Sequence →
                       </button>
                     </div>
+                  </div>
+
+                  {/* Named Lead List Cards Grid (Screenshot 5 parity) */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" data-testid="campaign-lead-lists-grid">
+                    {(leadLists.length > 0
+                      ? leadLists
+                      : [
+                          {
+                            list_name: campaignName || 'Default Lead List',
+                            leads_count: leadsCount,
+                            added_from_label: 'LinkedIn Search',
+                            created_at: new Date().toISOString(),
+                            filter_rules: { skip_other_campaigns: true },
+                          },
+                        ]
+                    ).map((lst) => {
+                      const formattedDate = lst.created_at
+                        ? new Date(lst.created_at).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                          })
+                        : 'Today';
+                      return (
+                        <div
+                          key={lst.list_name}
+                          data-testid={`lead-list-card-${lst.list_name}`}
+                          className="relative bg-white rounded-2xl border border-gray-200 p-5 shadow-xs hover:border-indigo-200 transition-all space-y-3"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-[#0A66C2] text-white font-bold text-xs">
+                                in
+                              </span>
+                              <span className="font-bold text-sm text-gray-900 truncate" title={lst.list_name}>
+                                {lst.list_name}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span
+                                title="Lead filtering rules active for this list"
+                                className="inline-flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 border border-indigo-100"
+                              >
+                                <Filter className="h-3.5 w-3.5" />
+                              </span>
+                              <span className="text-[11px] text-gray-400 font-medium">{formattedDate}</span>
+                              <div className="relative">
+                                <button
+                                  type="button"
+                                  aria-label={`Actions for lead list ${lst.list_name}`}
+                                  onClick={() =>
+                                    setOpenLeadListMenu((prev) => (prev === lst.list_name ? '' : lst.list_name))
+                                  }
+                                  className="p-1 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors cursor-pointer"
+                                >
+                                  <MoreVertical className="h-4 w-4" />
+                                </button>
+                                {openLeadListMenu === lst.list_name && (
+                                  <div className="absolute right-0 mt-1 w-36 rounded-xl bg-white border border-gray-200 shadow-lg py-1 z-20 text-xs">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteLeadList(lst.list_name)}
+                                      className="w-full px-3 py-2 text-left text-red-600 hover:bg-red-50 flex items-center gap-2 font-semibold cursor-pointer"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                      Delete list
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="pt-2 border-t border-gray-100 space-y-1 text-xs">
+                            <div className="flex items-center justify-between text-gray-500">
+                              <span>Added from:</span>
+                              <span className="font-semibold text-gray-800">{lst.added_from_label || 'LinkedIn Search'}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-gray-500">
+                              <span>Added leads:</span>
+                              <span className="font-bold text-indigo-600">{lst.leads_count ?? leadsCount}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
 
                   {/* Leads Preview Table */}
@@ -1341,6 +1524,70 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                     </p>
                   </div>
                 </label>
+              </div>
+
+              {/* Dripify Step 3: Integrations (optional) — Webhooks & HubSpot (Screenshot 10) */}
+              <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-xs space-y-4" data-testid="campaign-integrations-section">
+                <div>
+                  <h3 className="text-base font-bold text-gray-900 tracking-tight">
+                    Integrations <span className="text-xs font-normal text-gray-400">(optional)</span>
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Automatically stream campaign events, accepted connections, and replies to your CRM or webhook endpoints.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Webhooks Toggle Card */}
+                  <div className="flex items-center justify-between p-4 rounded-xl border border-gray-200 bg-gray-50/50 hover:border-indigo-200 transition-colors">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-50 text-rose-600 border border-rose-100">
+                        <Webhook className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <span className="text-sm font-bold text-gray-900 block">Webhooks</span>
+                        <span className="text-[11px] text-gray-500">Send real-time JSON events</span>
+                      </div>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        aria-label="Enable Webhooks integration for this campaign"
+                        checked={campaignIntegrations.webhooks_enabled}
+                        onChange={(e) =>
+                          setCampaignIntegrations((prev) => ({ ...prev, webhooks_enabled: e.target.checked }))
+                        }
+                        className="sr-only peer"
+                      />
+                      <div className="w-10 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600" />
+                    </label>
+                  </div>
+
+                  {/* HubSpot Toggle Card */}
+                  <div className="flex items-center justify-between p-4 rounded-xl border border-gray-200 bg-gray-50/50 hover:border-indigo-200 transition-colors">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-50 text-orange-600 border border-orange-100 font-bold text-sm">
+                        HS
+                      </div>
+                      <div>
+                        <span className="text-sm font-bold text-gray-900 block">HubSpot</span>
+                        <span className="text-[11px] text-gray-500">Sync contacts &amp; sequence activity</span>
+                      </div>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        aria-label="Enable HubSpot integration for this campaign"
+                        checked={campaignIntegrations.hubspot_enabled}
+                        onChange={(e) =>
+                          setCampaignIntegrations((prev) => ({ ...prev, hubspot_enabled: e.target.checked }))
+                        }
+                        className="sr-only peer"
+                      />
+                      <div className="w-10 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600" />
+                    </label>
+                  </div>
+                </div>
               </div>
 
               <div className="rounded-2xl border border-indigo-200 bg-indigo-50/60 p-6 space-y-3">

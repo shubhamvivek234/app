@@ -280,4 +280,57 @@ describe('First campaign wizard', () => {
     expect(JSON.parse(previews.at(-1)[1].body).sender_account_ids).toEqual(['sender-a']);
   });
 
+  it('renders Dripify Lists of leads cards on Step 1 and Integrations switches on Step 3', async () => {
+    global.fetch = jest.fn((url) => Promise.resolve({
+      ok: true,
+      json: async () => {
+        if (url === '/api/v1/outreach/campaigns/camp-dripify' || url.includes('/auto-draft')) {
+          return {
+            id: 'camp-dripify',
+            name: 'Q4 Enterprise Outbound',
+            status: 'draft',
+            lead_lists: [
+              {
+                list_name: 'Founders US Search',
+                leads_count: 142,
+                source_type: 'linkedin_search',
+                added_from_label: 'LinkedIn search',
+                created_at: '2026-10-22T00:00:00Z',
+                filter_rules: { skip_other_campaigns: true, require_open_profile: true },
+              },
+            ],
+            integrations: { webhooks_enabled: true, hubspot_enabled: false },
+          };
+        }
+        if (url.includes('/leads')) {
+          return {
+            leads: [
+              { id: 'l-1', first_name: 'Alex', last_name: 'Rivera', list_name: 'Founders US Search', source: 'linkedin_search' },
+            ],
+            total: 142,
+          };
+        }
+        if (url.endsWith('/accounts')) {
+          return [{ id: 'sender-a', status: 'active', account_name: 'Sender' }];
+        }
+        if (url.endsWith('/preflight')) return ready;
+        return {};
+      },
+    }));
+
+    await act(async () => root.render(<OutreachCampaignWizard campaignId="camp-dripify" initialStep={1} />));
+    expect(container.querySelector('[data-testid="campaign-lead-lists-grid"]')).toBeTruthy();
+    expect(container.textContent).toContain('Founders US Search');
+    expect(container.textContent).toContain('Added from:');
+    expect(container.textContent).toContain('LinkedIn search');
+
+    // Navigate to Step 3 and verify Integrations (Webhooks & HubSpot)
+    const step3Btn = [...container.querySelectorAll('button')].find((b) => b.textContent.includes('Launch & Senders'));
+    await act(async () => step3Btn.click());
+    expect(container.querySelector('[data-testid="campaign-integrations-section"]')).toBeTruthy();
+    expect(container.textContent).toContain('Integrations (optional)');
+    expect(container.textContent).toContain('Webhooks');
+    expect(container.textContent).toContain('HubSpot');
+  });
+
 });

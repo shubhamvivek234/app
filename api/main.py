@@ -161,53 +161,54 @@ def _include_versioned_routes(app: FastAPI, prefix: str, *, include_in_schema: b
     """
     Mount the API under a given prefix.
 
-    We keep both `/api/v1/*` and legacy `/api/*` routes live because the
-    production frontend bundle still has a mix of both URL styles. Keeping the
-    alias on the backend prevents auth and dashboard regressions during
-    staggered frontend/backend deploys.
+    By default, only Unravler Outreach + Auth/User/Workspace/Team/Notifications/Support/SystemHealth
+    routes are mounted. Legacy social-scheduler routes are hidden unless
+    `OUTREACH_ENABLE_LEGACY_SOCIAL_API=true` is explicitly set.
     """
     app.include_router(auth_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(posts_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(upload_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(accounts_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(webhooks_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(stream_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(public_api_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(user_webhooks_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(admin_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(user_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(payments_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(ai_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(bulk_upload_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(timeslots_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(notifications_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(hashtags_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(stats_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(dashboard_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(analytics_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(api_keys_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(team_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(recurring_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(media_assets_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(media_sources_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(audio_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(calendar_notes_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(inbox_router, prefix=prefix, include_in_schema=include_in_schema)
+    app.include_router(notifications_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(support_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(rss_feeds_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(short_links_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(bio_pages_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(system_health_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(campaigns_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(leads_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(deals_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(broadcasts_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(automations_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(posting_sets_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(oauth_apps_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(clipping_router, prefix=prefix, include_in_schema=include_in_schema)
-    app.include_router(agent_router, prefix=prefix, include_in_schema=include_in_schema)
     app.include_router(outreach_router, prefix=prefix, include_in_schema=include_in_schema)
+
+    if os.getenv("OUTREACH_ENABLE_LEGACY_SOCIAL_API", "false").strip().lower() in {"1", "true", "yes"}:
+        app.include_router(posts_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(upload_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(accounts_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(webhooks_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(stream_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(public_api_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(user_webhooks_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(admin_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(payments_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(ai_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(bulk_upload_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(timeslots_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(hashtags_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(stats_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(dashboard_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(analytics_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(api_keys_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(recurring_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(media_assets_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(media_sources_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(audio_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(calendar_notes_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(inbox_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(rss_feeds_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(short_links_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(bio_pages_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(campaigns_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(leads_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(deals_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(broadcasts_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(automations_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(posting_sets_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(oauth_apps_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(clipping_router, prefix=prefix, include_in_schema=include_in_schema)
+        app.include_router(agent_router, prefix=prefix, include_in_schema=include_in_schema)
 
 
 def create_app() -> FastAPI:
@@ -223,16 +224,20 @@ def create_app() -> FastAPI:
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-    # CORS — explicit origins + trusted Vercel deployments regex
+    # CORS — explicit origins + owned Unravler/SocialEntangler/Prosp deployments only
     allowed_origins = [
         o.strip()
         for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
         if o.strip()
     ]
+    allowed_origin_regex = os.environ.get(
+        "ALLOWED_ORIGIN_REGEX",
+        r"^https://([a-zA-Z0-9-]+\.)?(unravler\.com|unravler\.io|prosp\.ai)$|^https://(unravler|socialentangler|app-fgv2)(-[a-zA-Z0-9-]+)?\.vercel\.app$",
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
-        allow_origin_regex=r"^https://([a-zA-Z0-9-]+\.)?vercel\.app$",
+        allow_origin_regex=allowed_origin_regex,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
@@ -244,7 +249,8 @@ def create_app() -> FastAPI:
 
     # Routes
     app.include_router(health_router)
-    app.include_router(short_links_router, include_in_schema=False)  # Mount /r/{code} at root
+    if os.getenv("OUTREACH_ENABLE_LEGACY_SOCIAL_API", "false").strip().lower() in {"1", "true", "yes"}:
+        app.include_router(short_links_router, include_in_schema=False)  # Mount /r/{code} at root
     _include_versioned_routes(app, "/api/v1")
     _include_versioned_routes(app, "/api", include_in_schema=False)
 

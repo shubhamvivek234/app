@@ -191,4 +191,68 @@
     }, { threshold: 0.12, rootMargin: '0px 0px -32px 0px' });
     revealItems.forEach((item) => observer.observe(item));
   }
+
+  // FAQ Live Search & Category Filtering
+  const faqSearchInput = document.querySelector('#faq-search-input');
+  const faqClearBtn = document.querySelector('#faq-search-clear');
+  const faqResetBtn = document.querySelector('#faq-reset-btn');
+  const faqStatus = document.querySelector('#faq-search-status');
+  const faqEmptyState = document.querySelector('#faq-empty-state');
+  const faqCategoryBlocks = [...document.querySelectorAll('.faq-category-block')];
+
+  if (faqSearchInput && faqCategoryBlocks.length) {
+    const filterFaqs = () => {
+      const rawQuery = faqSearchInput.value.trim();
+      const query = rawQuery.toLowerCase();
+      if (faqClearBtn) faqClearBtn.hidden = !rawQuery;
+
+      let matchedCount = 0;
+      faqCategoryBlocks.forEach((block) => {
+        const items = [...block.querySelectorAll('.faq-card-item')];
+        let blockMatches = 0;
+        items.forEach((item) => {
+          const text = item.textContent.toLowerCase();
+          const isMatch = !query || text.includes(query);
+          item.hidden = !isMatch;
+          if (isMatch) {
+            blockMatches += 1;
+            matchedCount += 1;
+            if (query.length >= 2) {
+              item.open = true;
+            } else if (!query) {
+              item.open = false;
+            }
+          }
+        });
+        block.hidden = blockMatches === 0;
+      });
+
+      if (faqEmptyState) {
+        faqEmptyState.hidden = matchedCount > 0;
+      }
+      if (faqStatus) {
+        faqStatus.textContent = query
+          ? `${matchedCount} question${matchedCount === 1 ? '' : 's'} matching "${rawQuery}"`
+          : '';
+      }
+    };
+
+    faqSearchInput.addEventListener('input', filterFaqs);
+
+    if (faqClearBtn) {
+      faqClearBtn.addEventListener('click', () => {
+        faqSearchInput.value = '';
+        filterFaqs();
+        faqSearchInput.focus();
+      });
+    }
+
+    if (faqResetBtn) {
+      faqResetBtn.addEventListener('click', () => {
+        faqSearchInput.value = '';
+        filterFaqs();
+        faqSearchInput.focus();
+      });
+    }
+  }
 })();

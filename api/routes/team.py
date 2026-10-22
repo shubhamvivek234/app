@@ -353,6 +353,18 @@ async def accept_invite(token: str, current_user: CurrentUser, db: DB):
         {"workspace_id": workspace_id},
         {"_id": 0, "name": 1},
     )
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    claim_filter = {"token": token, "status": "pending"}
+    if invite.get("invite_id"):
+        claim_filter["invite_id"] = invite["invite_id"]
+    claimed = await db.workspace_invites.update_one(
+        claim_filter,
+        {"$set": {"status": "accepted", "accepted_at": now, "updated_at": now}},
+    )
+    if getattr(claimed, "matched_count", 1) == 0 and getattr(claimed, "modified_count", 1) == 0:
+        raise HTTPException(status_code=404, detail="Invite not found or already used")
 
     await db.workspace_members.update_one(
         {"workspace_id": workspace_id, "user_id": current_user["user_id"]},
@@ -372,10 +384,6 @@ async def accept_invite(token: str, current_user: CurrentUser, db: DB):
             "$addToSet": {"workspace_ids": workspace_id},
             "$set": {"default_workspace_id": workspace_id},
         },
-    )
-    await db.workspace_invites.update_one(
-        {"token": token},
-        {"$set": {"status": "accepted", "accepted_at": now, "updated_at": now}},
     )
     return {
         "accepted": True,

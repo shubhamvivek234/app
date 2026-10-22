@@ -193,3 +193,82 @@ def test_classify_linkedin_source_url_covers_four_dripify_channels():
     assert conn["max_profiles"] == 1000
     assert conn["sort_order"] == "most_recent_first"
     assert "network=%5B%22F%22%5D" in conn["batching_search_url"]
+
+    # 5. LinkedIn Post Engagers (New badge, 500 max)
+    post = classify_linkedin_source_url("https://www.linkedin.com/posts/acme-corp_b2b-growth-activity-7150000000000000000-abcd")
+    assert post["is_valid"] is True
+    assert post["source_type"] == "post"
+    assert post["max_profiles"] == 500
+    assert post["badge"] == "New"
+    assert post["profiles_found_label"] == "500+"
+
+    # 6. LinkedIn Group Members (2,500 max)
+    group = classify_linkedin_source_url("https://www.linkedin.com/groups/1234567/")
+    assert group["is_valid"] is True
+    assert group["source_type"] == "group"
+    assert group["max_profiles"] == 2500
+    assert group["profiles_found_label"] == "2 500+"
+
+
+def test_dripify_step3_lead_filter_rules_and_bracket_validation():
+    from outreach.core.lead_importer import evaluate_lead_filter_rules
+    from outreach.core.dag_compiler import find_unreplaced_brackets, contains_unreplaced_brackets
+    from outreach.core.sequence_preview import analyze_sequence
+
+    # 1. Step 3 Lead filtering rules
+    rules = {
+        "require_open_profile": True,
+        "require_profile_photo": True,
+        "min_connections_500": True,
+        "exclude_free_account": True,
+    }
+    assert evaluate_lead_filter_rules({"is_open_profile": False}, rules)[0] == "filtered_not_open_profile"
+    assert evaluate_lead_filter_rules({"is_open_profile": True, "has_photo": False}, rules)[0] == "filtered_no_photo"
+    assert evaluate_lead_filter_rules(
+        {"is_open_profile": True, "avatar_url": "https://img.example/a.jpg", "connections_count": 120},
+        rules,
+    )[0] == "filtered_under_500_connections"
+    assert evaluate_lead_filter_rules(
+        {
+            "is_open_profile": True,
+            "avatar_url": "https://img.example/a.jpg",
+            "connections_count": 650,
+            "profile_type": "free",
+            "is_premium": False,
+        },
+        rules,
+    )[0] == "filtered_free_account"
+    assert evaluate_lead_filter_rules(
+        {
+            "is_open_profile": True,
+            "avatar_url": "https://img.example/a.jpg",
+            "connections_count": 650,
+            "profile_type": "premium",
+            "is_premium": True,
+        },
+        rules,
+    ) == (None, None)
+
+    # 2. Unreplaced [BRACKETS] detection (ignores AI prompt tokens ✨ [Prompt Name])
+    raw_msg = "Hi {{first_name}}, I saw your post about [insert topic] and ✨ [Pain Point Hook] at [Your Company]."
+    brackets = find_unreplaced_brackets(raw_msg)
+    assert brackets == ["[insert topic]", "[Your Company]"]
+    assert contains_unreplaced_brackets(raw_msg) is True
+    assert contains_unreplaced_brackets("Hi {{first_name}}, ✨ [Pain Point Hook]!") is False
+
+    # 3. Sequence analysis surfaces unreplaced_bracket_placeholder error
+    from outreach.core.dag_compiler import DAGCompiler
+    compiled = DAGCompiler.validate_and_compile(
+        nodes=[
+            {
+                "id": "msg_1",
+                "type": "send_message",
+                "delay_hours": 0,
+                "config": {"body": "Hi {{first_name}}, let's chat about [your pain point]!"},
+            },
+        ],
+        edges=[],
+    )
+    analysis = analyze_sequence(compiled)
+    codes = [item["code"] for item in analysis["issues"]]
+    assert "unreplaced_bracket_placeholder" in codes

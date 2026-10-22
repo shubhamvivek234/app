@@ -31,7 +31,7 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "http://3.107.7.100/api/$1"
+      "destination": "https://api.unravler.com/api/$1"
     }
   ]
 }

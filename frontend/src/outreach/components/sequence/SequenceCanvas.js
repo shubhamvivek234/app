@@ -111,6 +111,21 @@ const GUARANTEED_LINKEDIN_VARIABLE_CHIPS = [
   { label: '+ Location', token: '{{location}}' },
 ];
 
+const DRIPIFY_MESSAGE_VARIABLE_CHIPS = [
+  { label: 'First name', token: '{{first_name}}' },
+  { label: 'Last name', token: '{{last_name}}' },
+  { label: 'Position', token: '{{position}}' },
+  { label: 'Company', token: '{{company_name}}' },
+  { label: 'Country', token: '{{location}}' },
+];
+
+const containsUnreplacedBracketsClient = (text = '') => {
+  if (!text) return false;
+  const cleaned = String(text).replace(/✨\s*\[[^\]]+\]/g, '');
+  const matches = cleaned.match(/\[([^[\]\n]{2,60})\]/g) || [];
+  return matches.some((m) => /[A-Za-z]/.test(m));
+};
+
 export { flattenTreeToDAG } from './sequenceGraph';
 
 const stepDelayHours = (step) => step.delay_hours === undefined ? (step.delay_days || 0) * 24 : step.delay_hours;
@@ -331,7 +346,86 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
   const [sequenceReviewOpen, setSequenceReviewOpen] = useState(false);
   const [previewData, setPreviewData] = useState(null);
   const [activeVariantTab, setActiveVariantTab] = useState('A');
+  const [messageEditorTab, setMessageEditorTab] = useState('primary'); // 'primary' | 'fallback'
+  const [improvingWithAi, setImprovingWithAi] = useState(false);
   const [stepLeadsDrawer, setStepLeadsDrawer] = useState({ open: false, nodeId: null, title: '', loading: false, data: null });
+
+  const handleImproveMessageWithAi = async () => {
+    if (!selectedStep || improvingWithAi) return;
+    const isFallback = messageEditorTab === 'fallback';
+    const currentText = isFallback
+      ? (selectedStep.config?.alternative_message ?? selectedStep.config?.fallback ?? '')
+      : selectedStep.type === 'connection_request'
+      ? (selectedStep.config?.note || '')
+      : selectedStep.type === 'inmail'
+      ? (selectedStep.config?.body ?? selectedStep.config?.message ?? '')
+      : (selectedStep.config?.body || '');
+
+    setImprovingWithAi(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/v1/outreach/prompts/preview', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({
+          template: currentText || 'Hi {{first_name}}, wanted to connect regarding your work at {{company_name}}.',
+          improve_copy: true,
+          campaign_id: campaignId && campaignId !== 'new' ? campaignId : undefined,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const improved = (data.improved_template || data.evaluated_text || '').trim();
+        if (improved) {
+          setTree((prev) =>
+            updateNode(prev, selectedStep.id, {
+              config: isFallback
+                ? { ...selectedStep.config, alternative_message: improved, fallback: improved }
+                : selectedStep.type === 'connection_request'
+                ? { ...selectedStep.config, note: improved.slice(0, 300) }
+                : selectedStep.type === 'inmail'
+                ? { ...selectedStep.config, body: improved, message: improved }
+                : { ...selectedStep.config, body: improved },
+              isActionRequired: false,
+              subtitle: improved.slice(0, 34) + (improved.length > 34 ? '...' : ''),
+            })
+          );
+          setToastMessage('Message copy improved with AI!');
+        }
+      }
+    } catch (_) {
+      setToastMessage('Could not improve message with AI right now.');
+    } finally {
+      setImprovingWithAi(false);
+    }
+  };
+
+  const handleSaveMessageStep = (stepToCheck = selectedStep) => {
+    if (!stepToCheck) return;
+    const textsToCheck = [
+      stepToCheck.config?.body,
+      stepToCheck.config?.message,
+      stepToCheck.config?.note,
+      stepToCheck.config?.alternative_message,
+      stepToCheck.config?.fallback,
+      stepToCheck.config?.subject,
+    ].filter(Boolean);
+
+    if (textsToCheck.some((t) => containsUnreplacedBracketsClient(t))) {
+      setToastMessage({
+        type: 'error',
+        text: 'Make sure to replace the example text in [BRACKETS] with your own wording before saving',
+      });
+      return false;
+    }
+    setToastMessage('Step message saved.');
+    setSelectedStepId(null);
+    return true;
+  };
 
   const openStepLeadsDrawer = async (step, e) => {
     if (e) e.stopPropagation();
@@ -1593,6 +1687,45 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
             </button>
           </div>
         )}
+
+        {/* Dripify "+ Run A/B test" footer bar on Send invite / Message cards (Screenshots 7 & 8) */}
+        {['connection_request', 'send_message'].includes(step.type) && (
+          <div className="px-3.5 py-1.5 border-t border-slate-100 bg-slate-50/40 rounded-b-2xl flex items-center justify-between">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedStepId(step.id);
+                const variants = Array.isArray(step.config?.variants) ? step.config.variants : [];
+                if (variants.length < 2) {
+                  const baseBody = step.config?.body || step.config?.note || 'Hi {{first_name}}, wanted to connect!';
+                  setTree((prev) =>
+                    updateNode(prev, step.id, {
+                      config: {
+                        ...step.config,
+                        variants: [
+                          { id: 'A', body: baseBody },
+                          { id: 'B', body: baseBody },
+                        ],
+                      },
+                    })
+                  );
+                  setActiveVariantTab('B');
+                  setToastMessage('A/B test variants A & B enabled for this step.');
+                }
+              }}
+              className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer"
+            >
+              <Plus className="w-3 h-3" />
+              <span>Run A/B test</span>
+            </button>
+            {containsUnreplacedBracketsClient(step.config?.body || step.config?.note || '') && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full">
+                Replace [BRACKETS]
+              </span>
+            )}
+          </div>
+        )}
       </div>
     );
   };
@@ -1702,6 +1835,33 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
             >
               + Add a step
             </button>
+            {(branchCondition || '').toLowerCase().includes('not accepted') && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const withdrawStep = {
+                    id: makeStepId(),
+                    type: 'withdraw_invite',
+                    title: 'Withdraw invite',
+                    subtitle: 'Withdraw request if not accepted yet',
+                    delay_hours: 120,
+                    config: {},
+                  };
+                  setTree((prev) =>
+                    insertStep(
+                      prev,
+                      { type: 'branch', parentStepId, branchKey, index: 0 },
+                      withdrawStep
+                    )
+                  );
+                  setToastMessage('Added "Withdraw request if not accepted yet" step.');
+                }}
+                className="mt-1.5 px-2.5 py-1 rounded-lg border border-amber-200 bg-amber-50 hover:bg-amber-100 text-[11px] font-semibold text-amber-800 transition-colors cursor-pointer"
+              >
+                Withdraw request if not accepted yet
+              </button>
+            )}
           </div>
         ) : (
           /* Standard Leaf End button */
@@ -2455,12 +2615,13 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
               </div>
             )}
 
-            {/* SEND MESSAGE CONFIGURATION */}
+            {/* SEND MESSAGE CONFIGURATION (Dripify Screenshots 7, 8, 9 Parity) */}
             {selectedStep.type === 'send_message' && (
-              <div className="space-y-4 pt-2 border-t border-gray-100">
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs font-bold text-gray-900">A/B Message Variants (up to 3)</label>
+              <div className="space-y-4 pt-2 border-t border-gray-100" data-testid="dripify-message-editor">
+                {/* Dripify Header & Primary / Fallback Tabs */}
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-gray-900">Input your LinkedIn message</span>
                     <div className="flex items-center gap-1">
                       {['A', 'B', 'C'].map((vid) => {
                         const variants = Array.isArray(selectedStep.config?.variants) ? selectedStep.config.variants : [];
@@ -2483,7 +2644,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
                               }
                               setActiveVariantTab(vid);
                             }}
-                            className={`px-2 py-0.5 text-[11px] font-bold rounded-lg border transition-colors ${
+                            className={`px-2 py-0.5 text-[10px] font-bold rounded-lg border transition-colors ${
                               activeVariantTab === vid
                                 ? 'bg-indigo-600 text-white border-indigo-600'
                                 : exists
@@ -2497,41 +2658,158 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
                       })}
                     </div>
                   </div>
-                  {renderEditorToolbar()}
-                  <label className="block text-xs font-bold text-gray-900 mb-1">
-                    Direct Message Copy {Array.isArray(selectedStep.config?.variants) && selectedStep.config.variants.length > 1 ? `(Variant ${activeVariantTab})` : ''}
-                  </label>
-                  <textarea
-                    rows={4}
-                    value={
-                      Array.isArray(selectedStep.config?.variants) && selectedStep.config.variants.some((v) => v.id === activeVariantTab)
-                        ? (selectedStep.config.variants.find((v) => v.id === activeVariantTab)?.body || '')
-                        : (selectedStep.config?.body || '')
-                    }
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      const variants = Array.isArray(selectedStep.config?.variants) ? selectedStep.config.variants : [];
-                      const nextVariants = variants.length
-                        ? variants.map((v) => (v.id === activeVariantTab ? { ...v, body: val } : v))
-                        : undefined;
-                      const primaryBody = activeVariantTab === 'A' ? val : (selectedStep.config?.body || val);
-                      setTree((prev) =>
-                        updateNode(prev, selectedStep.id, {
-                          config: {
-                            ...selectedStep.config,
-                            body: primaryBody,
-                            ...(nextVariants ? { variants: nextVariants } : {}),
-                          },
-                          isActionRequired: primaryBody.trim().length === 0,
-                          subtitle: primaryBody.trim().length > 0 ? primaryBody.slice(0, 32) + '...' : 'Action required',
-                        })
-                      );
-                    }}
-                    placeholder="Hi {{first_name}}, thanks for connecting! Loved your recent thoughts on..."
-                    className="w-full rounded-xl border border-gray-200 p-3 text-xs focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 resize-none font-sans"
-                  />
+
+                  {/* Primary message | Fallback message (optional) Segmented Tabs */}
+                  <div className="grid grid-cols-2 rounded-xl bg-gray-100 p-1 text-xs font-semibold">
+                    <button
+                      type="button"
+                      onClick={() => setMessageEditorTab('primary')}
+                      className={`py-1.5 rounded-lg transition-colors cursor-pointer ${
+                        messageEditorTab === 'primary'
+                          ? 'bg-white text-indigo-700 shadow-2xs font-bold'
+                          : 'text-gray-600 hover:text-gray-900'
+                      }`}
+                    >
+                      Primary message
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMessageEditorTab('fallback')}
+                      className={`py-1.5 rounded-lg transition-colors cursor-pointer ${
+                        messageEditorTab === 'fallback'
+                          ? 'bg-white text-indigo-700 shadow-2xs font-bold'
+                          : 'text-gray-600 hover:text-gray-900'
+                      }`}
+                    >
+                      Fallback message (optional) ⓘ
+                    </button>
+                  </div>
+
+                  {/* Dashed Purple Variable Chips: First name, Last name, Position, Company, Country, More ▾ */}
+                  <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                    {DRIPIFY_MESSAGE_VARIABLE_CHIPS.map((chip) => (
+                      <button
+                        key={chip.label}
+                        type="button"
+                        onClick={() => {
+                          if (messageEditorTab === 'fallback') {
+                            const currAlt = selectedStep.config?.alternative_message ?? selectedStep.config?.fallback ?? '';
+                            const nextAlt = currAlt ? `${currAlt} ${chip.token}` : chip.token;
+                            setTree((prev) =>
+                              updateNode(prev, selectedStep.id, {
+                                config: { ...selectedStep.config, alternative_message: nextAlt, fallback: nextAlt },
+                              })
+                            );
+                          } else {
+                            insertVariable(chip.token);
+                          }
+                        }}
+                        className="px-2.5 py-1 rounded-lg border border-dashed border-indigo-400 bg-indigo-50/40 hover:bg-indigo-100/70 text-indigo-700 text-[11px] font-semibold transition-colors cursor-pointer"
+                      >
+                        {chip.label}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setShowVariablePicker(!showVariablePicker)}
+                      className="px-2.5 py-1 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 text-[11px] font-semibold transition-colors cursor-pointer"
+                    >
+                      More ▾
+                    </button>
+                  </div>
                 </div>
-                <div className="p-3 rounded-xl bg-amber-50/50 border border-amber-200/80 space-y-2">
+
+                {renderEditorToolbar()}
+
+                {messageEditorTab === 'primary' ? (
+                  <div>
+                    <label className="block text-xs font-bold text-gray-900 mb-1">
+                      Direct Message Copy {Array.isArray(selectedStep.config?.variants) && selectedStep.config.variants.length > 1 ? `(Variant ${activeVariantTab})` : ''}
+                    </label>
+                    <div className="relative rounded-xl border border-gray-200 bg-white focus-within:border-indigo-600 focus-within:ring-1 focus-within:ring-indigo-600 overflow-hidden">
+                      <textarea
+                        rows={5}
+                        maxLength={5000}
+                        value={
+                          Array.isArray(selectedStep.config?.variants) && selectedStep.config.variants.some((v) => v.id === activeVariantTab)
+                            ? (selectedStep.config.variants.find((v) => v.id === activeVariantTab)?.body || '')
+                            : (selectedStep.config?.body || '')
+                        }
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const variants = Array.isArray(selectedStep.config?.variants) ? selectedStep.config.variants : [];
+                          const nextVariants = variants.length
+                            ? variants.map((v) => (v.id === activeVariantTab ? { ...v, body: val } : v))
+                            : undefined;
+                          const primaryBody = activeVariantTab === 'A' ? val : (selectedStep.config?.body || val);
+                          setTree((prev) =>
+                            updateNode(prev, selectedStep.id, {
+                              config: {
+                                ...selectedStep.config,
+                                body: primaryBody,
+                                ...(nextVariants ? { variants: nextVariants } : {}),
+                              },
+                              isActionRequired: primaryBody.trim().length === 0,
+                              subtitle: primaryBody.trim().length > 0 ? primaryBody.slice(0, 32) + '...' : 'Action required',
+                            })
+                          );
+                        }}
+                        placeholder="Hi {{first_name}}, thanks for connecting! Most {{position}} leaders at {{company_name}} mention [PAIN POINT]..."
+                        className="w-full p-3 pr-10 text-xs focus:outline-none resize-none font-sans border-0"
+                      />
+
+                      {/* Right-side vertical icon column inside textarea (Screenshots 7 & 8) */}
+                      <div className="absolute right-2 top-2.5 flex flex-col items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenPreview(selectedStep)}
+                          title="Preview personalized message"
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={openPromptLibrary}
+                          title="Insert AI prompt or template"
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-purple-600 hover:bg-purple-50 transition-colors cursor-pointer"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      {/* Bottom bar inside textarea: Improve with AI + Remaining Character Count */}
+                      <div className="flex items-center justify-between px-3 py-2 bg-gray-50/80 border-t border-gray-100">
+                        <button
+                          type="button"
+                          onClick={handleImproveMessageWithAi}
+                          disabled={improvingWithAi}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold border border-indigo-200 transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>{improvingWithAi ? 'Improving...' : 'Improve with AI'}</span>
+                        </button>
+                        <span className="text-[11px] font-mono text-gray-400" data-testid="message-remaining-chars">
+                          {Math.max(0, 5000 - (selectedStep.config?.body || '').length)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {containsUnreplacedBracketsClient(selectedStep.config?.body || '') && (
+                      <div
+                        role="alert"
+                        data-testid="unreplaced-brackets-warning"
+                        className="mt-2 rounded-xl border border-amber-300 bg-amber-50 p-2.5 text-[11px] font-semibold text-amber-900 flex items-start gap-2"
+                      >
+                        <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <span>Make sure to replace the example text in [BRACKETS] with your own wording before saving</span>
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+
+                {/* Fallback / Alternative Message Box (always rendered in DOM for tests + highlighted when fallback tab is selected) */}
+                <div className={`p-3 rounded-xl bg-amber-50/50 border border-amber-200/80 space-y-2 ${messageEditorTab === 'fallback' ? 'ring-2 ring-indigo-500/30' : ''}`}>
                   <div className="flex items-center justify-between">
                     <label className="block text-xs font-bold text-gray-900">
                       Alternative Message (If variable is missing)
@@ -2580,6 +2858,25 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
                     placeholder="Hi {{first_name}}, great connecting with you in {{location}}! How are things going?"
                     className="w-full rounded-xl border border-amber-200 bg-white p-2.5 text-xs focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 resize-none"
                   />
+                </div>
+
+                {/* Cancel / Save buttons matching Screenshots 7 & 8 */}
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedStepId(null)}
+                    className="px-3.5 py-1.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-xs font-semibold text-gray-600 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="dripify-save-message-btn"
+                    onClick={() => handleSaveMessageStep(selectedStep)}
+                    className="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-xs font-bold text-white shadow-2xs cursor-pointer"
+                  >
+                    Save
+                  </button>
                 </div>
 
                 <div className="pt-2 border-t border-gray-100 space-y-2">
@@ -3306,7 +3603,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
               Delete step
             </button>
             <button
-              onClick={() => setSelectedStepId(null)}
+              onClick={() => handleSaveMessageStep(selectedStep)}
               className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors"
             >
               Done

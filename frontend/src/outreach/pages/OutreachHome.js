@@ -147,7 +147,8 @@ export default function OutreachHome({ onNavigate, onOpenWizard, onOpenCampaign 
         eventSource.close();
       }
     };
-  }, [loadOverview]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const isAccountConnected = connectedAccountsCount > 0;
   const isCampaignCreated = recentCampaigns.length > 0;

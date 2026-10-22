@@ -141,4 +141,138 @@ describe('OutreachSettings page', () => {
     await act(async () => [...container.querySelectorAll('button')].find((button) => button.textContent === 'Retry billing').click());
     expect(container.textContent).toContain('Paid access active');
   });
+
+  it('loads and displays live subscription monitor, expiry, voice quota, and operator overview on subscription-monitor tab', async () => {
+    global.fetch = jest.fn((url) => {
+      if (url === '/api/v1/outreach/billing/plans') {
+        return Promise.resolve(ok({ access_active: true, subscription: { seats: 2, status: 'active' } }));
+      }
+      if (url === '/api/v1/outreach/billing/subscription-monitor') {
+        return Promise.resolve(ok({
+          generated_at: '2026-10-22T14:30:00+00:00',
+          is_platform_operator: true,
+          posthog: {
+            backend_configured: true,
+            frontend_configured: true,
+            host: 'https://us.i.posthog.com',
+          },
+          elevenlabs: {
+            api_key_configured: true,
+            voice_studio_enabled: false,
+            model_id: 'eleven_turbo_v2_5',
+            max_daily_clips_per_sender: 20,
+            max_daily_chars_per_workspace: 20000,
+          },
+          workspace: {
+            workspace_id: 'ws_alpha',
+            workspace_name: 'Alpha Growth',
+            billing_email: 'founder@alpha.io',
+            lifecycle_state: 'active',
+            plan_label: 'Managed Pilot ($59/sender/mo)',
+            access_active: true,
+            seats_granted: 2,
+            seats_used: 1,
+            seats_remaining: 1,
+            country_code: 'US',
+            paid_through: '2026-10-27T14:30:00+00:00',
+            days_remaining: 5,
+            hours_remaining: 120,
+            expiring_soon: true,
+            cancel_at_period_end: false,
+            monthly_recurring_usd: 118,
+            active_campaigns_count: 2,
+            total_campaigns_count: 3,
+            active_members_24h: 1,
+            active_members_7d: 2,
+            total_members: 2,
+            members: [
+              {
+                user_id: 'u1',
+                email: 'founder@alpha.io',
+                display_name: 'Alice Founder',
+                role: 'owner',
+                last_active_at: '2026-10-22T14:00:00+00:00',
+                active_24h: true,
+                active_7d: true,
+              },
+            ],
+            senders: [
+              {
+                id: 'acc_1',
+                account_name: 'Alice LinkedIn',
+                status: 'connected',
+                seat_active: true,
+                proxy_country: 'US',
+                daily_invites_used: 9,
+                daily_invites_limit: 25,
+                daily_messages_used: 14,
+                daily_messages_limit: 50,
+                daily_voice_notes_used: 4,
+                daily_voice_notes_limit: 20,
+              },
+            ],
+            voice_usage: {
+              today_clips_used: 4,
+              daily_clips_limit: 20,
+              today_chars_used: 1250,
+              daily_chars_limit: 20000,
+              cloned_voices_count: 1,
+              max_cloned_voices: 5,
+              model_id: 'eleven_turbo_v2_5',
+            },
+          },
+          platform_overview: {
+            kpis: {
+              total_workspaces: 2,
+              active_paid_workspaces: 1,
+              expiring_within_7d_workspaces: 1,
+              expired_workspaces: 0,
+              pending_quote_workspaces: 1,
+              total_paid_seats: 2,
+              connected_senders: 1,
+              estimated_mrr_usd: 118,
+              total_users: 3,
+              active_users_24h: 2,
+              active_users_7d: 3,
+            },
+            subscribers: [
+              {
+                workspace_id: 'ws_alpha',
+                workspace_name: 'Alpha Growth',
+                owner_email: 'founder@alpha.io',
+                lifecycle_state: 'active',
+                plan_label: 'Managed Pilot ($59/sender/mo)',
+                access_active: true,
+                seats_granted: 2,
+                seats_used: 1,
+                country_code: 'US',
+                paid_through: '2026-10-27T14:30:00+00:00',
+                days_remaining: 5,
+                expiring_soon: true,
+                cancel_at_period_end: false,
+                monthly_recurring_usd: 118,
+                active_campaigns_count: 2,
+                active_members_24h: 1,
+                active_members_7d: 2,
+                total_members: 2,
+                voice_clips_today: 4,
+                voice_chars_today: 1250,
+              },
+            ],
+          },
+        }));
+      }
+      return Promise.reject(new Error(`Unexpected request: ${url}`));
+    });
+
+    await act(async () => root.render(<OutreachSettings initialTab="subscription-monitor" />));
+
+    expect(container.querySelector('[data-testid="subscription-monitor-view"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="platform-operator-overview"]')).not.toBeNull();
+    expect(container.textContent).toContain('Subscriptions, Active Users & Quota Monitor');
+    expect(container.textContent).toContain('Managed Pilot ($59/sender/mo)');
+    expect(container.textContent).toContain('5d left');
+    expect(container.textContent).toContain('1,250 / 20,000 chars');
+    expect(container.textContent).toContain('Alice LinkedIn');
+  });
 });

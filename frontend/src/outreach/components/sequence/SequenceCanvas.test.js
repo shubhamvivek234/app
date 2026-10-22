@@ -349,4 +349,45 @@ describe('Server-driven sequence capabilities', () => {
     expect(uploadBtn.disabled).toBe(false);
     expect(container.textContent).toContain('Mohit Cloned Voice');
   });
+
+  it('renders Dripify message editor with Primary/Fallback tabs and warns when [BRACKETS] are unreplaced', async () => {
+    global.fetch = jest.fn((url) => {
+      if (url.endsWith('/api/v1/outreach/sequence-capabilities')) return Promise.resolve(ok(CAPABILITIES));
+      if (url.includes('/api/v1/outreach/sequences')) {
+        return Promise.resolve(ok({
+          tree: [
+            {
+              id: 'step_msg',
+              type: 'send_message',
+              title: 'Message',
+              subtitle: 'Send message',
+              delay_hours: 0,
+              config: { body: 'Hi {{first_name}}, saw your post about [insert topic]!' },
+            },
+          ],
+        }));
+      }
+      return Promise.resolve(ok([]));
+    });
+
+    await act(async () => root.render(<SequenceCanvas campaignId="camp-1" />));
+
+    const msgCard = [...container.querySelectorAll('h4')].find((el) => el.textContent.includes('Message'));
+    expect(msgCard).toBeTruthy();
+    await act(async () => msgCard.click());
+
+    // Dripify message editor header, tabs, and unreplaced brackets warning
+    expect(container.querySelector('[data-testid="dripify-message-editor"]')).toBeTruthy();
+    expect(container.textContent).toContain('Input your LinkedIn message');
+    expect(container.textContent).toContain('Primary message');
+    expect(container.textContent).toContain('Fallback message (optional)');
+    expect(container.querySelector('[data-testid="unreplaced-brackets-warning"]')).toBeTruthy();
+    expect(container.textContent).toContain('Make sure to replace the example text in [BRACKETS] with your own wording before saving');
+
+    // Clicking Save inside the Dripify message editor keeps the editor open and blocks saving when [BRACKETS] remain
+    const saveStepBtn = container.querySelector('[data-testid="dripify-save-message-btn"]');
+    expect(saveStepBtn).toBeTruthy();
+    await act(async () => saveStepBtn.click());
+    expect(container.querySelector('[data-testid="dripify-message-editor"]')).toBeTruthy();
+  });
 });

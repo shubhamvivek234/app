@@ -50,14 +50,8 @@ const AuthCallback = () => {
         const user = response.data;
         setUser(user);
 
-        // Redirect based on user state
-        if (user.subscription_status === 'active' || user.onboarding_completed) {
-          toast.success('Welcome back!');
-          navigate('/dashboard');
-        } else {
-          toast.success("Welcome! Let's get you set up.");
-          navigate('/onboarding');
-        }
+        toast.success('Welcome to Unravler Outreach!');
+        navigate('/outreach');
       } catch (error) {
         console.error('Auth callback error:', error);
         // Clear any partial state

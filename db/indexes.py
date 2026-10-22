@@ -264,6 +264,8 @@ async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
     await _safe_create_index(db.users, [("subscription_status", 1), ("subscription_expires_at", 1)])
     await _safe_create_index(db.users, [("status", 1), ("deletion_next_publish_at", 1)])
     # Webhook lookup indexes (Stripe + Razorpay match by customer ID and email)
+    await _safe_create_index(db.users, [("user_id", 1)], unique=True)
+    await _safe_create_index(db.users, [("firebase_uid", 1)], unique=True, sparse=True)
     await _safe_create_index(db.users, [("email", 1)], unique=True)
     await _safe_create_index(db.users, [("stripe_customer_id", 1)])
     await _safe_create_index(db.users, [("razorpay_customer_id", 1)])
@@ -350,7 +352,14 @@ async def create_all_indexes(client: AsyncIOMotorClient | None = None) -> None:
     await _safe_create_index(db.webhook_events, [("created_at", 1)], expireAfterSeconds=604800)  # 7-day TTL
 
     # workspaces / workspace_members
+    await _safe_create_index(db.workspaces, [("workspace_id", 1)], unique=True)
     await _safe_create_index(db.workspaces, [("owner_id", 1)])
+    await _safe_create_index(
+        db.workspaces,
+        [("owner_id", 1), ("workspace_type", 1)],
+        unique=True,
+        partialFilterExpression={"workspace_type": "personal"},
+    )
     await _safe_create_index(db.workspace_members, [("workspace_id", 1), ("user_id", 1)], unique=True)
 
     # posting_sets

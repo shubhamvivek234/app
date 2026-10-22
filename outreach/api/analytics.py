@@ -127,27 +127,92 @@ async def get_outreach_analytics(
         post_engagements += await db.outreach_engage_posts.count_documents({**engage_filter, "commented_at": {"$gte": period_start}})
     total_engagement = profile_visits + post_engagements
 
-    # Days breakdown
+    # Days breakdown (prefer batched aggregation to avoid 6*num_days round-trips, with count_documents fallback)
     count_slots = asyncio.Semaphore(8)
 
     async def count_for_day(collection, query: dict) -> int:
         async with count_slots:
             return await collection.count_documents(query)
 
+    chart_start = (now - timedelta(days=num_days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    chart_window = {"$gte": chart_start, "$lte": now}
+
+    async def _batched_daily_map(collection, match_query: dict, date_field: str) -> dict[str, int] | None:
+        if not hasattr(collection, "aggregate"):
+            return None
+        try:
+            pipeline = [
+                {"$match": match_query},
+                {
+                    "$group": {
+                        "_id": {
+                            "$dateToString": {
+                                "format": "%Y-%m-%d",
+                                "date": f"${date_field}",
+                                "timezone": "UTC",
+                            }
+                        },
+                        "count": {"$sum": 1},
+                    }
+                },
+            ]
+            cursor = collection.aggregate(pipeline)
+            if hasattr(cursor, "to_list"):
+                rows = await cursor.to_list(length=num_days + 5)
+            else:
+                rows = [r async for r in cursor]
+            if not isinstance(rows, list):
+                return None
+            out: dict[str, int] = {}
+            for row in rows:
+                if isinstance(row, dict) and isinstance(row.get("_id"), str):
+                    out[row["_id"]] = int(row.get("count", 0) or 0)
+            return out
+        except Exception:
+            return None
+
+    (
+        sent_by_day,
+        messages_by_day,
+        accepted_by_day,
+        replied_by_day,
+        visits_by_day,
+        post_eng_by_day,
+    ) = await asyncio.gather(
+        _batched_daily_map(db.outreach_tasks, task_filter("connection_request", {"updated_at": chart_window}), "updated_at"),
+        _batched_daily_map(db.outreach_tasks, task_filter("send_message", {"updated_at": chart_window}), "updated_at"),
+        _batched_daily_map(db.outreach_leads, lead_filter({"is_connected": True, "accepted_at": chart_window}), "accepted_at"),
+        _batched_daily_map(db.outreach_leads, lead_filter({"has_replied": True, "replied_at": chart_window}), "replied_at"),
+        _batched_daily_map(db.outreach_tasks, task_filter("visit_profile", {"updated_at": chart_window}), "updated_at"),
+        _batched_daily_map(db.outreach_tasks, task_filter({"$in": ["like_last_post", "comment_last_post"]}, {"updated_at": chart_window}), "updated_at"),
+    )
+
     async def day_summary(d: int) -> dict:
         day_date = now - timedelta(days=d)
         label = day_date.strftime("%d %b")
+        day_key = day_date.strftime("%Y-%m-%d")
         day_start = day_date.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day_start + timedelta(days=1)
         day_range = {"$gte": day_start, "$lt": day_end, "$lte": now}
-        sent, messages_day, accepted, replied, visits_day, post_eng_day = await asyncio.gather(
-            count_for_day(db.outreach_tasks, task_filter("connection_request", {"updated_at": day_range})),
-            count_for_day(db.outreach_tasks, task_filter("send_message", {"updated_at": day_range})),
-            count_for_day(db.outreach_leads, lead_filter({"is_connected": True, "accepted_at": day_range})),
-            count_for_day(db.outreach_leads, lead_filter({"has_replied": True, "replied_at": day_range})),
-            count_for_day(db.outreach_tasks, task_filter("visit_profile", {"updated_at": day_range})),
-            count_for_day(db.outreach_tasks, task_filter({"$in": ["like_last_post", "comment_last_post"]}, {"updated_at": day_range})),
-        )
+        if all(
+            m is not None
+            for m in (sent_by_day, messages_by_day, accepted_by_day, replied_by_day, visits_by_day, post_eng_by_day)
+        ):
+            sent = sent_by_day.get(day_key, 0)
+            messages_day = messages_by_day.get(day_key, 0)
+            accepted = accepted_by_day.get(day_key, 0)
+            replied = replied_by_day.get(day_key, 0)
+            visits_day = visits_by_day.get(day_key, 0)
+            post_eng_day = post_eng_by_day.get(day_key, 0)
+        else:
+            sent, messages_day, accepted, replied, visits_day, post_eng_day = await asyncio.gather(
+                count_for_day(db.outreach_tasks, task_filter("connection_request", {"updated_at": day_range})),
+                count_for_day(db.outreach_tasks, task_filter("send_message", {"updated_at": day_range})),
+                count_for_day(db.outreach_leads, lead_filter({"is_connected": True, "accepted_at": day_range})),
+                count_for_day(db.outreach_leads, lead_filter({"has_replied": True, "replied_at": day_range})),
+                count_for_day(db.outreach_tasks, task_filter("visit_profile", {"updated_at": day_range})),
+                count_for_day(db.outreach_tasks, task_filter({"$in": ["like_last_post", "comment_last_post"]}, {"updated_at": day_range})),
+            )
         return {
             "date": label,
             "timestamp": day_date.isoformat(),

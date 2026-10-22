@@ -7,7 +7,7 @@ import re
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
-from outreach.core.dag_compiler import DAGCompiler, contains_ai_prompt_token, interpolate_template, resolve_step_message_with_alternative
+from outreach.core.dag_compiler import DAGCompiler, contains_ai_prompt_token, contains_unreplaced_brackets, interpolate_template, resolve_step_message_with_alternative
 from outreach.core.sequence_capabilities import sequence_capability_map
 from outreach.core.sequence_contract import DAGValidationError, bounded_json, delay_hours, MAX_RENDER_CHARS
 
@@ -158,6 +158,8 @@ def analyze_sequence(compiled: dict) -> dict:
             issue('unsupported_step', identity, 'This step has no supported campaign runner.', 'error')
         if contains_ai_prompt_token(config):
             issue('unfinished_ai_prompt', identity, 'Replace the AI prompt marker with reviewed message copy.', 'error')
+        if contains_unreplaced_brackets(config):
+            issue('unreplaced_bracket_placeholder', identity, 'Make sure to replace the example text in [BRACKETS] with your own wording before saving', 'error')
         for variant_id, copies in all_variant_templates(node):
             if sum(len(value) for value in copies.values() if isinstance(value, str)) > MAX_RENDER_CHARS:
                 issue('message_copy_too_large', identity, 'Message copy exceeds the 10,000-character review bound.', 'error')

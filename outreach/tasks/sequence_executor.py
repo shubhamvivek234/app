@@ -172,6 +172,71 @@ async def _recipient_has_reply(db, workspace_id: str, sender_id: str, lead: dict
         any(message.get("sender_type") == "lead" for message in thread.get("messages") or []) for thread in threads)
 
 
+async def _resolve_sequence_tag_updates(
+    db: Any,
+    workspace_id: str,
+    lead: dict[str, Any],
+    raw_tag_val: str,
+) -> dict[str, Any]:
+    """Resolve or create a canonical CRM tag (`tag_ids` + `tag_revision`) alongside legacy `tags`."""
+    tag_val = str(raw_tag_val or "").strip()
+    if not tag_val:
+        return {}
+    existing_tags = list(lead.get("tags") or [])
+    if tag_val not in existing_tags:
+        existing_tags.append(tag_val)
+    updates: dict[str, Any] = {"tags": existing_tags}
+
+    tag_coll = getattr(db, "outreach_lead_tags", None)
+    if tag_coll is None or not hasattr(tag_coll, "find_one"):
+        return updates
+
+    try:
+        from outreach.core.lead_tags import TAG_ID_RE, MAX_TAGS_PER_LEAD, MAX_WORKSPACE_TAGS, clean_tag_name
+        from outreach.core.workspace_scope import workspace_scope
+
+        scope = workspace_scope(workspace_id)
+        now = datetime.now(timezone.utc)
+        tag_doc = None
+        if TAG_ID_RE.fullmatch(tag_val):
+            tag_doc = await tag_coll.find_one({**scope, "id": tag_val})
+        else:
+            display, normalized = clean_tag_name(tag_val[:60])
+            tag_doc = await tag_coll.find_one({**scope, "name_normalized": normalized})
+            if not isinstance(tag_doc, dict) and hasattr(tag_coll, "insert_one"):
+                count = await tag_coll.count_documents(scope) if hasattr(tag_coll, "count_documents") else 0
+                if not isinstance(count, int) or count < MAX_WORKSPACE_TAGS:
+                    new_id = "tag_" + uuid.uuid4().hex[:24]
+                    candidate = {
+                        "id": new_id,
+                        "workspace_id": workspace_id,
+                        "name": display,
+                        "name_normalized": normalized,
+                        "color": "#6366f1",
+                        "revision": 1,
+                        "created_by": "sequence_executor",
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                    await tag_coll.insert_one(candidate)
+                    tag_doc = candidate
+
+        if isinstance(tag_doc, dict) and isinstance(tag_doc.get("id"), str) and "archived_at" not in tag_doc:
+            tag_id = tag_doc["id"]
+            existing_tag_ids = [tid for tid in (lead.get("tag_ids") or []) if isinstance(tid, str)]
+            if tag_id not in existing_tag_ids and len(existing_tag_ids) < MAX_TAGS_PER_LEAD:
+                existing_tag_ids.append(tag_id)
+                current_rev = lead.get("tag_revision", 0)
+                next_rev = (current_rev if type(current_rev) is int and current_rev >= 0 else 0) + 1
+                updates["tag_ids"] = existing_tag_ids
+                updates["tag_revision"] = next_rev
+                updates["tags_updated_at"] = now
+    except Exception as exc:
+        logger.debug("Canonical sequence tag resolution skipped (%s)", type(exc).__name__)
+
+    return updates
+
+
 async def _advance_lead(db, lead: dict, updates: dict, *, unset: dict | None = None) -> bool:
     """CAS advancement cannot erase a reply observed during preparation/submission."""
     from outreach.core.search_sources import SEARCH_PROVENANCE_QUERY, unverified_search_lead
@@ -605,9 +670,8 @@ class SequenceExecutor:
         if node_type == SequenceNodeType.ADD_TAG:
             _, effective_config = select_step_variant({"id": curr_node_id, **node}, lead)
             tag_val = str(effective_config.get("tag_name") or effective_config.get("auto_tag") or "").strip()
+            resolved_tag_fields = await _resolve_sequence_tag_updates(db, workspace_id, lead, tag_val)
             existing_tags = list(lead.get("tags") or [])
-            if tag_val and tag_val not in existing_tags:
-                existing_tags.append(tag_val)
             now_done = datetime.now(timezone.utc)
             next_node_id = node.get("next_default")
             transition = successor_fields(compiled, next_node_id, now_done)
@@ -615,6 +679,7 @@ class SequenceExecutor:
             tag_updates: dict[str, Any] = {
                 **transition,
                 "tags": existing_tags,
+                **resolved_tag_fields,
                 "last_action_taken": SequenceNodeType.ADD_TAG,
                 "last_action_at": now_done,
                 "updated_at": now_done,
@@ -1092,9 +1157,7 @@ class SequenceExecutor:
 
         if node_type == SequenceNodeType.CONNECTION_REQUEST and node.get("branches"):
             auto_tag_val = str(effective_config.get("auto_tag") or "").strip()
-            existing_tags = list(lead.get("tags") or [])
-            if auto_tag_val and auto_tag_val not in existing_tags:
-                existing_tags.append(auto_tag_val)
+            resolved_tag_fields = await _resolve_sequence_tag_updates(db, workspace_id, lead, auto_tag_val)
             if lead.get('_id') is not None and lead.get('enrollment_id') and campaign.get('sequence_version_id'):
                 from outreach.core.connection_waits import begin_wait, ConnectionWaitUnavailable
                 from outreach.core.suppression import SuppressionUnavailable
@@ -1104,8 +1167,8 @@ class SequenceExecutor:
                 except (ConnectionWaitUnavailable, SuppressionUnavailable, EpochUnavailable):
                     return {'status': 'connection_wait_review_required'}
                 if retained:
-                    if auto_tag_val:
-                        await _advance_lead(db, lead, {"tags": existing_tags})
+                    if resolved_tag_fields:
+                        await _advance_lead(db, lead, resolved_tag_fields)
                     return {'status': 'success', 'action': action_name, 'waiting_for': 'connection', 'connection_wait_id': retained['_id']}
             waiting_since = datetime.now(timezone.utc)
             invite_wait_fields: dict[str, Any] = {
@@ -1115,18 +1178,15 @@ class SequenceExecutor:
                 "last_action_taken": action_name,
                 "last_action_at": waiting_since,
                 "updated_at": waiting_since,
+                **resolved_tag_fields,
             }
-            if auto_tag_val:
-                invite_wait_fields["tags"] = existing_tags
             if not await _advance_lead(db, lead, invite_wait_fields):
                 return {"status": "lead_changed", "action": action_name}
             return {"status": "success", "action": action_name, "waiting_for": "connection"}
 
         if node_type in (SequenceNodeType.SEND_MESSAGE, SequenceNodeType.VOICE_NOTE) and node.get("branches"):
             auto_tag_val = str(effective_config.get("auto_tag") or "").strip()
-            existing_tags = list(lead.get("tags") or [])
-            if auto_tag_val and auto_tag_val not in existing_tags:
-                existing_tags.append(auto_tag_val)
+            resolved_tag_fields = await _resolve_sequence_tag_updates(db, workspace_id, lead, auto_tag_val)
             waiting_since = datetime.now(timezone.utc)
             msg_wait_fields: dict[str, Any] = {
                 "waiting_for_reply_at": waiting_since,
@@ -1135,9 +1195,8 @@ class SequenceExecutor:
                 "last_action_taken": action_name,
                 "last_action_at": waiting_since,
                 "updated_at": waiting_since,
+                **resolved_tag_fields,
             }
-            if auto_tag_val:
-                msg_wait_fields["tags"] = existing_tags
             if not await _advance_lead(db, lead, msg_wait_fields):
                 return {"status": "lead_changed", "action": action_name}
             return {"status": "success", "action": action_name, "waiting_for": "reply"}
@@ -1224,10 +1283,8 @@ class SequenceExecutor:
 
         auto_tag_val = str(effective_config.get("auto_tag") or "").strip()
         if auto_tag_val:
-            existing_tags = list(lead.get("tags") or [])
-            if auto_tag_val not in existing_tags:
-                existing_tags.append(auto_tag_val)
-            update_fields["tags"] = existing_tags
+            resolved_tag_fields = await _resolve_sequence_tag_updates(db, workspace_id, lead, auto_tag_val)
+            update_fields.update(resolved_tag_fields)
 
         if not await _advance_lead(db, lead, update_fields):
             return {"status": "lead_changed", "action": action_name}

@@ -15,6 +15,7 @@ import {
   LogOut,
 } from 'lucide-react';
 import UnravlerLogo from '@/components/UnravlerLogo';
+import { identifyOutreachContext } from '@/lib/analytics';
 
 export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, onSignOut, hideTopHeader = false, isFullBleed = false, children }) {
   const [workspaceName, setWorkspaceName] = useState('Workspace');
@@ -49,6 +50,14 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, on
       setWorkspaceName(workspace.status === 'fulfilled' && workspace.value?.workspace_name?.trim() || 'Workspace');
       const name = actor.status === 'fulfilled' && actor.value?.display_name?.trim();
       setActorInitials(name ? name.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase() : '?');
+      if (actor.status === 'fulfilled' && actor.value) {
+        identifyOutreachContext({
+          actor: actor.value,
+          billing: plan.status === 'fulfilled' ? plan.value : null,
+          accounts: accArr,
+          workspace: workspace.status === 'fulfilled' ? workspace.value : null,
+        });
+      }
     };
     fetchOverview();
     return () => { current = false; };

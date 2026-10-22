@@ -253,6 +253,35 @@ export default function ConnectLinkedInModal({ isOpen, onClose, onAccountConnect
           </div>
         )}
 
+        {(loading || pendingJobId) && !error && (
+          <div
+            data-testid="dedicated-ip-setup-card"
+            className="mb-5 overflow-hidden rounded-2xl border border-indigo-100 bg-gradient-to-b from-indigo-50/60 via-white to-white p-6 text-center shadow-sm"
+          >
+            <div className="mx-auto mb-4 flex h-32 w-40 items-center justify-center rounded-2xl bg-indigo-50/80 ring-1 ring-indigo-100">
+              <svg viewBox="0 0 160 120" className="h-24 w-32" aria-hidden="true">
+                <circle cx="80" cy="62" r="44" fill="#EEF2FF" />
+                <rect x="42" y="34" width="76" height="52" rx="10" fill="#FFFFFF" stroke="#818CF8" strokeWidth="2.5" />
+                <rect x="52" y="45" width="34" height="6" rx="3" fill="#C7D2FE" />
+                <rect x="52" y="56" width="52" height="5" rx="2.5" fill="#E0E7FF" />
+                <rect x="52" y="66" width="42" height="5" rx="2.5" fill="#E0E7FF" />
+                <circle cx="110" cy="36" r="14" fill="#8280F6" />
+                <path d="M104 36l4 4 8-8" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+              </svg>
+            </div>
+            <h3 className="text-base font-bold text-gray-900">
+              Please wait while we set things up for you!
+            </h3>
+            <p className="mx-auto mt-1.5 max-w-sm text-xs leading-relaxed text-gray-500">
+              Hold on while we verify your account and assign your dedicated static residential IP{proxyCountry ? ` (${proxyCountry})` : ''}. This could take several minutes, but normally only takes a few seconds.
+            </p>
+            <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3.5 py-1.5 text-xs font-semibold text-indigo-700">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-600" aria-hidden="true" />
+              <span>{loading ? 'Verifying session & dedicated IP lease...' : 'Verification in progress'}</span>
+            </div>
+          </div>
+        )}
+
         <form onSubmit={handleConnectCookie} autoComplete="off">
           <div className="space-y-4">
             <div>

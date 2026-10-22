@@ -46,6 +46,10 @@ COLUMN_ALIASES = {
     "phone": ["phone", "phone_number", "mobile", "telephone"],
     "member_urn": ["member_urn", "linkedin_urn", "urn", "profile_urn", "member_id"],
     "sales_lead_urn": ["sales_lead_urn", "sales_urn", "sales_navigator_url", "sales_url", "sales_lead"],
+    "avatar_url": ["avatar_url", "avatar", "photo_url", "photo", "profile_picture", "profile_photo", "image_url"],
+    "is_open_profile": ["is_open_profile", "open_profile", "open profile"],
+    "is_premium": ["is_premium", "premium", "linkedin_premium", "paid_account"],
+    "profile_type": ["profile_type", "profile type", "account_type", "account type"],
 }
 
 
@@ -542,6 +546,54 @@ async def _fetch_cursor_docs(cursor_or_coro: Any, length: int | None = 50000) ->
     return []
 
 
+def evaluate_lead_filter_rules(
+    lead: dict[str, Any],
+    filter_rules: dict[str, Any] | None = None,
+) -> tuple[str | None, str | None]:
+    """
+    Evaluates Dripify Step 3/4 lead filtering rules against a candidate lead:
+    - require_open_profile: Do not add if lead does not have an Open Profile
+    - require_profile_photo: Do not add if lead has no photo on profile
+    - min_connections_500: Do not add if lead has less than 500 connections
+    - exclude_free_account: Do not add if lead has a free LinkedIn account
+    Only rejects when explicit negative evidence exists on the lead record so URL-only/minimal CSV rows are not falsely dropped unless the attribute is explicitly present and fails.
+    """
+    if not isinstance(filter_rules, dict) or not filter_rules:
+        return None, None
+    custom_vars = lead.get("custom_variables") if isinstance(lead.get("custom_variables"), dict) else {}
+
+    if filter_rules.get("require_open_profile") is True:
+        open_val = lead.get("is_open_profile")
+        prof_type = str(lead.get("profile_type") or custom_vars.get("profile_type") or "").strip().lower()
+        if open_val is False or (prof_type and prof_type in {"closed", "free", "basic", "standard"} and open_val is not True):
+            return "filtered_not_open_profile", "Lead does not have an Open Profile (filtered by list rule)"
+
+    if filter_rules.get("require_profile_photo") is True:
+        avatar = lead.get("avatar_url") if "avatar_url" in lead else custom_vars.get("avatar_url")
+        has_photo = lead.get("has_photo") if "has_photo" in lead else custom_vars.get("has_photo")
+        if (has_photo is not None and (has_photo is False or str(has_photo).strip().lower() in {"false", "no", "0", "none"})) or (
+            "avatar_url" in lead and avatar is not None and str(avatar).strip().lower() in {"", "none", "no_photo", "null", "false"}
+        ):
+            return "filtered_no_photo", "No photo on lead's profile (filtered by list rule)"
+
+    if filter_rules.get("min_connections_500") is True:
+        raw_conns = lead.get("connections_count") or custom_vars.get("connections_count") or custom_vars.get("connections")
+        if raw_conns is not None and str(raw_conns).strip():
+            s_conns = str(raw_conns).strip().replace(",", "")
+            if "+" not in s_conns:
+                m = re.search(r"\d+", s_conns)
+                if m and int(m.group(0)) < 500:
+                    return "filtered_under_500_connections", f"Lead has fewer than 500 connections ({raw_conns})"
+
+    if filter_rules.get("exclude_free_account") is True:
+        prem_val = lead.get("is_premium")
+        prof_type = str(lead.get("profile_type") or custom_vars.get("profile_type") or "").strip().lower()
+        if prem_val is False or prof_type in {"free", "basic"}:
+            return "filtered_free_account", "Lead has a free LinkedIn account (filtered by list rule)"
+
+    return None, None
+
+
 class LeadImporter:
     """
     Parses and ingests leads into campaigns while enforcing deduplication and safety rules.
@@ -764,6 +816,18 @@ class LeadImporter:
                 "mutual_connections": (row.get(header_mapping.get("mutual_connections", "")) or "").strip(),
                 "email": email,
                 "phone": (row.get(header_mapping.get("phone", "")) or "").strip() or None,
+                "avatar_url": (row.get(header_mapping.get("avatar_url", "")) or "").strip() or None,
+                "profile_type": (row.get(header_mapping.get("profile_type", "")) or "").strip() or None,
+                "is_open_profile": (
+                    True if (row.get(header_mapping.get("is_open_profile", "")) or "").strip().lower() in {"true", "yes", "1", "open"}
+                    else False if (row.get(header_mapping.get("is_open_profile", "")) or "").strip().lower() in {"false", "no", "0", "closed"}
+                    else None
+                ),
+                "is_premium": (
+                    True if (row.get(header_mapping.get("is_premium", "")) or "").strip().lower() in {"true", "yes", "1", "premium", "paid"}
+                    else False if (row.get(header_mapping.get("is_premium", "")) or "").strip().lower() in {"false", "no", "0", "free", "basic"}
+                    else None
+                ),
                 "identifiers": identifiers.model_dump(),
                 "custom_variables": {},
                 "source": "csv",
@@ -797,6 +861,7 @@ class LeadImporter:
         require_name: bool = False,
         _match_limit: int | None = None,
         skip_team_campaign_leads: bool | None = None,
+        filter_rules: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Validates lead intake preview against deduplication, DNC, and field requirements.
@@ -813,6 +878,8 @@ class LeadImporter:
                 "rows": [],
             }
 
+        if skip_team_campaign_leads is None and isinstance(filter_rules, dict) and "skip_other_campaigns" in filter_rules:
+            skip_team_campaign_leads = bool(filter_rules.get("skip_other_campaigns"))
         if skip_team_campaign_leads is None and hasattr(db, "outreach_campaigns"):
             try:
                 c_doc = await db.outreach_campaigns.find_one({"id": campaign_id, **workspace_scope(workspace_id)})
@@ -945,7 +1012,13 @@ class LeadImporter:
                 match_info = withdrawn_matches[idx - 1]
                 error_reason = f"Invitation recently withdrawn; LinkedIn blocks re-inviting for 21 days ({match_info.get('reason', 'Withdrawn cooldown')})"
             else:
-                seen_batch_keys.update(cand_keys)
+                filter_code, filter_reason = evaluate_lead_filter_rules(lead, filter_rules)
+                if filter_code:
+                    status = "rejected"
+                    rejection_code = filter_code
+                    error_reason = filter_reason
+                else:
+                    seen_batch_keys.update(cand_keys)
 
             rows.append({
                 "row_number": idx,
@@ -1009,6 +1082,7 @@ class LeadImporter:
         _match_limit: int | None = None,
         _import_scope: ImportScope | None = None,
         skip_team_campaign_leads: bool | None = None,
+        filter_rules: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Deduplicates and bulk-inserts parsed leads into MongoDB for the given campaign.
@@ -1021,7 +1095,7 @@ class LeadImporter:
             async def admit(current):
                 return await LeadImporter.ingest_leads(leads, campaign_id, workspace_id, current,
                     skip_already_contacted, skip_do_not_contact, None, source, source_metadata,
-                    require_name, include_rejections, _ordered=True, _staged_rows=_staged_rows, _record_decisions=_record_decisions, _match_limit=_match_limit, _import_scope=_import_scope, skip_team_campaign_leads=skip_team_campaign_leads)
+                    require_name, include_rejections, _ordered=True, _staged_rows=_staged_rows, _record_decisions=_record_decisions, _match_limit=_match_limit, _import_scope=_import_scope, skip_team_campaign_leads=skip_team_campaign_leads, filter_rules=filter_rules)
             try:
                 return await mutate_suppression(db, workspace_id, admit)
             except SuppressionUnavailable:
@@ -1150,7 +1224,18 @@ class LeadImporter:
                 extra_filter={"last_action_at": {"$ne": None}},
                 max_matches=_match_limit,
             )
-        skip_team = bool(skip_team_campaign_leads) if skip_team_campaign_leads is not None else bool(campaign.get("skip_team_campaign_leads"))
+        effective_filters = filter_rules if isinstance(filter_rules, dict) else (
+            source_metadata.get("filter_rules") if isinstance(source_metadata, dict) and isinstance(source_metadata.get("filter_rules"), dict) else None
+        )
+        skip_team = (
+            bool(skip_team_campaign_leads)
+            if skip_team_campaign_leads is not None
+            else (
+                bool(effective_filters.get("skip_other_campaigns"))
+                if isinstance(effective_filters, dict) and "skip_other_campaigns" in effective_filters
+                else bool(campaign.get("skip_team_campaign_leads"))
+            )
+        )
         team_campaign_dupes = {}
         if skip_team:
             team_campaign_dupes = await check_compound_suppression(
@@ -1304,6 +1389,17 @@ class LeadImporter:
                 })
                 continue
 
+            filter_code, filter_reason = evaluate_lead_filter_rules(lead, effective_filters)
+            if filter_code:
+                skipped_count += 1
+                reject({
+                    "linkedin_url": url,
+                    "first_name": first_name,
+                    "rejection_code": filter_code,
+                    "reason": filter_reason or "Filtered by lead list rule",
+                })
+                continue
+
             seen_batch_keys.update(cand_keys)
 
             assigned_account_id = active_senders[(assigned_offset + len(to_insert)) % len(active_senders)] if active_senders else None
@@ -1311,6 +1407,8 @@ class LeadImporter:
             meta.setdefault("source_type", source)
             meta.setdefault("consent_basis", "user_provided")
             meta.setdefault("imported_at", datetime.now(timezone.utc).isoformat())
+            if isinstance(effective_filters, dict) and effective_filters:
+                meta["filter_rules"] = dict(effective_filters)
             initial_tags = list(lead.get("tags") or [])
             list_name_tag = str(meta.get("list_name") or "").strip()
             if list_name_tag and list_name_tag not in initial_tags:

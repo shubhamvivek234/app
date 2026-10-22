@@ -253,6 +253,9 @@ def select_step_variant(
     return variant_id, merged
 
 
+_BRACKET_PLACEHOLDER_RE = re.compile(r"(?<!✨\s)(?<!✨)\[([A-Za-z][A-Za-z0-9_\s/-]{1,39})\]")
+
+
 def contains_ai_prompt_token(value: Any) -> bool:
     """Detect prompt-library tokens that the live sequence runner cannot generate."""
     if isinstance(value, str):
@@ -262,6 +265,37 @@ def contains_ai_prompt_token(value: Any) -> bool:
     if isinstance(value, (list, tuple)):
         return any(contains_ai_prompt_token(item) for item in value)
     return False
+
+
+def find_unreplaced_brackets(value: Any) -> list[str]:
+    """
+    Finds unreplaced user example placeholders in [BRACKETS] (e.g. [PAIN POINT], [BENEFIT]),
+    ignoring AI prompt tokens (`✨ [Prompt Name]`).
+    """
+    found: list[str] = []
+    if isinstance(value, str):
+        # Strip AI prompt tokens first so ✨ [Prompt Name] is not matched
+        cleaned = re.sub(r"✨\s*\[[^\]]+\]", "", value)
+        for m in _BRACKET_PLACEHOLDER_RE.finditer(cleaned):
+            token = f"[{m.group(1).strip()}]"
+            if token not in found:
+                found.append(token)
+    elif isinstance(value, dict):
+        for item in value.values():
+            for t in find_unreplaced_brackets(item):
+                if t not in found:
+                    found.append(t)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            for t in find_unreplaced_brackets(item):
+                if t not in found:
+                    found.append(t)
+    return found
+
+
+def contains_unreplaced_brackets(value: Any) -> bool:
+    """Returns True if `value` contains any unreplaced `[BRACKETS]` example text."""
+    return bool(find_unreplaced_brackets(value))
 
 
 class DAGCompiler:

@@ -92,6 +92,7 @@ class ImportCSVRequest(BaseModel):
     skip_already_contacted: bool = True
     skip_do_not_contact: bool = True
     skip_team_campaign_leads: bool | None = None
+    filter_rules: dict[str, Any] | None = None
     require_name: bool = Field(default=False, strict=True)
     consent_basis: str = Field(default="user_provided", description="Consent or source basis")
     request_id: str | None = Field(default=None, max_length=128)
@@ -106,6 +107,7 @@ class ImportURLsRequest(BaseModel):
     skip_already_contacted: bool = True
     skip_do_not_contact: bool = True
     skip_team_campaign_leads: bool | None = None
+    filter_rules: dict[str, Any] | None = None
     require_name: bool = True
     consent_basis: str = Field(default="user_provided", description="Consent or source basis")
     request_id: str | None = Field(default=None, max_length=128)
@@ -118,6 +120,7 @@ class ImportStagedRequest(BaseModel):
     skip_already_contacted: bool = True
     skip_do_not_contact: bool = True
     skip_team_campaign_leads: bool | None = None
+    filter_rules: dict[str, Any] | None = None
     require_name: bool = False
     consent_basis: str = Field(default="user_provided", description="Consent or source basis")
     request_id: str | None = Field(default=None, max_length=128)
@@ -133,6 +136,7 @@ class LeadPreviewRequest(BaseModel):
     skip_already_contacted: bool = True
     skip_do_not_contact: bool = True
     skip_team_campaign_leads: bool | None = None
+    filter_rules: dict[str, Any] | None = None
     require_name: bool = False
 
 
@@ -143,6 +147,7 @@ class ImportSearchRequest(BaseModel):
     search_type: str = Field(default="basic", description="'basic' | 'sales_nav' | 'recruiter' | 'connections'")
     max_leads: int = Field(default=100, ge=1, le=2500)
     list_name: str | None = Field(default=None, max_length=120, description="Optional contact list name (preserves exact capitalization)")
+    filter_rules: dict[str, Any] | None = None
 
 
 class ValidateSourceUrlRequest(BaseModel):
@@ -332,6 +337,7 @@ async def preview_leads_intake(
         skip_do_not_contact=req.skip_do_not_contact,
         require_name=req.require_name,
         skip_team_campaign_leads=req.skip_team_campaign_leads,
+        filter_rules=req.filter_rules,
     ))
 
 
@@ -349,7 +355,7 @@ async def preview_edited_leads(
     await ensure_intake_provenance(db, _workspace_id(current_user), req.leads, "staged_preview")
     return scoped_result(context, await LeadImporter.preview_leads(req.leads, req.campaign_id, _workspace_id(current_user), db,
         skip_already_contacted=req.skip_already_contacted, skip_do_not_contact=True,
-        require_name=req.require_name, skip_team_campaign_leads=req.skip_team_campaign_leads))
+        require_name=req.require_name, skip_team_campaign_leads=req.skip_team_campaign_leads, filter_rules=req.filter_rules))
 
 
 async def _get_or_save_import_receipt(
@@ -506,11 +512,13 @@ async def import_leads_urls(
             "source_type": "pasted_urls",
             "consent_basis": req.consent_basis,
             **({"list_name": req.list_name.strip()} if req.list_name and req.list_name.strip() else {}),
+            **({"filter_rules": dict(req.filter_rules)} if isinstance(req.filter_rules, dict) and req.filter_rules else {}),
         },
         require_name=req.require_name,
         include_rejections=True,
         _import_scope=context,
         skip_team_campaign_leads=req.skip_team_campaign_leads,
+        filter_rules=req.filter_rules,
     )
     await _get_or_save_import_receipt(db, workspace_id, req.campaign_id, req.request_id or f"rep_{uuid.uuid4().hex[:12]}", "pasted_urls", result)
 
@@ -582,11 +590,13 @@ async def import_leads_csv(
             "source_type": "csv",
             "consent_basis": req.consent_basis,
             **({"list_name": req.list_name.strip()} if req.list_name and req.list_name.strip() else {}),
+            **({"filter_rules": dict(req.filter_rules)} if isinstance(req.filter_rules, dict) and req.filter_rules else {}),
         },
         require_name=req.require_name,
         include_rejections=True,
         _import_scope=context,
         skip_team_campaign_leads=req.skip_team_campaign_leads,
+        filter_rules=req.filter_rules,
     )
     await _get_or_save_import_receipt(db, workspace_id, req.campaign_id, req.request_id or f"rep_{uuid.uuid4().hex[:12]}", "csv", result)
 
@@ -651,11 +661,13 @@ async def import_leads_staged(
             "source_type": "staged_preview",
             "consent_basis": req.consent_basis,
             **({"list_name": req.list_name.strip()} if req.list_name and req.list_name.strip() else {}),
+            **({"filter_rules": dict(req.filter_rules)} if isinstance(req.filter_rules, dict) and req.filter_rules else {}),
         },
         require_name=req.require_name,
         include_rejections=True,
         _import_scope=context,
         skip_team_campaign_leads=req.skip_team_campaign_leads,
+        filter_rules=req.filter_rules,
     )
     await _get_or_save_import_receipt(db, workspace_id, req.campaign_id, req.request_id, "staged_preview", result)
 

@@ -51,6 +51,11 @@ class WarmUpGovernor:
         "recruiter": 200,
     }
 
+    @classmethod
+    def get_weekly_invite_ceiling(cls, account: dict[str, Any]) -> int:
+        tier = str((account or {}).get("premium_product") or "classic").lower()
+        return int(cls.WEEKLY_INVITE_CEILINGS.get(tier, 100))
+
     @staticmethod
     def get_recommended_invite_limit(connected_at: datetime, target_cap: int = 20) -> int:
         """

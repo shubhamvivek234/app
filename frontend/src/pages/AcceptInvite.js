@@ -13,11 +13,11 @@ const ROLE_LABELS = {
 };
 
 const ROLE_CAPABILITIES = {
-  owner:  'full access to everything in the workspace',
-  admin:  'manage team members, connect social accounts, create and publish posts',
-  editor: 'create, edit, and publish posts',
-  viewer: 'view scheduled posts, approvals, and analytics in read-only mode',
-  client: 'review approval-ready content in read-only mode',
+  owner:  'full access to everything in the Outreach workspace',
+  admin:  'manage team members, connect LinkedIn senders, and launch Outreach campaigns',
+  editor: 'create, edit, and launch Outreach campaigns, sequences, and lead lists',
+  viewer: 'view Outreach campaigns, leads, inbox, and analytics in read-only mode',
+  client: 'review Outreach campaigns, sequences, and analytics in read-only mode',
 };
 
 // ── Style constants ──────────────────────────────────────────────────────────
@@ -227,8 +227,8 @@ const AcceptInvite = () => {
 
   // ── Render: accepted ──────────────────────────────────────────────────────
   if (pageState === 'accepted') {
-    const acceptedPath = invite?.role === 'client' ? '/approvals' : '/dashboard';
-    const acceptedLabel = invite?.role === 'client' ? 'Open approval queue' : 'Go to Dashboard';
+    const acceptedPath = '/outreach';
+    const acceptedLabel = 'Go to Outreach Workspace';
     return (
       <CenteredCard>
         <div style={{ width: 48, height: 48, borderRadius: '50%', background: '#dcfce7', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>

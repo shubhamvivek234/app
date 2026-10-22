@@ -17,6 +17,7 @@ const pages = [
   'feature-teams.html',
   'pricing.html',
   'integrations.html',
+  'faq.html',
   '404.html',
   'privacy.html',
   'terms.html',
@@ -150,4 +151,26 @@ test('login page is a standalone auth switch document without header or footer',
   assert.doesNotMatch(html, /social-text/i, 'login.html must not have social text');
   assert.doesNotMatch(html, /Unravler Account Access/i, 'login.html must not have Unravler Account Access text');
   assert.match(read('styles.css'), /\.auth-body\s*\{[^}]*background:\s*#FFFFFF/i, 'auth-body must have white background');
+});
+
+test('FAQ link is removed from headers, added to footers, and /faq page renders categorized questions and search', () => {
+  for (const page of pages) {
+    const html = read(page);
+    const headerMatch = html.match(/<header\b[\s\S]*?<\/header>/i);
+    if (headerMatch) {
+      assert.doesNotMatch(headerMatch[0], />FAQ<\/a>/i, `${page} header must not contain FAQ link`);
+    }
+    const footerMatch = html.match(/<footer\b[\s\S]*?<\/footer>/i);
+    assert.ok(footerMatch, `${page} must have a footer`);
+    assert.match(footerMatch[0], /href="\/faq"[^>]*>FAQ<\/a>/i, `${page} footer must link to /faq`);
+  }
+
+  const faqHtml = read('faq.html');
+  assert.match(faqHtml, /Top questions about Unravler/i);
+  assert.match(faqHtml, /id="faq-search-input"/);
+  for (const heading of ['About Unravler', 'Features', 'Safety', 'Pricing &amp; Pilot', 'Partner']) {
+    assert.match(faqHtml, new RegExp(`<h2>${heading}</h2>`, 'i'), `faq.html missing category ${heading}`);
+  }
+  const detailsCount = (faqHtml.match(/<details class="faq-card-item">/g) || []).length;
+  assert.ok(detailsCount >= 28, `Expected at least 28 FAQ items, found ${detailsCount}`);
 });

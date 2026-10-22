@@ -275,6 +275,7 @@ class OutreachCampaign(BaseModel):
     schedule: WorkingSchedule = Field(default_factory=WorkingSchedule)
     limits: DailyLimits = Field(default_factory=DailyLimits)
     skip_team_campaign_leads: bool = False  # Dripify Team Management: skip leads found in campaigns of team members
+    integrations: dict[str, Any] = Field(default_factory=lambda: {"webhooks_enabled": False, "hubspot_enabled": False})
     leads_count: int = 0
     leads_contacted: int = 0
     replies_count: int = 0

@@ -94,6 +94,28 @@ SOURCE_LIMITS_METADATA: dict[str, dict[str, Any]] = {
             "For events with >1,000 attendees, filter by Location or Title."
         ),
     },
+    "post": {
+        "type": "post",
+        "label": "LinkedIn Post Engagers",
+        "direct_url": "https://www.linkedin.com/feed/",
+        "max_profiles": 500,
+        "max_pages": 50,
+        "page_size": 10,
+        "limit_explanation": (
+            "Extracts up to 500 profiles who engaged (liked or commented) with a specific LinkedIn post."
+        ),
+    },
+    "group": {
+        "type": "group",
+        "label": "LinkedIn Group Members",
+        "direct_url": "https://www.linkedin.com/groups/",
+        "max_profiles": 2500,
+        "max_pages": 100,
+        "page_size": 25,
+        "limit_explanation": (
+            "Extracts up to 2,500 members of a LinkedIn group you have joined."
+        ),
+    },
 }
 
 
@@ -159,6 +181,7 @@ def classify_linkedin_source_url(value: str) -> dict[str, Any]:
                 "is_first_degree_batch": False,
                 "event_batches": meta["event_batches"],
                 "keywords": keywords,
+                "profiles_found_label": f"{meta['max_profiles']:,}+",
                 "limit_explanation": meta["limit_explanation"],
                 "clean_url": raw,
             }
@@ -177,6 +200,7 @@ def classify_linkedin_source_url(value: str) -> dict[str, Any]:
             "page_size": meta["page_size"],
             "is_first_degree_batch": is_first_degree,
             "keywords": keywords,
+            "profiles_found_label": f"{meta['max_profiles']:,}+",
             "limit_explanation": meta["limit_explanation"],
             "clean_url": raw,
         }
@@ -195,6 +219,7 @@ def classify_linkedin_source_url(value: str) -> dict[str, Any]:
             "max_pages": meta["max_pages"],
             "page_size": meta["page_size"],
             "is_first_degree_batch": False,
+            "profiles_found_label": f"{meta['max_profiles']:,}+",
             "limit_explanation": meta["limit_explanation"],
             "clean_url": raw,
         }
@@ -215,6 +240,7 @@ def classify_linkedin_source_url(value: str) -> dict[str, Any]:
             "page_size": meta["page_size"],
             "is_first_degree_batch": False,
             "graduation_year_batches": meta["graduation_year_batches"],
+            "profiles_found_label": f"{meta['max_profiles']:,}+",
             "limit_explanation": meta["limit_explanation"],
             "clean_url": raw,
         }
@@ -234,6 +260,7 @@ def classify_linkedin_source_url(value: str) -> dict[str, Any]:
             "page_size": meta["page_size"],
             "sort_order": meta["sort_order"],
             "is_first_degree_batch": True,
+            "profiles_found_label": f"{meta['max_profiles']:,}+",
             "limit_explanation": meta["limit_explanation"],
             "clean_url": raw,
         }
@@ -255,6 +282,43 @@ def classify_linkedin_source_url(value: str) -> dict[str, Any]:
             "is_event_attendees_search": True,
             "is_first_degree_batch": False,
             "event_batches": meta["event_batches"],
+            "profiles_found_label": f"{meta['max_profiles']:,}+",
+            "limit_explanation": meta["limit_explanation"],
+            "clean_url": raw,
+        }
+    # 6. LinkedIn Post Engagers (/posts/... or /feed/update/urn:li:activity:...)
+    if path.startswith("/posts/") or path.startswith("/feed/update/"):
+        meta = SOURCE_LIMITS_METADATA["post"]
+        return {
+            "is_valid": True,
+            "source_type": "post",
+            "sub_source": "post_engagers",
+            "label": meta["label"],
+            "badge": meta.get("badge", "New"),
+            "direct_url": meta["direct_url"],
+            "max_profiles": meta["max_profiles"],
+            "max_pages": meta["max_pages"],
+            "page_size": meta["page_size"],
+            "is_first_degree_batch": False,
+            "profiles_found_label": meta.get("profiles_found_label", f"{meta['max_profiles']:,}+".replace(",", " ")),
+            "limit_explanation": meta["limit_explanation"],
+            "clean_url": raw,
+        }
+
+    # 7. LinkedIn Group Members (/groups/<id>...)
+    if path.startswith("/groups/") and len(path.split("/")) >= 3 and path.split("/")[2]:
+        meta = SOURCE_LIMITS_METADATA["group"]
+        return {
+            "is_valid": True,
+            "source_type": "group",
+            "sub_source": "group_members",
+            "label": meta["label"],
+            "direct_url": meta["direct_url"],
+            "max_profiles": meta["max_profiles"],
+            "max_pages": meta["max_pages"],
+            "page_size": meta["page_size"],
+            "is_first_degree_batch": False,
+            "profiles_found_label": meta.get("profiles_found_label", f"{meta['max_profiles']:,}+".replace(",", " ")),
             "limit_explanation": meta["limit_explanation"],
             "clean_url": raw,
         }

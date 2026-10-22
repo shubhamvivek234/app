@@ -19,8 +19,7 @@ const MagicLogin = () => {
   useEffect(() => {
     // If user is already logged in, skip token verification and redirect immediately
     if (user && !authLoading) {
-      const destination = postId ? `/approvals?post_id=${encodeURIComponent(postId)}` : '/approvals';
-      navigate(destination);
+      navigate('/outreach');
       return;
     }
 
@@ -39,9 +38,8 @@ const MagicLogin = () => {
           await loginWithCustomToken(data.custom_token);
           setStatus('success');
           
-          const destination = postId ? `/approvals?post_id=${encodeURIComponent(postId)}` : '/approvals';
           setTimeout(() => {
-            navigate(destination);
+            navigate('/outreach');
           }, 800);
         } else {
           throw new Error('No custom login token returned from server.');

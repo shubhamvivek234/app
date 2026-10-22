@@ -259,4 +259,53 @@ describe('Server-reviewed gallery selection', () => {
     expect(container.textContent).toContain('Your draft: Draft Sequence');
     expect(container.textContent).not.toContain('Active Outbound');
   });
+
+  it('supports Dripify Active only checkbox, Overview progress bar, Email metrics, and inline pause/resume status switch', async () => {
+    const sampleCampaigns = [
+      {
+        id: 'c-live',
+        name: 'Enterprise ABM',
+        status: 'active',
+        leads_count: 100,
+        leads_contacted: 45,
+        acceptances_count: 18,
+        replies_count: 7,
+        emails_delivered: 12,
+        emails_replied: 4,
+      },
+      {
+        id: 'c-paused',
+        name: 'Legacy Cohort',
+        status: 'paused',
+        leads_count: 50,
+        leads_contacted: 10,
+      },
+    ];
+    global.fetch = jest.fn((url, opts) => {
+      if (url.endsWith('/c-live/pause') && opts?.method === 'POST') {
+        return Promise.resolve(response({ status: 'paused' }));
+      }
+      return Promise.resolve(response(sampleCampaigns));
+    });
+
+    await act(async () => root.render(<OutreachCampaigns onOpenWizard={opened} />));
+
+    // Overview progress bar and Email metrics rendered
+    expect(container.querySelector('[data-testid="campaign-overview-progress-c-live"]')).toBeTruthy();
+    expect(container.textContent).toContain('Enterprise ABM');
+    expect(container.textContent).toContain('Legacy Cohort');
+
+    // Active only checkbox filters out paused campaign
+    const activeOnlyCheckbox = container.querySelector('[data-testid="active-only-checkbox"]');
+    expect(activeOnlyCheckbox).toBeTruthy();
+    await act(async () => activeOnlyCheckbox.click());
+    expect(container.textContent).toContain('Enterprise ABM');
+    expect(container.textContent).not.toContain('Legacy Cohort');
+
+    // Inline status toggle switch pauses active campaign
+    const toggleSwitch = container.querySelector('[data-testid="campaign-status-toggle-c-live"]');
+    expect(toggleSwitch).toBeTruthy();
+    await act(async () => toggleSwitch.click());
+    expect(global.fetch.mock.calls.some(([url, opts]) => url.endsWith('/c-live/pause') && opts?.method === 'POST')).toBe(true);
+  });
 });

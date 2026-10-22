@@ -8,7 +8,7 @@ import os
 
 def integrations_enabled() -> bool:
     """Checks whether outreach integrations are enabled globally."""
-    return os.getenv("OUTREACH_INTEGRATIONS_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
+    return os.getenv("OUTREACH_INTEGRATIONS_ENABLED", "true").strip().lower() in {"1", "true", "yes"}
 
 
 def is_integrations_pilot_allowed(workspace_id: str | None = None) -> bool:

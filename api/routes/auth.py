@@ -64,6 +64,7 @@ class UpdateMeRequest(BaseModel):
 
 class SessionExchangeRequest(BaseModel):
     id_token: str
+    totp_code: str | None = None
 
 
 class PasswordResetRequest(BaseModel):
@@ -286,6 +287,19 @@ async def exchange_session(
 
     from api.deps import _bootstrap_user_from_claims
     user = await _bootstrap_user_from_claims(db, decoded)
+    if user.get("mfa_enabled") and user.get("mfa_secret"):
+        totp_code = (body.totp_code or request.headers.get("X-TOTP-Code") or "").strip()
+        if not totp_code:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"mfa_required": True, "message": "TOTP code required"},
+            )
+        from utils.mfa import verify_totp
+        if not verify_totp(user["mfa_secret"], totp_code):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid TOTP code",
+            )
     try:
         await create_session_cookie(response, body.id_token)
     except Exception as cookie_exc:

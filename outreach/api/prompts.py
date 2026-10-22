@@ -33,6 +33,7 @@ class PromptPreviewRequest(BaseModel):
     lead_id: str | None = None
     campaign_id: str | None = None
     evaluate_ai: bool = False
+    improve_copy: bool = False
     custom_lead_data: dict[str, Any] | None = None
 
 
@@ -219,13 +220,13 @@ def _synthesize_prompt_output(prompt_name: str, prompt_text: str, lead_data: dic
         return f"scaling {industry.lower()} initiatives at {company}"
 
     if "website" in name_lower or "designer" in name_lower or "ui aesthetic" in text_lower:
-        return f"Really impressed by {company}'s clean brand positioning and product clarity in {industry}."
+        return f"Noticed {company}'s focus on {industry} and wanted to connect around your work as {job_title}."
 
     if "recent post" in name_lower or "latest linkedin post" in text_lower:
         if recent_post:
             snippet = recent_post[:90].rstrip("., ") + ("..." if len(recent_post) > 90 else "")
             return f"Your recent post on \"{snippet}\" really resonated with what we're seeing in {industry}."
-        return f"Been following your perspective as {job_title} at {company}—spot-on take on where {industry} is heading."
+        return f"Would love to hear your perspective as {job_title} at {company} on where {industry} is heading."
 
     if "milestone" in name_lower or "congratulations" in name_lower or "hiring" in text_lower:
         return f"Congrats on the momentum at {company}—exciting to see how you're leading the {job_title} charter."
@@ -313,25 +314,30 @@ async def preview_evaluated_message(
 
     def _hydrate_lead_doc(lead_doc: dict[str, Any]) -> dict[str, Any]:
         custom_vars = lead_doc.get("custom_variables") or {}
-        first = lead_doc.get("first_name") or "Lead"
-        last = lead_doc.get("last_name") or ""
-        company = lead_doc.get("company_name") or "Company"
-        title = lead_doc.get("job_title") or "Leader"
+        first = (lead_doc.get("first_name") or "").strip()
+        last = (lead_doc.get("last_name") or "").strip()
+        company = (lead_doc.get("company_name") or "").strip()
+        title = (lead_doc.get("job_title") or "").strip()
         school_val = (
             lead_doc.get("university_name")
             or lead_doc.get("school")
             or custom_vars.get("university_name")
             or custom_vars.get("school")
-            or "Stanford University"
+            or ""
         )
-        conns_val = str(lead_doc.get("connections_count") or custom_vars.get("connections_count") or "500+")
+        raw_conns = lead_doc.get("connections_count") or custom_vars.get("connections_count")
+        conns_val = str(raw_conns) if raw_conns is not None and str(raw_conns).strip() else ""
         profile_type_val = (
             "Open Profile"
             if lead_doc.get("is_open_profile") is True
             else "Premium"
             if lead_doc.get("is_premium") is True
-            else (lead_doc.get("profile_type") or custom_vars.get("profile_type") or "Standard")
+            else (lead_doc.get("profile_type") or custom_vars.get("profile_type") or "")
         )
+        loc_val = (lead_doc.get("location") or custom_vars.get("location") or "").strip()
+        headline_val = (lead_doc.get("headline") or custom_vars.get("headline") or "").strip()
+        if not headline_val and title and company:
+            headline_val = f"{title} at {company}"
         hydrated = {
             "id": lead_doc.get("id"),
             "first_name": first,
@@ -341,23 +347,23 @@ async def preview_evaluated_message(
             "company": company,
             "job_title": title,
             "position": title,
-            "location": lead_doc.get("location") or "Global",
-            "location_raw": lead_doc.get("location") or "Global",
+            "location": loc_val,
+            "location_raw": loc_val,
             "country": lead_doc.get("country") or custom_vars.get("country") or "",
-            "company_location": lead_doc.get("company_location") or custom_vars.get("company_location") or lead_doc.get("location") or "Global",
-            "industry": lead_doc.get("industry") or custom_vars.get("industry", "Technology"),
-            "headline": lead_doc.get("headline") or f"{title} at {company}",
+            "company_location": lead_doc.get("company_location") or custom_vars.get("company_location") or loc_val,
+            "industry": lead_doc.get("industry") or custom_vars.get("industry") or "",
+            "headline": headline_val,
             "summary": lead_doc.get("summary") or custom_vars.get("summary") or "",
             "school": school_val,
             "university_name": school_val,
             "university": school_val,
-            "top_skill": lead_doc.get("top_skill") or custom_vars.get("top_skill") or "Leadership",
+            "top_skill": lead_doc.get("top_skill") or custom_vars.get("top_skill") or "",
             "company_followed": lead_doc.get("company_followed") or custom_vars.get("company_followed") or "",
             "connections_count": conns_val,
             "number_of_connections": conns_val,
-            "years_in_company": lead_doc.get("years_in_company") or custom_vars.get("years_in_company") or "2 years",
-            "years_in_role": lead_doc.get("years_in_role") or custom_vars.get("years_in_role") or "2 years",
-            "mutual_connections": lead_doc.get("mutual_connections") or custom_vars.get("mutual_connections") or "5 mutual connections",
+            "years_in_company": lead_doc.get("years_in_company") or custom_vars.get("years_in_company") or "",
+            "years_in_role": lead_doc.get("years_in_role") or custom_vars.get("years_in_role") or "",
+            "mutual_connections": lead_doc.get("mutual_connections") or custom_vars.get("mutual_connections") or "",
             "profile_type": profile_type_val,
             "recent_post": custom_vars.get("recent_post") or lead_doc.get("summary") or "",
             "linkedin_url": lead_doc.get("linkedin_url") or "",
@@ -502,10 +508,34 @@ async def preview_evaluated_message(
         )
 
     sender_name = current_user.get("name") or "You"
+    improved_template = req.template
+    if req.improve_copy and isinstance(req.template, str) and req.template.strip():
+        improved_template = req.template.strip()
+        # Replace common bracketed example placeholders with specific B2B phrasing while preserving {{variables}}
+        bracket_replacements = {
+            "pain point": "scaling predictable outbound pipeline without manual busywork",
+            "benefit": "booking 3x more qualified conversations each week",
+            "goal": "hitting your next revenue milestone",
+            "industry": "{{industry}}",
+            "topic": "modern revenue automation",
+            "solution": "personalized multi-touch sequences",
+            "value prop": "automating repetitive prospecting while keeping every touch human",
+        }
+        def _replace_bracket(m: re.Match) -> str:
+            inner = m.group(1).strip().lower()
+            return bracket_replacements.get(inner, f"streamlining {inner} workflows")
+        improved_template = re.sub(r"(?<!✨\s)(?<!✨)\[([A-Za-z][A-Za-z0-9_\s/-]{1,39})\]", _replace_bracket, improved_template)
+        if not improved_template.endswith(("?", ".", "!")):
+            improved_template += "."
+        if "worth a quick chat" not in improved_template.lower() and "open to" not in improved_template.lower() and len(improved_template) < 240:
+            improved_template = f"{improved_template}\n\nOpen to a quick exchange on how you're approaching this at {{{{company_name}}}}?"
+
     return {
         "evaluated_text": rendered_text,
         "evaluated_subject": rendered_subject if req.subject is not None else None,
         "ai_generated_text": ai_generated_text,
+        "improved_template": improved_template if req.improve_copy else None,
+        "generation_mode": "heuristic_preview",
         "has_ai_tokens": bool(token_pattern.search(active_template)),
         "used_alternative_message": used_alternative_message,
         "missing_variables": missing_primary_vars,

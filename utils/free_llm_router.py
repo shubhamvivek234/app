@@ -94,7 +94,7 @@ class FreeLLMRouter:
         if not self.google_key:
             raise ValueError("Missing Google AI key")
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self.google_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
         payload: Dict[str, Any] = {
             "contents": [{"parts": [{"text": f"System Guidelines: {system_message}\n\nUser Request: {user_prompt}"}]}],
             "generationConfig": {
@@ -106,7 +106,11 @@ class FreeLLMRouter:
             payload["generationConfig"]["responseMimeType"] = "application/json"
 
         async with httpx.AsyncClient(timeout=25) as client:
-            resp = await client.post(url, json=payload)
+            resp = await client.post(
+                url,
+                json=payload,
+                headers={"x-goog-api-key": self.google_key},
+            )
             if resp.status_code != 200:
                 raise RuntimeError(f"Gemini error {resp.status_code}: {resp.text[:300]}")
             data = resp.json()

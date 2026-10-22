@@ -106,6 +106,8 @@ _TASK_MODULES = (
     "celery_workers.tasks.mailbox",
     "celery_workers.tasks.voice_preparation",
     "celery_workers.tasks.voice_studio",
+    "celery_workers.tasks.notifications",
+    "celery_workers.tasks.gdpr",
 )
 
 _SCHEDULE_MODULES = (
@@ -114,6 +116,8 @@ _SCHEDULE_MODULES = (
     "celery_workers.tasks.mailbox",
     "celery_workers.tasks.voice_preparation",
     "celery_workers.tasks.voice_studio",
+    "celery_workers.tasks.notifications",
+    "celery_workers.tasks.gdpr",
 )
 
 # ── App factory ──────────────────────────────────────────────────────────────

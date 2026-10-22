@@ -105,6 +105,7 @@ export const AuthProvider = ({ children }) => {
       const profile = await exchangeSession(idToken);
       setUser(profile);
       setUserContext(profile);
+      identifyUser(profile);
       setAuthIssue(null);
       if (typeof window !== 'undefined') {
         const currentPath = window.location.pathname;

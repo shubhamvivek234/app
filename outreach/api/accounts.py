@@ -189,11 +189,12 @@ async def _compute_sender_readiness(
     vis_allow = _effective("profile_visits", 50, used_visits)
     eml_allow = _effective("email_sends", 35, used_emails)
 
+    weekly_ceiling = int(WarmUpGovernor.get_weekly_invite_ceiling(acc))
     weekly_sent = int(acc.get("weekly_invites_sent", 0) or 0)
-    weekly_remaining = max(0, 100 - weekly_sent)
+    weekly_remaining = max(0, weekly_ceiling - weekly_sent)
     if weekly_remaining == 0:
         inv_allow["remaining_today"] = 0
-        blockers.append("Weekly invite limit reached (100/wk)")
+        blockers.append(f"Weekly invite limit reached ({weekly_ceiling}/wk)")
     else:
         inv_allow["remaining_today"] = min(inv_allow["remaining_today"], weekly_remaining)
 
@@ -208,6 +209,7 @@ async def _compute_sender_readiness(
             "messages": msg_allow,
             "profile_visits": vis_allow,
             "email_sends": eml_allow,
+            "weekly_invite_ceiling": weekly_ceiling,
             "weekly_invites_sent": weekly_sent,
             "weekly_invites_remaining": weekly_remaining,
         },

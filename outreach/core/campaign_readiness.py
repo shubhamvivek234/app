@@ -56,6 +56,8 @@ def launch_parameters(campaign: dict, request: Any) -> tuple[dict, dict]:
             updates['schedule'] = schedule
         if request.daily_limits is not None:
             updates['limits'] = request.daily_limits.model_dump() if hasattr(request.daily_limits, 'model_dump') else request.daily_limits
+        if getattr(request, 'integrations', None) is not None and isinstance(request.integrations, dict):
+            updates['integrations'] = dict(request.integrations)
     campaign.update(updates)
     return campaign, updates
 

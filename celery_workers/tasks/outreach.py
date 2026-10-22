@@ -1350,3 +1350,83 @@ async def _reap_stale_search_crawlers(db=None) -> dict:
             logger.info("Resumed stale search import job %s from cursor %s", job_id, job.get("cursor", 0))
 
     return {"reaped": reaped}
+
+
+@celery_app.task(name="celery_workers.tasks.outreach.process_due_inbox_reminders", queue="outreach", acks_late=True)
+def process_due_inbox_reminders() -> dict:
+    return run_async(_process_due_inbox_reminders())
+
+
+async def _process_due_inbox_reminders(db=None) -> dict:
+    """Process due `outreach_inbox_reminders` records and mark their threads as due for follow-up."""
+    if is_shutting_down():
+        return {"status": "shutting_down", "triggered": 0}
+    db = db or await _inbox_db()
+    now = datetime.now(timezone.utc)
+    if not hasattr(db, "outreach_inbox_reminders"):
+        return {"triggered": 0}
+    cursor = db.outreach_inbox_reminders.find({
+        "status": "pending",
+        "remind_at": {"$lte": now},
+    })
+    due_reminders = await _fetch_cursor_docs(cursor, length=100)
+    triggered = 0
+    for rem in due_reminders:
+        rem_id = rem.get("id")
+        ws_id = rem.get("workspace_id")
+        thread_id = rem.get("thread_id")
+        if not rem_id or not ws_id:
+            continue
+        claimed = await db.outreach_inbox_reminders.update_one(
+            {"id": rem_id, "workspace_id": ws_id, "status": "pending"},
+            {"$set": {"status": "triggered", "triggered_at": now, "updated_at": now}},
+        )
+        if getattr(claimed, "modified_count", 0) == 0:
+            continue
+        triggered += 1
+        if thread_id and hasattr(db, "outreach_inbox_threads"):
+            await db.outreach_inbox_threads.update_one(
+                {"id": thread_id, "workspace_id": ws_id},
+                {
+                    "$set": {
+                        "has_due_reminder": True,
+                        "reminder_note": rem.get("note") or "",
+                        "reminder_triggered_at": now,
+                        "updated_at": now,
+                    }
+                },
+            )
+        user_id = rem.get("user_id")
+        if user_id and hasattr(db, "notifications"):
+            try:
+                await db.notifications.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "user_id": user_id,
+                    "workspace_id": ws_id,
+                    "type": "outreach_inbox_reminder",
+                    "title": "Follow-up reminder due",
+                    "message": rem.get("note") or "A scheduled Outreach inbox reminder is due for follow-up.",
+                    "thread_id": thread_id,
+                    "is_read": False,
+                    "created_at": now,
+                })
+            except Exception as exc:
+                logger.debug("Inbox reminder notification insert skipped (%s)", type(exc).__name__)
+    return {"triggered": triggered}
+
+
+celery_app.conf.beat_schedule["process-due-outreach-inbox-reminders"] = {
+    "task": "celery_workers.tasks.outreach.process_due_inbox_reminders",
+    "schedule": 60.0,
+    "options": {"queue": "outreach"},
+}
+celery_app.conf.beat_schedule["scan-outreach-event-outbox"] = {
+    "task": "celery_workers.tasks.outreach.scan_event_outbox",
+    "schedule": 30.0,
+    "options": {"queue": "outreach"},
+}
+celery_app.conf.beat_schedule["dispatch-outreach-webhook-deliveries"] = {
+    "task": "celery_workers.tasks.outreach.dispatch_webhook_deliveries",
+    "schedule": 30.0,
+    "options": {"queue": "outreach"},
+}

@@ -6,69 +6,22 @@ import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { ThemeProvider, useTheme } from '@/context/ThemeContext';
 import BrandMarkLoader from '@/components/BrandMarkLoader';
 
-// Pages
-import LandingPage from '@/pages/LandingPage';
-import Pricing from '@/pages/Pricing';
+// Pages (Outreach + Auth + Legal/Workspace only; legacy social-scheduler pages hidden)
 import Login from '@/pages/Login';
 import Signup from '@/pages/Signup';
 import ForgotPassword from '@/pages/ForgotPassword';
 import AuthCallback from '@/pages/AuthCallback';
 import OAuthCallback from '@/pages/OAuthCallback';
 import VerifyEmail from '@/pages/VerifyEmail';
-import Dashboard from '@/pages/Dashboard';
-import CreatePost from '@/pages/CreatePost';
-import CreatePostForm from '@/pages/CreatePostForm';
-import Publish from '@/pages/Publish';
-import CalendarView from '@/pages/CalendarView';
-import ContentLibrary from '@/pages/ContentLibrary';
-import ConnectedAccounts from '@/pages/ConnectedAccounts';
-import Billing from '@/pages/Billing';
-import PaymentPage from '@/pages/PaymentPage';
-import Settings from '@/pages/Settings';
-import Developers from '@/pages/Developers';
 import Terms from '@/pages/Terms';
 import Privacy from '@/pages/Privacy';
 import DataDeletion from '@/pages/DataDeletion';
 import RefundPolicy from '@/pages/RefundPolicy';
 import Contact from '@/pages/Contact';
-import Onboarding from '@/pages/Onboarding';
-import OnboardingConnect from '@/pages/OnboardingConnect';
-import OnboardingPricing from '@/pages/OnboardingPricing';
-import SubscriptionExpired from '@/pages/SubscriptionExpired';
-import HashtagGroups from '@/pages/HashtagGroups';
-import PublicCalendar from '@/pages/PublicCalendar';
-import RecurringPosts from '@/pages/RecurringPosts';
-import BulkUploadGuide from '@/pages/BulkUploadGuide';
-import Timeslots from '@/pages/Timeslots';
-import ApprovalQueue from '@/pages/ApprovalQueue';
-import Inbox from '@/pages/Inbox';
-import TeamMembers from '@/pages/TeamMembers';
 import AcceptInvite from '@/pages/AcceptInvite';
 import MagicLogin from '@/pages/MagicLogin';
-import SocialMediaImageGuide from '@/pages/SocialMediaImageGuide';
-import SocialMediaVideoGuide from '@/pages/SocialMediaVideoGuide';
-import ShortLinks from '@/pages/ShortLinks';
-import PublicReview from '@/pages/PublicReview';
 import CookieConsent from '@/components/CookieConsent';
 
-// Heavy modules dynamically loaded via React.lazy for code splitting
-const Analytics = React.lazy(() => import('@/pages/Analytics'));
-const MediaLibrary = React.lazy(() => import('@/pages/MediaLibrary'));
-const BulkUpload = React.lazy(() => import('@/pages/BulkUpload'));
-const BulkVideoUpload = React.lazy(() => import('@/pages/BulkVideoUpload'));
-const BulkCSVUpload = React.lazy(() => import('@/pages/BulkCSVUpload'));
-const ThreadBuilder = React.lazy(() => import('@/pages/ThreadBuilder'));
-const SocialTools = React.lazy(() => import('@/pages/SocialTools'));
-const RSSFeeds = React.lazy(() => import('@/pages/RSSFeeds'));
-const LinkInBio = React.lazy(() => import('@/pages/LinkInBio'));
-const PublicBioPage = React.lazy(() => import('@/pages/PublicBioPage'));
-const SocialGraphicStudio = React.lazy(() => import('@/pages/SocialGraphicStudio'));
-const ViralStudio = React.lazy(() => import('@/pages/ViralStudio'));
-const AgentHub = React.lazy(() => import('@/pages/AgentHub'));
-const Campaigns = React.lazy(() => import('@/pages/Campaigns'));
-const Audience = React.lazy(() => import('@/pages/Audience'));
-const Broadcast = React.lazy(() => import('@/pages/Broadcast'));
-const Automations = React.lazy(() => import('@/pages/Automations'));
 const OutreachApp = React.lazy(() => import('@/outreach/OutreachApp'));
 
 // FE-4: Catch render errors so the entire app doesn't crash to a white screen
@@ -119,7 +72,7 @@ const AuthRecoveryScreen = () => {
   );
 };
 
-const PrivateRoute = ({ children, bypassOnboardingCheck = false }) => {
+const PrivateRoute = ({ children }) => {
   const { user, loading, firebaseUser, token, authIssue } = useAuth();
   const hasPendingSession = Boolean((firebaseUser || token) && !user);
 
@@ -136,40 +89,7 @@ const PrivateRoute = ({ children, bypassOnboardingCheck = false }) => {
   }
 
   if (!user) {
-    return <Navigate to="/login" />;
-  }
-
-  // Allow access to onboarding, payment, billing, and subscription-expired pages
-  const path = window.location.pathname;
-  if (path.startsWith('/onboarding') ||
-    path.startsWith('/payment') ||
-    path.startsWith('/billing') ||
-    path === '/subscription-expired') {
-    return children;
-  }
-
-  // Check subscription status
-  if (user.subscription_status === 'expired') {
-    return <Navigate to="/subscription-expired" />;
-  }
-
-  // Active subscribers always have full access — skip onboarding checks
-  if (user.subscription_status === 'active') {
-    return children;
-  }
-
-  // If onboarding not completed, redirect to main onboarding flow first
-  if (!user.onboarding_completed && !bypassOnboardingCheck) {
-    return <Navigate to="/onboarding" />;
-  }
-
-  // Redirect free users to pricing if they have completed onboarding but are still 'free'
-  // and NOT already on the pricing or payment page
-  if (user.subscription_status === 'free' && user.onboarding_completed) {
-    if (path.startsWith('/onboarding/pricing') || path.startsWith('/payment')) {
-      return children;
-    }
-    return <Navigate to="/onboarding/pricing" />;
+    return <Navigate to="/login" replace />;
   }
 
   return children;
@@ -196,22 +116,11 @@ const PublicRoute = ({ children }) => {
     return children;
   }
 
-  // If user is authenticated, honour returnTo if present (e.g. from /developers)
   const returnTo = location.state?.returnTo;
-  if (user) {
-    if (returnTo) {
-      return <Navigate to={returnTo} />;
-    }
-    if (user.onboarding_completed) {
-      if (user.subscription_status === 'free') {
-        return <Navigate to="/onboarding/pricing" />;
-      }
-      return <Navigate to="/dashboard" />;
-    }
-    return <Navigate to="/onboarding" />;
+  if (typeof returnTo === 'string' && (returnTo.startsWith('/outreach') || returnTo.startsWith('/accept-invite'))) {
+    return <Navigate to={returnTo} replace />;
   }
-
-  return children;
+  return <Navigate to="/outreach" replace />;
 };
 
 const ThemeApplier = () => {
@@ -245,9 +154,8 @@ function App() {
           <div className="App flex flex-col min-h-screen bg-background text-foreground transition-colors duration-300">
             <React.Suspense fallback={<BrandMarkLoader />}>
             <Routes>
-              {/* Public routes — redirect authenticated users to dashboard */}
-              <Route path="/" element={<PublicRoute><LandingPage /></PublicRoute>} />
-              <Route path="/pricing" element={<Pricing />} />
+              {/* Root & Auth routes — redirect authenticated users to /outreach */}
+              <Route path="/" element={<Navigate to="/outreach" replace />} />
               <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
               <Route path="/signup" element={<PublicRoute><Signup /></PublicRoute>} />
               <Route path="/forgot-password" element={<PublicRoute><ForgotPassword /></PublicRoute>} />
@@ -257,338 +165,12 @@ function App() {
               <Route path="/refund" element={<RefundPolicy />} />
               <Route path="/contact" element={<Contact />} />
               <Route path="/data-deletion" element={<DataDeletion />} />
-              <Route path="/resources/social-media-image-guide" element={<SocialMediaImageGuide />} />
-              <Route path="/resources/social-media-video-guide" element={<SocialMediaVideoGuide />} />
-              <Route path="/developers" element={<Developers />} />
-              <Route path="/mcp" element={<Navigate to="/developers" replace />} />
-              <Route path="/api-keys" element={<Navigate to="/developers" replace />} />
-              <Route path="/agent-docs" element={<Navigate to="/developers" replace />} />
               <Route path="/auth/callback" element={<AuthCallback />} />
               <Route path="/oauth/callback" element={<OAuthCallback />} />
               <Route path="/accept-invite/:token" element={<AcceptInvite />} />
               <Route path="/magic-login/:token" element={<MagicLogin />} />
 
-              {/* Private routes */}
-              <Route
-                path="/onboarding"
-                element={
-                  <PrivateRoute bypassOnboardingCheck={true}>
-                    <Onboarding />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/onboarding/connect"
-                element={
-                  <PrivateRoute bypassOnboardingCheck={true}>
-                    <OnboardingConnect />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/onboarding/pricing"
-                element={
-                  <PrivateRoute bypassOnboardingCheck={true}>
-                    <OnboardingPricing />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/subscription-expired"
-                element={
-                  <PrivateRoute bypassOnboardingCheck={true}>
-                    <SubscriptionExpired />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/dashboard"
-                element={
-                  <PrivateRoute>
-                    <Dashboard />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/analytics"
-                element={
-                  <PrivateRoute>
-                    <Analytics />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/create-post"
-                element={
-                  <PrivateRoute>
-                    <CreatePost />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/create"
-                element={
-                  <PrivateRoute>
-                    <Navigate to="/create-post" replace />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/composer"
-                element={
-                  <PrivateRoute>
-                    <Navigate to="/create-post" replace />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/create-post/new"
-                element={
-                  <PrivateRoute>
-                    <CreatePostForm />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/publish"
-                element={
-                  <PrivateRoute>
-                    <Publish />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/calendar"
-                element={
-                  <PrivateRoute>
-                    <CalendarView />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/content-library"
-                element={
-                  <PrivateRoute>
-                    <ContentLibrary />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/accounts"
-                element={
-                  <PrivateRoute>
-                    <ConnectedAccounts />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/billing"
-                element={
-                  <PrivateRoute>
-                    <Billing />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/payment"
-                element={
-                  <PrivateRoute>
-                    <PaymentPage />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/settings"
-                element={
-                  <PrivateRoute>
-                    <Settings />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/hashtags"
-                element={
-                  <PrivateRoute>
-                    <HashtagGroups />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/media-library"
-                element={
-                  <PrivateRoute>
-                    <MediaLibrary />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/recurring"
-                element={
-                  <PrivateRoute>
-                    <RecurringPosts />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/campaigns"
-                element={
-                  <PrivateRoute>
-                    <Campaigns />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/bulk-upload"
-                element={
-                  <PrivateRoute>
-                    <BulkUpload />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/bulk-video"
-                element={
-                  <PrivateRoute>
-                    <BulkVideoUpload />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/bulk-upload-guide"
-                element={
-                  <PrivateRoute>
-                    <BulkUploadGuide />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/bulk-csv"
-                element={
-                  <PrivateRoute>
-                    <BulkCSVUpload />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/rss-feeds"
-                element={
-                  <PrivateRoute>
-                    <RSSFeeds />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/timeslots"
-                element={
-                  <PrivateRoute>
-                    <Timeslots />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/approvals"
-                element={
-                  <PrivateRoute>
-                    <ApprovalQueue />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/threads"
-                element={
-                  <PrivateRoute>
-                    <ThreadBuilder />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/team"
-                element={
-                  <PrivateRoute>
-                    <TeamMembers />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/inbox"
-                element={
-                  <PrivateRoute>
-                    <Inbox />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/audience"
-                element={
-                  <PrivateRoute>
-                    <Audience />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/broadcast"
-                element={
-                  <PrivateRoute>
-                    <Broadcast />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/automations"
-                element={
-                  <PrivateRoute>
-                    <Automations />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/social-tools"
-                element={
-                  <PrivateRoute>
-                    <SocialTools />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/short-links"
-                element={
-                  <PrivateRoute>
-                    <ShortLinks />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/link-in-bio"
-                element={
-                  <PrivateRoute>
-                    <LinkInBio />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/social-graphic-studio"
-                element={
-                  <PrivateRoute>
-                    <SocialGraphicStudio />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/viral-studio"
-                element={
-                  <PrivateRoute>
-                    <ViralStudio />
-                  </PrivateRoute>
-                }
-              />
-              <Route
-                path="/agent"
-                element={
-                  <PrivateRoute>
-                    <AgentHub />
-                  </PrivateRoute>
-                }
-              />
+              {/* Outreach application routes */}
               <Route
                 path="/outreach/*"
                 element={
@@ -597,14 +179,19 @@ function App() {
                   </PrivateRoute>
                 }
               />
-              {/* Public routes — no auth required */}
-              <Route path="/calendar/public/:token" element={<PublicCalendar />} />
-              <Route path="/review/:token" element={<PublicReview />} />
-              <Route path="/bio/:handle" element={<PublicBioPage />} />
-              <Route path="/@:handle" element={<PublicBioPage />} />
-              
-              {/* Fallback */}
-              <Route path="*" element={<Navigate to="/" replace />} />
+
+              {/* Convenience Outreach deep-link aliases; all legacy social-scheduler routes hidden */}
+              <Route path="/campaigns" element={<Navigate to="/outreach/campaigns" replace />} />
+              <Route path="/leads" element={<Navigate to="/outreach/leads" replace />} />
+              <Route path="/inbox" element={<Navigate to="/outreach/inbox" replace />} />
+              <Route path="/analytics" element={<Navigate to="/outreach/analytics" replace />} />
+              <Route path="/settings" element={<Navigate to="/outreach/settings" replace />} />
+              <Route path="/billing" element={<Navigate to="/outreach/settings?tab=billing" replace />} />
+              <Route path="/team" element={<Navigate to="/outreach/settings?tab=team" replace />} />
+              <Route path="/accounts" element={<Navigate to="/outreach/settings?tab=senders" replace />} />
+
+              {/* Catch-all: hide any legacy social-scheduler paths by redirecting to /outreach */}
+              <Route path="*" element={<Navigate to="/outreach" replace />} />
             </Routes>
             </React.Suspense>
             <Toaster />

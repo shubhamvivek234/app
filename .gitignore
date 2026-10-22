@@ -105,3 +105,5 @@ assets/wedding/
 wedding_preview.html
 frontend/node_modules/.cache/default-development/4.pack
 frontend/node_modules/.cache/default-development/1.pack
+# Local secrets written by `elevenlabs onboard`
+/.env

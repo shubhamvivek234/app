@@ -62,14 +62,62 @@ async def create_session_cookie(
     return session_cookie
 
 
+def compute_session_jti(claims: dict) -> str | None:
+    """Derive a distinct session identifier so single-session logout does not collide with user sub when iat is present."""
+    if claims.get("jti"):
+        return str(claims["jti"])
+    uid = claims.get("uid") or claims.get("sub")
+    iat = claims.get("iat")
+    if uid and iat:
+        return f"{uid}:{iat}"
+    return str(uid) if uid else None
+
+
+async def verify_claims_not_revoked(claims: dict) -> None:
+    """Check both single-session JTI blocklist and user-level revoke_all_sessions blocklist in Redis."""
+    from db.redis_client import get_cache_redis
+
+    jti = compute_session_jti(claims)
+    sub = claims.get("sub")
+    uid = claims.get("uid", sub)
+
+    try:
+        cache_redis = get_cache_redis()
+    except Exception:
+        return
+
+    try:
+        for candidate_key in filter(None, {jti, sub}):
+            blocked = await cache_redis.get(f"jti_blocklist:{candidate_key}")
+            if blocked:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Session has been revoked",
+                )
+        if uid:
+            user_blocked = await cache_redis.get(f"jti_blocklist:uid:{uid}")
+            if user_blocked:
+                revoked_at = float(user_blocked)
+                issued_at = claims.get("iat", 0)
+                if issued_at <= revoked_at:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="All sessions have been revoked",
+                    )
+    except HTTPException:
+        raise
+    except RedisError as exc:
+        logger.warning("Skipping session blocklist check because cache Redis is unavailable: %s", exc)
+    except Exception as exc:
+        logger.debug("Skipping session blocklist check: %s", exc)
+
+
 async def verify_session_cookie(request: Request) -> dict:
     """
     Read session cookie from request and verify with Firebase.
     Check JTI against Redis blocklist.
     Returns decoded session claims dict.
     """
-    from db.redis_client import get_cache_redis
-
     session_cookie = request.cookies.get(_COOKIE_NAME)
     if not session_cookie:
         raise HTTPException(
@@ -91,35 +139,7 @@ async def verify_session_cookie(request: Request) -> dict:
             detail="Invalid session",
         )
 
-    # Check JTI blocklist in Redis
-    jti = claims.get("jti") or claims.get("sub")
-    uid = claims.get("uid", claims.get("sub"))
-
-    cache_redis = get_cache_redis()
-    try:
-        # Check individual JTI blocklist
-        if jti:
-            blocked = await cache_redis.get(f"jti_blocklist:{jti}")
-            if blocked:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Session has been revoked",
-                )
-        # Check user-level blocklist (revoke_all_sessions)
-        if uid:
-            user_blocked = await cache_redis.get(f"jti_blocklist:uid:{uid}")
-            if user_blocked:
-                # Check if session was issued before the revocation timestamp
-                revoked_at = float(user_blocked)
-                issued_at = claims.get("iat", 0)
-                if issued_at <= revoked_at:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="All sessions have been revoked",
-                    )
-    except RedisError as exc:
-        logger.warning("Skipping session blocklist check because cache Redis is unavailable: %s", exc)
-
+    await verify_claims_not_revoked(claims)
     return claims
 
 
@@ -128,7 +148,7 @@ async def revoke_session(cache_redis: Redis, session_claims: dict) -> None:
     Add JTI to Redis blocklist with TTL matching remaining session lifetime.
     Key: jti_blocklist:{jti}
     """
-    jti = session_claims.get("jti") or session_claims.get("sub")
+    jti = compute_session_jti(session_claims)
     if not jti:
         return
 

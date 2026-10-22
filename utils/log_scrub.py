@@ -16,6 +16,7 @@ _PATTERNS = [
     # httpx emits credential-bearing URLs as strings/URL arguments. Match short
     # values and percent-encoded keys/separators before they reach handlers.
     (re.compile(r'((?:api(?:_|%5f)key|client(?:_|%5f)secret|access(?:_|%5f)token|refresh(?:_|%5f)token)(?:=|%3d))[^\s\"\'&#]+', re.IGNORECASE), r'\1[REDACTED]'),
+    (re.compile(r'((?:[?&]|%3f|%26)(?:key|token|secret)(?:=|%3d))[^\s\"\'&#]+', re.IGNORECASE), r'\1[REDACTED]'),
     # OAuth tokens (key=value style)
     (re.compile(r'([\'"]?access_token[\'"]?[\s:=]+)[^\s"\',&}]{10,}', re.IGNORECASE), r'\1[REDACTED]'),
     (re.compile(r'([\'"]?refresh_token[\'"]?[\s:=]+)[^\s"\',&}]{10,}', re.IGNORECASE), r'\1[REDACTED]'),

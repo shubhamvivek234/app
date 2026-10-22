@@ -92,6 +92,36 @@ const LINKEDIN_SOURCING_CHANNELS = {
     guidance:
       'LinkedIn displays up to 100 pages of 10 event attendees (1,000 max). You must click "Attend" on the LinkedIn event first to unlock its attendee list. For >1,000 attendees, filter by Location or Title.',
   },
+  post: {
+    id: 'post',
+    label: 'LinkedIn Post Engagers',
+    shortLabel: 'Post Engagers',
+    directUrl: 'https://www.linkedin.com/feed/',
+    directLabel: 'Open LinkedIn Feed ↗',
+    maxProfiles: 1000,
+    maxPages: 100,
+    pageSize: 10,
+    capSummary: 'Max 1,000 profiles (Likers & Commenters)',
+    placeholderUrl: 'https://www.linkedin.com/posts/username_activity-7123456789-abcd',
+    listPlaceholder: 'e.g. Viral SaaS Post Commenters & Likers',
+    guidance:
+      'Paste a LinkedIn post URL or exported liker/commenter profile URLs to enroll warm post engagers.',
+  },
+  group: {
+    id: 'group',
+    label: 'LinkedIn Group Members',
+    shortLabel: 'Group Members',
+    directUrl: 'https://www.linkedin.com/groups/',
+    directLabel: 'Open LinkedIn Groups ↗',
+    maxProfiles: 1000,
+    maxPages: 100,
+    pageSize: 10,
+    capSummary: 'Max 1,000 profiles (100 pages × 10/page)',
+    placeholderUrl: 'https://www.linkedin.com/groups/1234567/members/',
+    listPlaceholder: 'e.g. B2B SaaS Founders Group Members',
+    guidance:
+      'Imports up to 1,000 members from a LinkedIn Group you belong to, or paste exported group member profile URLs.',
+  },
 };
 
 const classifyLinkedInSourceUrlClient = (rawUrl, fallbackChannel = 'basic') => {
@@ -99,22 +129,28 @@ const classifyLinkedInSourceUrlClient = (rawUrl, fallbackChannel = 'basic') => {
   if (!trimmed) return { ...LINKEDIN_SOURCING_CHANNELS[fallbackChannel] || LINKEDIN_SOURCING_CHANNELS.basic, detected: false };
   const lower = trimmed.toLowerCase();
   if (lower.includes('/sales/lists/people')) {
-    return { ...LINKEDIN_SOURCING_CHANNELS.sales_nav, detected: true, subLabel: 'Sales Navigator Saved Lead List' };
+    return { ...LINKEDIN_SOURCING_CHANNELS.sales_nav, detected: true, subLabel: 'Sales Navigator Saved Lead List', profilesFoundLabel: '2 500+' };
   }
   if (lower.includes('/sales/search/people') || lower.includes('/sales/')) {
-    return { ...LINKEDIN_SOURCING_CHANNELS.sales_nav, detected: true, subLabel: 'Sales Navigator People Search' };
+    return { ...LINKEDIN_SOURCING_CHANNELS.sales_nav, detected: true, subLabel: 'Sales Navigator People Search', profilesFoundLabel: '2 500+' };
   }
   if (lower.includes('/talent/') && lower.includes('/pipeline')) {
-    return { ...LINKEDIN_SOURCING_CHANNELS.recruiter, detected: true, subLabel: 'LinkedIn Recruiter · Project Pipeline Tab' };
+    return { ...LINKEDIN_SOURCING_CHANNELS.recruiter, detected: true, subLabel: 'LinkedIn Recruiter · Project Pipeline Tab', profilesFoundLabel: '1 000+' };
   }
   if (lower.includes('/talent/')) {
-    return { ...LINKEDIN_SOURCING_CHANNELS.recruiter, detected: true, subLabel: 'LinkedIn Recruiter · Talent Pool Search' };
+    return { ...LINKEDIN_SOURCING_CHANNELS.recruiter, detected: true, subLabel: 'LinkedIn Recruiter · Talent Pool Search', profilesFoundLabel: '1 000+' };
   }
   if (lower.includes('/mynetwork/invite-connect/connections')) {
-    return { ...LINKEDIN_SOURCING_CHANNELS.connections, detected: true, subLabel: 'My Network · Recent 1st-Degree Connections' };
+    return { ...LINKEDIN_SOURCING_CHANNELS.connections, detected: true, subLabel: 'My Network · Recent 1st-Degree Connections', profilesFoundLabel: '1 000+' };
   }
   if (lower.includes('/events/') || lower.includes('/mynetwork/network-manager/events') || lower.includes('eventattending')) {
-    return { ...LINKEDIN_SOURCING_CHANNELS.events, detected: true, subLabel: 'LinkedIn Event Attendees Search' };
+    return { ...LINKEDIN_SOURCING_CHANNELS.events, detected: true, subLabel: 'LinkedIn Event Attendees Search', profilesFoundLabel: '1 000+' };
+  }
+  if (lower.includes('/posts/') || lower.includes('urn:li:activity:') || lower.includes('/feed/update/')) {
+    return { ...LINKEDIN_SOURCING_CHANNELS.post, detected: true, subLabel: 'LinkedIn Post Engagers', profilesFoundLabel: '1 000+' };
+  }
+  if (lower.includes('/groups/')) {
+    return { ...LINKEDIN_SOURCING_CHANNELS.group, detected: true, subLabel: 'LinkedIn Group Members', profilesFoundLabel: '1 000+' };
   }
   if (lower.includes('/search/results/people')) {
     const isFirstDegreeBatch = lower.includes('%22f%22') || lower.includes('"f"') || lower.includes('network=f');
@@ -123,6 +159,7 @@ const classifyLinkedInSourceUrlClient = (rawUrl, fallbackChannel = 'basic') => {
       detected: true,
       isFirstDegreeBatch,
       subLabel: isFirstDegreeBatch ? 'Basic Search · 1st-Degree Connections Batch' : 'Basic LinkedIn People Search',
+      profilesFoundLabel: '1 000+',
     };
   }
   return { ...LINKEDIN_SOURCING_CHANNELS[fallbackChannel] || LINKEDIN_SOURCING_CHANNELS.basic, detected: false };
@@ -196,6 +233,14 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
   const [importListName, setImportListName] = useState('');
   const [requireName, setRequireName] = useState(true);
   const [skipContacted, setSkipContacted] = useState(true);
+  const [leadFilterRules, setLeadFilterRules] = useState({
+    skip_other_campaigns: true,
+    require_open_profile: false,
+    require_profile_photo: false,
+    min_connections_500: false,
+    exclude_free_account: false,
+  });
+  const [targetCountMode, setTargetCountMode] = useState('max'); // 'max' | 'custom'
 
   // Search extraction state
   const [searchUrl, setSearchUrl] = useState('');
@@ -519,6 +564,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
           skip_already_contacted: skipContacted,
           skip_do_not_contact: true,
           require_name: requireName,
+          filter_rules: leadFilterRules,
         }),
       });
 
@@ -681,6 +727,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
           sender_account_id: selectedSenderId,
           max_leads: clampedLeads,
           ...(importListName.trim() ? { list_name: importListName.trim() } : {}),
+          filter_rules: leadFilterRules,
         }),
       });
       const data = await res.json();
@@ -848,6 +895,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
             skip_already_contacted: skipContacted,
             skip_do_not_contact: true,
             require_name: requireName,
+            filter_rules: leadFilterRules,
             consent_basis: 'user_provided',
             request_id: requestId,
           }),
@@ -869,6 +917,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
             skip_already_contacted: skipContacted,
             skip_do_not_contact: true,
             require_name: requireName,
+            filter_rules: leadFilterRules,
             consent_basis: 'user_provided',
             request_id: requestId,
           }),
@@ -890,6 +939,7 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
             skip_already_contacted: skipContacted,
             skip_do_not_contact: true,
             require_name: requireName,
+            filter_rules: leadFilterRules,
             consent_basis: 'user_provided',
             request_id: requestId,
           }),
@@ -941,35 +991,53 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-y-auto">
       <div className="relative w-full max-w-3xl rounded-2xl bg-white shadow-2xl border border-gray-100 transition-all flex flex-col max-h-[92vh]">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-600">
-                LinkedIn Outbound · Lead Intake Engine
-              </span>
-              <span className="text-[10px] bg-indigo-50 text-indigo-700 font-semibold px-2 py-0.5 rounded-full">
-                {importResult ? 'Complete' : `Step ${step} of 3`}
-              </span>
+        <div className="px-6 py-4 border-b border-gray-100 shrink-0 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-600">
+                  CREATE A LIST OF LEADS BELOW · STEP {importResult ? 4 : step} / 4
+                </span>
+                <span className="text-[10px] bg-indigo-50 text-indigo-700 font-semibold px-2 py-0.5 rounded-full">
+                  {importResult ? 'Complete' : `Step ${step} of 4`}
+                </span>
+              </div>
+              <h2 className="text-xl font-bold text-gray-900 mt-0.5">
+                {importResult ? 'Import Results' : (
+                  step === 1 ? 'Choose Lead Sourcing Method' :
+                  step === 2 ? (
+                    sourceType === 'urls' ? 'Paste LinkedIn Profile URLs' :
+                    sourceType === 'csv' ? 'Upload CSV Spreadsheet' :
+                    activeJob ? 'Infusing Leads from Search URL' : 'LinkedIn & Sales Nav Lead Infusion'
+                  ) :
+                  'Validation Preview & Deduplication'
+                )}
+              </h2>
             </div>
-            <h2 className="text-xl font-bold text-gray-900 mt-0.5">
-              {importResult ? 'Import Results' : (
-                step === 1 ? 'Choose Lead Sourcing Method' :
-                step === 2 ? (
-                  sourceType === 'urls' ? 'Paste LinkedIn Profile URLs' :
-                  sourceType === 'csv' ? 'Upload CSV Spreadsheet' :
-                  activeJob ? 'Infusing Leads from Search URL' : 'LinkedIn & Sales Nav Lead Infusion'
-                ) :
-                'Validation Preview & Deduplication'
-              )}
-            </h2>
+            <button
+              onClick={() => { resetAll(); onClose(); }}
+              className="rounded-full p-1.5 text-gray-400 hover:bg-gray-100 transition-colors"
+              aria-label="Close modal"
+            >
+              <X className="h-5 w-5" />
+            </button>
           </div>
-          <button
-            onClick={() => { resetAll(); onClose(); }}
-            className="rounded-full p-1.5 text-gray-400 hover:bg-gray-100 transition-colors"
-            aria-label="Close modal"
-          >
-            <X className="h-5 w-5" />
-          </button>
+
+          {/* Dripify 4-Segment Progress Bar */}
+          <div className="grid grid-cols-4 gap-2" data-testid="lead-import-step-bars">
+            {[1, 2, 3, 4].map((idx) => {
+              const currentStep = importResult ? 4 : step;
+              const isCompletedOrCurrent = idx <= currentStep;
+              return (
+                <div
+                  key={idx}
+                  className={`h-1.5 rounded-full transition-all duration-300 ${
+                    isCompletedOrCurrent ? 'bg-indigo-600' : 'bg-gray-200'
+                  }`}
+                />
+              );
+            })}
+          </div>
         </div>
 
         {error && (
@@ -1096,11 +1164,16 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                 {/* 6. Post Engagers (Manual URL Import with Scraping disabled notice) */}
                 <button
                   type="button"
-                  onClick={() => { setSourceHint('post'); setSourceType('urls'); setStep(2); }}
+                  onClick={() => { setSourceHint('post'); setSearchChannel('post'); setSourceType('urls'); setStep(2); }}
                   className="text-left p-4 rounded-xl border border-gray-200 hover:border-indigo-500 hover:bg-gray-50 transition-all group relative cursor-pointer"
                 >
-                  <div className="absolute top-3 right-3 text-[10px] font-semibold text-gray-600 bg-gray-100 border border-gray-200 px-2 py-0.5 rounded-full">
-                    Scraping disabled · Paste URLs
+                  <div className="absolute top-3 right-3 flex items-center gap-1">
+                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-full">
+                      New
+                    </span>
+                    <span className="text-[10px] font-semibold text-gray-600 bg-gray-100 border border-gray-200 px-2 py-0.5 rounded-full">
+                      Scraping disabled · Paste URLs
+                    </span>
                   </div>
                   <div className="flex items-center gap-3.5">
                     <div className="p-2.5 rounded-xl bg-rose-100 text-rose-700 group-hover:bg-rose-600 group-hover:text-white transition-colors">
@@ -1161,7 +1234,60 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                     </div>
                     <div>
                       <h4 className="font-bold text-gray-900 text-sm">My Network · 1st-Degree Connections</h4>
-                      <p className="text-xs text-gray-500 mt-0.5">Add recent 1st-degree connections (top 1,000) or batch >1,000 by location</p>
+                      <p className="text-xs text-gray-500 mt-0.5">Add recent 1st-degree connections (top 1,000) or batch &gt;1,000 by location</p>
+                    </div>
+                  </div>
+                </button>
+
+                {/* 9. LinkedIn Group Members */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSourceHint('group');
+                    setSearchChannel('group');
+                    setSourceType('urls');
+                    setStep(2);
+                  }}
+                  className="text-left p-4 rounded-xl border border-gray-200 hover:border-indigo-500 hover:bg-gray-50 transition-all group relative cursor-pointer"
+                >
+                  <div className="absolute top-3 right-3 text-[10px] font-semibold text-indigo-800 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full">
+                    100p × 10 · Max 1,000
+                  </div>
+                  <div className="flex items-center gap-3.5">
+                    <div className="p-2.5 rounded-xl bg-indigo-100 text-indigo-700 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+                      <Users className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-gray-900 text-sm">LinkedIn Group Members</h4>
+                      <p className="text-xs text-gray-500 mt-0.5">Import members from any LinkedIn Group you have joined (up to 1,000)</p>
+                    </div>
+                  </div>
+                </button>
+
+                {/* 10. Sales Navigator Search Card with Seat Requirement Tooltip */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSourceHint('sales_nav');
+                    setSearchChannel('sales_nav');
+                    setSourceType(searchAvailable ? 'search' : 'urls');
+                    setStep(2);
+                  }}
+                  className="text-left p-4 rounded-xl border border-gray-200 hover:border-indigo-500 hover:bg-gray-50 transition-all group relative cursor-pointer"
+                >
+                  <div
+                    title="You must have a Sales Navigator subscription on your LinkedIn account to use this option"
+                    className="absolute top-3 right-3 text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full"
+                  >
+                    Sales Nav Seat · Max 2,500
+                  </div>
+                  <div className="flex items-center gap-3.5">
+                    <div className="p-2.5 rounded-xl bg-blue-100 text-blue-700 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                      <Search className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-gray-900 text-sm">Sales Navigator Search</h4>
+                      <p className="text-xs text-gray-500 mt-0.5">Filter profiles in Sales Navigator Search or Lead Lists (up to 2,500)</p>
                     </div>
                   </div>
                 </button>
@@ -1958,9 +2084,18 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                         </div>
 
                         <div>
-                          <div className="flex items-center justify-between mb-1">
+                          <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
                             <label className="block text-xs font-bold uppercase tracking-wider text-gray-700">
-                              LinkedIn Search, Sales Navigator, Recruiter, or My Network URL
+                              Filter profiles in the{' '}
+                              <a
+                                href={activeCh.directUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-indigo-600 underline hover:text-indigo-800 inline-flex items-center gap-0.5 normal-case font-semibold"
+                              >
+                                LinkedIn search <ExternalLink className="h-3 w-3" />
+                              </a>{' '}
+                              and paste the URL below
                             </label>
                             {activeCh.detected && (
                               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-[10px] font-bold text-emerald-800">
@@ -1971,20 +2106,38 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                           <p className="text-xs text-gray-500 mb-2">
                             Only a supported source can collect contacts. Unsupported filters are rejected.
                           </p>
-                          <input
-                            type="url"
-                            value={searchUrl}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setSearchUrl(val);
-                              const det = classifyLinkedInSourceUrlClient(val, searchChannel);
-                              if (det.detected && det.id !== searchChannel) {
-                                setSearchChannel(det.id);
-                              }
-                            }}
-                            placeholder={activeCh.placeholderUrl}
-                            className="w-full rounded-xl border border-gray-300 p-3 font-mono text-xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-gray-50/50"
-                          />
+                          <div className="relative">
+                            <input
+                              type="url"
+                              value={searchUrl}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setSearchUrl(val);
+                                const det = classifyLinkedInSourceUrlClient(val, searchChannel);
+                                if (det.detected && det.id !== searchChannel) {
+                                  setSearchChannel(det.id);
+                                }
+                              }}
+                              placeholder={activeCh.placeholderUrl}
+                              className="w-full rounded-xl border border-gray-300 p-3 pr-10 font-mono text-xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-gray-50/50"
+                            />
+                            {activeCh.detected && (
+                              <span
+                                data-testid="search-url-valid-check"
+                                className="absolute right-3 top-1/2 -translate-y-1/2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-50 text-emerald-600"
+                              >
+                                <Check className="h-3.5 w-3.5 stroke-[3]" />
+                              </span>
+                            )}
+                          </div>
+                          {activeCh.detected && (
+                            <div
+                              data-testid="linkedin-profiles-found-bar"
+                              className="mt-2.5 rounded-xl bg-gray-100/90 border border-gray-200/80 px-4 py-2.5 text-center text-xs font-semibold text-gray-800"
+                            >
+                              LinkedIn profiles found: <span className="font-bold text-gray-950">{activeCh.profilesFoundLabel || `${maxCap.toLocaleString()}+`}</span>
+                            </div>
+                          )}
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
@@ -2020,14 +2173,45 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
 
                           <div>
                             <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                              Target Leads to Infuse (Max {maxCap.toLocaleString()})
+                              Specify the number of profiles you want to add to the campaign:
                             </label>
+                            <div className="flex flex-wrap items-center gap-4 pt-1 pb-2">
+                              <label className="inline-flex items-center gap-2 text-xs font-semibold text-gray-800 cursor-pointer">
+                                <input
+                                  type="radio"
+                                  name="targetCountMode"
+                                  checked={targetCountMode === 'max'}
+                                  onChange={() => {
+                                    setTargetCountMode('max');
+                                    setTargetCount(maxCap);
+                                  }}
+                                  className="text-indigo-600 focus:ring-indigo-500"
+                                />
+                                <span>Add maximum profiles ({maxCap.toLocaleString()})</span>
+                              </label>
+                              <label className="inline-flex items-center gap-2 text-xs font-semibold text-gray-800 cursor-pointer">
+                                <input
+                                  type="radio"
+                                  name="targetCountMode"
+                                  checked={targetCountMode === 'custom'}
+                                  onChange={() => {
+                                    setTargetCountMode('custom');
+                                    if (Number(targetCount) >= maxCap) setTargetCount(100);
+                                  }}
+                                  className="text-indigo-600 focus:ring-indigo-500"
+                                />
+                                <span>Custom</span>
+                              </label>
+                            </div>
                             <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
                               {presetCounts.map((count) => (
                                 <button
                                   key={count}
                                   type="button"
-                                  onClick={() => setTargetCount(count)}
+                                  onClick={() => {
+                                    setTargetCount(count);
+                                    setTargetCountMode(count === maxCap ? 'max' : 'custom');
+                                  }}
                                   className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors ${
                                     Number(targetCount) === count
                                       ? 'bg-indigo-600 text-white shadow-xs'
@@ -2045,7 +2229,9 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                                 onChange={(e) => {
                                   const raw = Number(e.target.value);
                                   if (!Number.isNaN(raw)) {
-                                    setTargetCount(Math.max(1, Math.min(raw, maxCap)));
+                                    const clamped = Math.max(1, Math.min(raw, maxCap));
+                                    setTargetCount(clamped);
+                                    setTargetCountMode(clamped === maxCap ? 'max' : 'custom');
                                   }
                                 }}
                                 aria-label="Custom target lead count"
@@ -2074,6 +2260,64 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                       </>
                     );
                   })()}
+
+                  <div className="rounded-xl bg-gray-50/80 p-4 border border-gray-200 space-y-2.5 text-xs" data-testid="search-lead-filter-rules">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-gray-900">Choose lead filtering rules for this lead list</span>
+                      <span className="text-[11px] text-gray-500">Do not add a lead to the campaign if:</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                      <label className="flex items-center gap-2 cursor-pointer text-gray-800">
+                        <input
+                          type="checkbox"
+                          checked={leadFilterRules.skip_other_campaigns}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setLeadFilterRules((prev) => ({ ...prev, skip_other_campaigns: checked }));
+                            setSkipContacted(checked);
+                          }}
+                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span>Same leads found in other campaigns <span className="text-indigo-600 font-semibold">(recommended)</span></span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer text-gray-800">
+                        <input
+                          type="checkbox"
+                          checked={leadFilterRules.require_open_profile}
+                          onChange={(e) => setLeadFilterRules((prev) => ({ ...prev, require_open_profile: e.target.checked }))}
+                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span title="Requires Open Profile status so free InMails can be sent">Does not have an open profile ⓘ</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer text-gray-800">
+                        <input
+                          type="checkbox"
+                          checked={leadFilterRules.require_profile_photo}
+                          onChange={(e) => setLeadFilterRules((prev) => ({ ...prev, require_profile_photo: e.target.checked }))}
+                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span>No photo on lead&apos;s profile</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer text-gray-800">
+                        <input
+                          type="checkbox"
+                          checked={leadFilterRules.min_connections_500}
+                          onChange={(e) => setLeadFilterRules((prev) => ({ ...prev, min_connections_500: e.target.checked }))}
+                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span>Less than 500 connections</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer text-gray-800">
+                        <input
+                          type="checkbox"
+                          checked={leadFilterRules.exclude_free_account}
+                          onChange={(e) => setLeadFilterRules((prev) => ({ ...prev, exclude_free_account: e.target.checked }))}
+                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span>Has a free LinkedIn account</span>
+                      </label>
+                    </div>
+                  </div>
 
                   <div className="rounded-xl bg-indigo-50/50 p-3.5 border border-indigo-100 space-y-1.5 text-xs">
                     <div className="flex items-center gap-2 text-indigo-900 font-semibold">
@@ -2468,8 +2712,8 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                 </div>
               </div>
 
-              {/* Safety & Dedup Controls */}
-              <div className="rounded-xl bg-gray-50 p-3.5 border border-gray-200 space-y-2.5 text-xs">
+              {/* Dripify Step 3 Lead Filtering Rules + Safety & Dedup Controls */}
+              <div className="rounded-xl bg-gray-50 p-4 border border-gray-200 space-y-3 text-xs" data-testid="step3-lead-filter-rules">
                 <div>
                   <label className="block text-[11px] font-bold text-gray-800 mb-1">
                     Assign to Contact List / Cohort Tag <span className="text-gray-400 font-normal">(Optional — preserves exact capitalization)</span>
@@ -2484,21 +2728,95 @@ export default function ImportLeadsModal({ isOpen, onClose, campaignId, onLeadsI
                   />
                 </div>
 
-                <label className="flex items-center gap-2.5 cursor-pointer pt-1 border-t border-gray-200/60">
-                  <input
-                    type="checkbox"
-                    checked={skipContacted}
-                    disabled={loading || previewLoading || sourceType === 'search'}
-                    onChange={(e) => { setSkipContacted(e.target.checked); setHasEdits(true); setReviewRequired(true); }}
-                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                  />
+                <div className="pt-2 border-t border-gray-200/70 space-y-2">
                   <div>
-                    <span className="font-semibold text-gray-800">Skip leads already contacted in another campaign</span>
-                    <span className="text-gray-500 block text-[11px]">{sourceType === 'search'
-                      ? 'Staged search enrollment always rechecks contacted and excluded leads on the server.'
-                      : 'Prevents duplicate touches across separate campaigns in this workspace.'}</span>
+                    <h4 className="text-xs font-bold text-gray-900">Choose lead filtering rules for this lead list</h4>
+                    <p className="text-[11px] text-gray-500">Do not add a lead to the campaign if:</p>
                   </div>
-                </label>
+
+                  <div className="space-y-2 pt-1">
+                    <label className="flex items-center gap-2.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={skipContacted}
+                        disabled={loading || previewLoading || sourceType === 'search'}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setSkipContacted(checked);
+                          setLeadFilterRules((prev) => ({ ...prev, skip_other_campaigns: checked }));
+                          setHasEdits(true);
+                          setReviewRequired(true);
+                        }}
+                        className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <span className="font-semibold text-gray-800">
+                          Same leads found in other campaigns <span className="text-indigo-600">(recommended)</span> · Skip leads already contacted in another campaign
+                        </span>
+                        <span className="text-gray-500 block text-[11px]">
+                          {sourceType === 'search'
+                            ? 'Staged search enrollment always rechecks contacted and excluded leads on the server.'
+                            : 'Prevents duplicate touches across separate campaigns in this workspace.'}
+                        </span>
+                      </div>
+                    </label>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                      <label className="flex items-center gap-2 cursor-pointer text-gray-800">
+                        <input
+                          type="checkbox"
+                          checked={leadFilterRules.require_open_profile}
+                          disabled={loading || previewLoading}
+                          onChange={(e) => {
+                            setLeadFilterRules((prev) => ({ ...prev, require_open_profile: e.target.checked }));
+                            setHasEdits(true);
+                          }}
+                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span title="Requires Open Profile status so free InMails can be sent">Does not have an open profile ⓘ</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer text-gray-800">
+                        <input
+                          type="checkbox"
+                          checked={leadFilterRules.require_profile_photo}
+                          disabled={loading || previewLoading}
+                          onChange={(e) => {
+                            setLeadFilterRules((prev) => ({ ...prev, require_profile_photo: e.target.checked }));
+                            setHasEdits(true);
+                          }}
+                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span>No photo on lead&apos;s profile</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer text-gray-800">
+                        <input
+                          type="checkbox"
+                          checked={leadFilterRules.min_connections_500}
+                          disabled={loading || previewLoading}
+                          onChange={(e) => {
+                            setLeadFilterRules((prev) => ({ ...prev, min_connections_500: e.target.checked }));
+                            setHasEdits(true);
+                          }}
+                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span>Less than 500 connections</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer text-gray-800">
+                        <input
+                          type="checkbox"
+                          checked={leadFilterRules.exclude_free_account}
+                          disabled={loading || previewLoading}
+                          onChange={(e) => {
+                            setLeadFilterRules((prev) => ({ ...prev, exclude_free_account: e.target.checked }));
+                            setHasEdits(true);
+                          }}
+                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span>Has a free LinkedIn account</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
 
                 <div className="flex items-center gap-2 pt-1 border-t border-gray-200/60 text-gray-500 text-[11px]">
                   <Shield className="h-3.5 w-3.5 text-indigo-600 shrink-0" />

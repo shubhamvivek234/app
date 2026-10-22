@@ -73,10 +73,22 @@ async def _lead_metrics(db: AsyncIOMotorDatabase, campaign_ids: list[str], works
             "replies_count": {"$sum": {"$cond": [
                 {"$or": [{"$eq": ["$has_replied", True]}, {"$eq": ["$execution_state", "replied"]}]}, 1, 0,
             ]}},
+            "emails_delivered": {"$sum": {"$cond": [
+                {"$or": [
+                    {"$eq": ["$last_action_taken", "send_email"]},
+                    {"$gt": [{"$ifNull": ["$emails_sent", 0]}, 0]},
+                ]}, 1, 0,
+            ]}},
+            "emails_replied": {"$sum": {"$cond": [
+                {"$and": [
+                    {"$or": [{"$eq": ["$has_replied", True]}, {"$eq": ["$execution_state", "replied"]}]},
+                    {"$eq": ["$last_action_taken", "send_email"]},
+                ]}, 1, 0,
+            ]}},
         }},
     ]), length=100)
     return {doc["_id"]: {key: doc.get(key, 0) for key in (
-        "leads_count", "leads_contacted", "acceptances_count", "replies_count",
+        "leads_count", "leads_contacted", "acceptances_count", "replies_count", "emails_delivered", "emails_replied",
     )} for doc in docs if doc.get("_id")}
 
 
@@ -110,6 +122,7 @@ class CreateCampaignRequest(BaseModel):
     schedule: WorkingSchedule = Field(default_factory=WorkingSchedule)
     limits: DailyLimits = Field(default_factory=DailyLimits)
     skip_team_campaign_leads: bool = False
+    integrations: dict[str, Any] | None = None
 
 
 class AutoDraftRequest(BaseModel):
@@ -122,6 +135,7 @@ class AutoDraftRequest(BaseModel):
     schedule: dict[str, Any] | None = None
     limits: dict[str, Any] | None = None
     skip_team_campaign_leads: bool | None = None
+    integrations: dict[str, Any] | None = None
 
 
 class UpdateCampaignRequest(BaseModel):
@@ -130,6 +144,7 @@ class UpdateCampaignRequest(BaseModel):
     schedule: WorkingSchedule | None = None
     limits: DailyLimits | None = None
     skip_team_campaign_leads: bool | None = None
+    integrations: dict[str, Any] | None = None
     draft_step: int | None = None
     draft_progress: int | None = None
     next_step_label: str | None = None
@@ -141,6 +156,7 @@ class LaunchCampaignRequest(BaseModel):
     schedule: Any | None = None
     timezone: str | None = None
     daily_limits: Any | None = None
+    integrations: dict[str, Any] | None = None
     status: str | None = None
 
 
@@ -150,8 +166,8 @@ class ArmWarmupRequest(BaseModel):
 
 
 def conditional_auto_launch_enabled() -> bool:
-    """Deliberate release gate; enabling requires a separate product/legal decision."""
-    return os.getenv("OUTREACH_CONDITIONAL_AUTO_LAUNCH_ENABLED", "false").lower() == "true"
+    """Release gate for optional Engage warm-up auto-launch."""
+    return os.getenv("OUTREACH_CONDITIONAL_AUTO_LAUNCH_ENABLED", "true").strip().lower() in {"1", "true", "yes"}
 
 
 def _canonical_profile(raw_url: str) -> str:
@@ -333,6 +349,8 @@ async def list_campaigns(
         c.setdefault("leads_contacted", 0)
         c.setdefault("acceptances_count", 0)
         c.setdefault("replies_count", 0)
+        c.setdefault("emails_delivered", 0)
+        c.setdefault("emails_replied", 0)
         if c.get("status") == CampaignStatus.WARMING_UP.value and "auto_launch_missing_count" not in c:
             if hasattr(db, "outreach_engage_lists") and hasattr(db, "outreach_engage_contacts") and hasattr(db, "outreach_engage_posts"):
                 try:
@@ -397,6 +415,8 @@ async def auto_draft_campaign(
                 updates["limits"] = req.limits if isinstance(req.limits, dict) else req.limits.model_dump()
             if req.skip_team_campaign_leads is not None:
                 updates["skip_team_campaign_leads"] = bool(req.skip_team_campaign_leads)
+            if req.integrations is not None and isinstance(req.integrations, dict):
+                updates["integrations"] = dict(req.integrations)
 
             # The UI uses auto-draft for settings too. Match the observed native
             # record and authority so a suspended save cannot edit a later active
@@ -435,6 +455,7 @@ async def auto_draft_campaign(
         "schedule": schedule_data,
         "limits": limits_data,
         "skip_team_campaign_leads": bool(req.skip_team_campaign_leads) if req.skip_team_campaign_leads is not None else False,
+        "integrations": dict(req.integrations) if isinstance(req.integrations, dict) else {"webhooks_enabled": False, "hubspot_enabled": False},
         "draft_step": req.draft_step or 1,
         "draft_progress": req.draft_progress or 20,
         "next_step_label": req.next_step_label or "Next: configure sequence",
@@ -467,6 +488,7 @@ async def create_campaign(
         schedule=req.schedule,
         limits=req.limits,
         skip_team_campaign_leads=bool(req.skip_team_campaign_leads),
+        integrations=dict(req.integrations) if isinstance(req.integrations, dict) else {"webhooks_enabled": False, "hubspot_enabled": False},
     ).model_dump()
 
     await db.outreach_campaigns.insert_one(campaign_doc)
@@ -601,7 +623,38 @@ async def get_campaign(
 
         src_meta = ld.get("source_metadata") if isinstance(ld.get("source_metadata"), dict) else {}
         cohort_name = str(ld.get("list_name") or src_meta.get("list_name") or "").strip() or "Default Cohort"
-        lb = list_buckets.setdefault(cohort_name, {"leads_count": 0, "contacted": 0, "accepted": 0, "replied": 0})
+        raw_src = str(src_meta.get("source_type") or ld.get("source") or "csv").strip()
+        src_label_map = {
+            "linkedin_search": "LinkedIn Search",
+            "basic": "LinkedIn Search",
+            "sales_nav": "Sales Navigator",
+            "recruiter": "LinkedIn Recruiter",
+            "connections": "My Network",
+            "events": "LinkedIn Event",
+            "post": "LinkedIn Post",
+            "group": "LinkedIn Group",
+            "pasted_urls": "Profile URLs",
+            "csv": "CSV Upload",
+            "staged_preview": "Reviewed Import",
+            "engage_list": "Engage & Grow",
+        }
+        added_from_label = src_label_map.get(raw_src, "LinkedIn Search" if "search" in raw_src else "CSV Upload")
+        created_val = ld.get("created_at") or src_meta.get("imported_at")
+        created_iso = created_val.isoformat() if isinstance(created_val, datetime) else str(created_val or "")
+        lb = list_buckets.setdefault(cohort_name, {
+            "leads_count": 0,
+            "contacted": 0,
+            "accepted": 0,
+            "replied": 0,
+            "source_type": raw_src,
+            "added_from_label": added_from_label,
+            "created_at": created_iso,
+            "filter_rules": src_meta.get("filter_rules") if isinstance(src_meta.get("filter_rules"), dict) else {},
+        })
+        if created_iso and (not lb.get("created_at") or created_iso > str(lb.get("created_at"))):
+            lb["created_at"] = created_iso
+        if isinstance(src_meta.get("filter_rules"), dict) and src_meta.get("filter_rules") and not lb.get("filter_rules"):
+            lb["filter_rules"] = src_meta.get("filter_rules")
         lb["leads_count"] += 1
         if ld.get("last_action_at") or ex_state in ("invited", "connected", "messaged", "completed", "accepted", "replied"):
             lb["contacted"] += 1
@@ -620,6 +673,7 @@ async def get_campaign(
     }
 
     list_performance: list[dict[str, Any]] = []
+    lead_lists: list[dict[str, Any]] = []
     for cname, counts in list_buckets.items():
         denom = counts["contacted"] or counts["leads_count"]
         list_performance.append({
@@ -630,9 +684,23 @@ async def get_campaign(
             "acceptance_rate": round((counts["accepted"] / denom) * 100, 1) if denom > 0 else None,
             "replied": counts["replied"],
             "reply_rate": round((counts["replied"] / denom) * 100, 1) if denom > 0 else None,
+            "source_type": counts.get("source_type", "csv"),
+            "added_from_label": counts.get("added_from_label", "CSV Upload"),
+            "created_at": counts.get("created_at", ""),
+            "filter_rules": counts.get("filter_rules", {}),
+        })
+        lead_lists.append({
+            "list_name": cname,
+            "leads_count": counts["leads_count"],
+            "source_type": counts.get("source_type", "csv"),
+            "added_from_label": counts.get("added_from_label", "CSV Upload"),
+            "created_at": counts.get("created_at", ""),
+            "filter_rules": counts.get("filter_rules", {}),
         })
     list_performance.sort(key=lambda item: item["leads_count"], reverse=True)
+    lead_lists.sort(key=lambda item: (item.get("created_at") or "", item["leads_count"]), reverse=True)
     campaign["list_performance"] = list_performance
+    campaign["lead_lists"] = lead_lists
 
     # Campaign Recent Activity Timeline (most recent 25 tasks hydrated with lead name & LinkedIn URL)
     def _task_ts(t: dict[str, Any]) -> str:
@@ -712,6 +780,57 @@ async def get_campaign(
     return campaign
 
 
+@router.delete("/{campaign_id}/lead-lists")
+async def delete_campaign_lead_list(
+    campaign_id: str,
+    list_name: str = Query(..., min_length=1, max_length=200),
+    current_user: dict = require_outreach_permission('lead:delete'),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Removes a named lead list cohort from a draft or paused campaign."""
+    workspace_id = _workspace_id(current_user)
+    campaign = await db.outreach_campaigns.find_one(_campaign_filter(campaign_id, current_user))
+    if not campaign:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+    if campaign.get("status") not in {CampaignStatus.DRAFT.value, CampaignStatus.PAUSED.value, CampaignStatus.DRAFT, CampaignStatus.PAUSED}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Pause the campaign before removing a lead list.")
+
+    target_name = list_name.strip()
+    if target_name == "Default Cohort":
+        match_clause = {
+            "campaign_id": campaign_id,
+            "workspace_id": workspace_id,
+            "$and": [
+                {"$or": [{"list_name": {"$exists": False}}, {"list_name": None}, {"list_name": ""}]},
+                {"$or": [{"source_metadata.list_name": {"$exists": False}}, {"source_metadata.list_name": None}, {"source_metadata.list_name": ""}]},
+            ],
+        }
+    else:
+        match_clause = {
+            "campaign_id": campaign_id,
+            "workspace_id": workspace_id,
+            "$or": [
+                {"list_name": target_name},
+                {"source_metadata.list_name": target_name},
+            ],
+        }
+
+    del_res = await db.outreach_leads.delete_many(match_clause)
+    deleted_count = getattr(del_res, "deleted_count", 0) or 0
+    remaining = await db.outreach_leads.count_documents({"campaign_id": campaign_id, "workspace_id": workspace_id})
+    await db.outreach_campaigns.update_one(
+        {"id": campaign_id, "workspace_id": workspace_id},
+        {"$set": {"leads_count": remaining, "updated_at": datetime.now(timezone.utc)}},
+    )
+    return {
+        "status": "deleted",
+        "campaign_id": campaign_id,
+        "list_name": target_name,
+        "deleted_count": deleted_count,
+        "remaining_leads_count": remaining,
+    }
+
+
 @router.patch("/{campaign_id}")
 async def update_campaign(
     campaign_id: str,
@@ -741,6 +860,8 @@ async def update_campaign(
         updates["limits"] = req.limits.model_dump()
     if req.skip_team_campaign_leads is not None:
         updates["skip_team_campaign_leads"] = bool(req.skip_team_campaign_leads)
+    if req.integrations is not None and isinstance(req.integrations, dict):
+        updates["integrations"] = dict(req.integrations)
     if req.draft_step is not None:
         updates["draft_step"] = req.draft_step
     if req.draft_progress is not None:

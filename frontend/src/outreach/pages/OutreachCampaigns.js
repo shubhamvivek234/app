@@ -445,6 +445,7 @@ export default function OutreachCampaigns({
   const [loading, setLoading] = useState(true);
   const [campaignError, setCampaignError] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [activeOnlyFilter, setActiveOnlyFilter] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [activeCampaignId, setActiveCampaignId] = useState(null);
@@ -1223,9 +1224,10 @@ export default function OutreachCampaigns({
       (statusFilter === 'warming' && c.status === 'warming_up') ||
       (statusFilter === 'paused' && c.status === 'paused') ||
       (statusFilter === 'draft' && c.status === 'draft');
+    const matchesActiveOnly = !activeOnlyFilter || ['active', 'warming_up'].includes(c.status);
     const matchesSearch =
       !searchQuery || (c.name || '').toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesStatus && matchesSearch;
+    return matchesStatus && matchesActiveOnly && matchesSearch;
   });
 
   return (
@@ -1327,15 +1329,27 @@ export default function OutreachCampaigns({
           ))}
         </div>
 
-        <div className="relative w-full sm:w-64">
-          <Search className="absolute left-3 top-2 h-3.5 w-3.5 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Search campaigns"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-xl border border-gray-200 bg-white pl-8 pr-3 py-1.5 text-xs text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 shadow-2xs"
-          />
+        <div className="flex items-center gap-4">
+          <label className="inline-flex items-center gap-2 text-xs font-semibold text-gray-700 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              data-testid="active-only-checkbox"
+              checked={activeOnlyFilter}
+              onChange={(e) => setActiveOnlyFilter(e.target.checked)}
+              className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            <span>Active only</span>
+          </label>
+          <div className="relative w-full sm:w-64">
+            <Search className="absolute left-3 top-2 h-3.5 w-3.5 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search campaigns"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full rounded-xl border border-gray-200 bg-white pl-8 pr-3 py-1.5 text-xs text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 shadow-2xs"
+            />
+          </div>
         </div>
       </div>
 
@@ -1401,17 +1415,35 @@ export default function OutreachCampaigns({
               <thead className="border-b border-gray-100 bg-gray-50/50 text-gray-400 uppercase font-semibold text-[10px] tracking-wider">
                 <tr>
                   <th className="py-3 px-5 rounded-tl-2xl">STATUS</th>
-                  <th className="py-3 px-5">NAME</th>
+                  <th className="py-3 px-5">NAME / OVERVIEW</th>
                   <th className="py-3 px-5">LEADS DONE</th>
-                  <th className="py-3 px-5">ACCEPTANCE</th>
-                  <th className="py-3 px-5">REPLY</th>
+                  <th className="py-3 px-5">LINKEDIN (ACCEPT / REPLY)</th>
+                  <th className="py-3 px-5">EMAIL (DELIVERED / REPLIED)</th>
                   <th className="py-3 px-5">SENDERS</th>
                   <th className="py-3 px-5">LAST ACTION</th>
                   <th className="py-3 px-5 text-right rounded-tr-2xl"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {filteredCampaigns.map((camp) => (
+                {filteredCampaigns.map((camp) => {
+                  const totalLeads = Number(camp.leads_count || 0);
+                  const contactedLeads = Number(camp.leads_contacted || 0);
+                  const progressPct = totalLeads > 0
+                    ? Math.min(100, Math.round((contactedLeads / totalLeads) * 100))
+                    : (camp.status === 'draft' ? (camp.draft_progress || 0) : 0);
+                  const acceptRate = contactedLeads > 0
+                    ? `${Math.round(((camp.acceptances_count || 0) / contactedLeads) * 100)}%`
+                    : '0%';
+                  const replyRate = contactedLeads > 0
+                    ? `${Math.round(((camp.replies_count || 0) / contactedLeads) * 100)}%`
+                    : '0%';
+                  const emailsDelivered = Number(camp.emails_delivered || 0);
+                  const emailsReplied = Number(camp.emails_replied || 0);
+                  const emailReplyRate = emailsDelivered > 0
+                    ? `${Math.round((emailsReplied / emailsDelivered) * 100)}%`
+                    : '0%';
+
+                  return (
                   <tr
                     key={camp.id}
                     onClick={() => {
@@ -1423,55 +1455,105 @@ export default function OutreachCampaigns({
                     }}
                     className="hover:bg-gray-50/60 transition-colors cursor-pointer group"
                   >
-                    {/* Status Pill */}
-                    <td className="py-4 px-5">
-                      <span
-                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${
-                          camp.status === 'active'
-                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                            : camp.status === 'warming_up'
-                            ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                            : camp.status === 'paused'
-                            ? 'bg-amber-50 text-amber-700 border-amber-200'
-                            : camp.status === 'completed'
-                            ? 'bg-blue-50 text-blue-700 border-blue-200'
-                            : 'bg-white text-gray-600 border-gray-200'
-                        }`}
-                      >
-                        {camp.status || 'draft'}
-                      </span>
+                    {/* Status Pill + Dripify Live Pause/Resume Switch (Screenshot 11) */}
+                    <td className="py-4 px-5" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-2.5">
+                        {['active', 'paused'].includes(camp.status) && (
+                          <label
+                            title={camp.status === 'active' ? 'Pause background campaign' : 'Resume background campaign'}
+                            className="relative inline-flex items-center cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              data-testid={`campaign-status-toggle-${camp.id}`}
+                              aria-label={`Toggle ${camp.name} status`}
+                              checked={camp.status === 'active'}
+                              onChange={() => {
+                                if (camp.status === 'active') {
+                                  handlePauseCampaign(camp.id, camp.name);
+                                } else {
+                                  handleResumeCampaign(camp.id, camp.name);
+                                }
+                              }}
+                              className="sr-only peer"
+                            />
+                            <div className="w-8 h-4 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-500" />
+                          </label>
+                        )}
+                        <span
+                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${
+                            camp.status === 'active'
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              : camp.status === 'warming_up'
+                              ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                              : camp.status === 'paused'
+                              ? 'bg-amber-50 text-amber-700 border-amber-200'
+                              : camp.status === 'completed'
+                              ? 'bg-blue-50 text-blue-700 border-blue-200'
+                              : 'bg-white text-gray-600 border-gray-200'
+                          }`}
+                        >
+                          {camp.status || 'draft'}
+                        </span>
+                      </div>
                     </td>
 
-                    {/* Name + Subtitle */}
-                    <td className="py-4 px-5">
-                      <p className="font-bold text-gray-900 group-hover:text-indigo-600 transition-colors">
-                        {camp.name}
-                      </p>
+                    {/* Name + Overview Progress Bar (Screenshot 11) */}
+                    <td className="py-4 px-5 min-w-[200px]">
+                      <div className="flex items-center gap-1">
+                        <p className="font-bold text-gray-900 group-hover:text-indigo-600 transition-colors">
+                          {camp.name}
+                        </p>
+                      </div>
                       <p className="text-[11px] text-gray-400 mt-0.5 font-normal">
                         {camp.leads_count ? `${camp.leads_count} leads` : 'Audience not set'} · {camp.status || 'draft'}
                         {camp.status === 'warming_up' && camp.auto_launch_missing_count > 0 && ` · ${camp.auto_launch_missing_count} awaiting warmup`}
                       </p>
+                      <div className="mt-1.5 flex items-center gap-2" data-testid={`campaign-overview-progress-${camp.id}`}>
+                        <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden max-w-[140px]">
+                          <div
+                            className="h-full bg-indigo-600 rounded-full transition-all duration-300"
+                            style={{ width: `${progressPct}%` }}
+                          />
+                        </div>
+                        <span className="text-[10px] font-mono text-gray-400">{totalLeads}</span>
+                      </div>
                     </td>
 
-                    {/* Leads Done */}
+                    {/* Leads Done (All leads & Contacted) */}
                     <td className="py-4 px-5 text-gray-500 font-mono">
-                      {camp.status === 'draft' || !camp.leads_contacted
-                        ? '—'
-                        : `${camp.leads_contacted} / ${camp.leads_count || 0}`}
+                      <div>
+                        {camp.status === 'draft' || !camp.leads_contacted
+                          ? '—'
+                          : `${camp.leads_contacted} / ${camp.leads_count || 0}`}
+                      </div>
+                      <div className="text-[10px] text-gray-400 font-sans">
+                        All: {totalLeads} · Contacted: {contactedLeads} ({progressPct}%)
+                      </div>
                     </td>
 
-                    {/* Acceptance */}
+                    {/* LinkedIn (Accepted & Replied) */}
                     <td className="py-4 px-5 text-gray-500 font-mono">
-                      {camp.leads_contacted && camp.leads_contacted > 0
-                        ? `${Math.round((camp.acceptances_count / camp.leads_contacted) * 100)}%`
-                        : '—'}
+                      <div>
+                        {camp.leads_contacted && camp.leads_contacted > 0
+                          ? acceptRate
+                          : '—'}
+                      </div>
+                      <div className="text-[10px] text-gray-400 font-sans">
+                        Accepted: {camp.acceptances_count || 0} ({acceptRate}) · Replied: {camp.replies_count || 0} ({replyRate})
+                      </div>
                     </td>
 
-                    {/* Reply */}
+                    {/* Email (Delivered & Replied) */}
                     <td className="py-4 px-5 text-gray-500 font-mono">
-                      {camp.leads_contacted && camp.leads_contacted > 0
-                        ? `${Math.round((camp.replies_count / camp.leads_contacted) * 100)}%`
-                        : '—'}
+                      <div>
+                        {camp.leads_contacted && camp.leads_contacted > 0
+                          ? replyRate
+                          : '—'}
+                      </div>
+                      <div className="text-[10px] text-gray-400 font-sans">
+                        Delivered: {emailsDelivered} · Replied: {emailsReplied} ({emailReplyRate})
+                      </div>
                     </td>
 
                     {/* Senders */}
@@ -1579,7 +1661,8 @@ export default function OutreachCampaigns({
                       )}
                     </td>
                   </tr>
-                ))}
+                );
+              })}
               </tbody>
             </table>
           </div>

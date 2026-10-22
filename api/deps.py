@@ -158,19 +158,22 @@ async def _bootstrap_user_from_claims(
             outcome="created",
         )
 
+        welcome_message = (
+            "Your workspace is ready. Connect your LinkedIn sender seat, import your first lead cohort, "
+            "and configure your multi-step outreach sequence."
+        )
         try:
             from celery_workers.tasks.notifications import send_notification_email_task  # noqa: PLC0415
 
-            send_notification_email_task.delay(
-                user_id=user_doc["user_id"],
-                event="user.welcome",
-                title="Welcome to Unravler! Let's get started",
-                message=(
-                    "Your workspace is ready. Unravler is engineered to be your complete growth command center—"
-                    "streamlining multi-platform publishing, AI-powered repurposing, and audience expansion "
-                    "across every major network."
-                ),
-                target_path="/dashboard",
+            send_notification_email_task.apply_async(
+                kwargs={
+                    "user_id": user_doc["user_id"],
+                    "event": "user.welcome",
+                    "title": "Welcome to Unravler Outreach! Let's get started",
+                    "message": welcome_message,
+                    "target_path": "/outreach",
+                },
+                retry=False,
             )
         except Exception as welcome_exc:
             logger.warning("auth.user.welcome_email.enqueue_failed: %s; falling back to direct send", welcome_exc)
@@ -183,13 +186,9 @@ async def _bootstrap_user_from_claims(
                         send_notification_email_async(
                             email=email,
                             event="user.welcome",
-                            title="Welcome to Unravler! Let's get started",
-                            message=(
-                                "Your workspace is ready. Unravler is engineered to be your complete growth command center—"
-                                "streamlining multi-platform publishing, AI-powered repurposing, and audience expansion "
-                                "across every major network."
-                            ),
-                            target_path="/dashboard",
+                            title="Welcome to Unravler Outreach! Let's get started",
+                            message=welcome_message,
+                            target_path="/outreach",
                             display_name=display_name,
                         )
                     )
@@ -235,26 +234,65 @@ async def _create_personal_workspace(
 
     now = datetime.now(timezone.utc)
     workspace_name = f"{display_name or 'My'} Personal Workspace"
-    ws_id = f"ws_{secrets.token_hex(12)}"
+    ws_id = f"ws_personal_{user_id}"
 
-    await db.workspaces.insert_one(
-        {
-            "workspace_id": ws_id,
-            "name": workspace_name,
-            "owner_id": user_id,
-            "workspace_type": "personal",
-            "members": [{"user_id": user_id, "role": "owner", "joined_at": now}],
-            "created_at": now,
-        }
-    )
-    await db.workspace_members.insert_one(
-        {
-            "workspace_id": ws_id,
-            "user_id": user_id,
-            "role": "owner",
-            "joined_at": now,
-        }
-    )
+    ws_doc = {
+        "workspace_id": ws_id,
+        "name": workspace_name,
+        "owner_id": user_id,
+        "workspace_type": "personal",
+        "members": [{"user_id": user_id, "role": "owner", "joined_at": now}],
+        "created_at": now,
+    }
+    member_doc = {
+        "workspace_id": ws_id,
+        "user_id": user_id,
+        "role": "owner",
+        "joined_at": now,
+    }
+    try:
+        try:
+            await db.workspaces.update_one(
+                {"owner_id": user_id, "workspace_type": "personal"},
+                {"$setOnInsert": ws_doc},
+                upsert=True,
+            )
+            found = await db.workspaces.find_one(
+                {"owner_id": user_id, "workspace_type": "personal"},
+                {"_id": 0, "workspace_id": 1},
+            )
+            if found and found.get("workspace_id"):
+                ws_id = found["workspace_id"]
+            else:
+                await db.workspaces.insert_one(ws_doc)
+        except TypeError:
+            await db.workspaces.insert_one(ws_doc)
+    except DuplicateKeyError:
+        found = await db.workspaces.find_one(
+            {"owner_id": user_id, "workspace_type": "personal"},
+            {"_id": 0, "workspace_id": 1},
+        )
+        if found and found.get("workspace_id"):
+            ws_id = found["workspace_id"]
+
+    member_doc["workspace_id"] = ws_id
+    try:
+        try:
+            await db.workspace_members.update_one(
+                {"workspace_id": ws_id, "user_id": user_id},
+                {"$setOnInsert": member_doc},
+                upsert=True,
+            )
+            found_m = await db.workspace_members.find_one(
+                {"workspace_id": ws_id, "user_id": user_id},
+                {"_id": 0, "workspace_id": 1},
+            )
+            if not found_m and hasattr(db.workspace_members, "insert_one"):
+                await db.workspace_members.insert_one(member_doc)
+        except TypeError:
+            await db.workspace_members.insert_one(member_doc)
+    except DuplicateKeyError:
+        pass
     event_log(
         logger,
         "info",
@@ -380,13 +418,19 @@ async def get_current_user(
             decoded = await verify_session_cookie(request)
             request.state.jti = decoded.get("jti") or decoded.get("sub")
         except HTTPException as exc:
+            if exc.detail in {"Session has been revoked", "All sessions have been revoked"}:
+                raise exc
             cookie_error = exc
 
     token_str = credentials.credentials if credentials is not None else request.query_params.get("token")
     if decoded is None and token_str:
         try:
             decoded = firebase_auth.verify_id_token(token_str)
-            request.state.jti = decoded.get("jti") or decoded.get("sub")
+            from utils.session import verify_claims_not_revoked, compute_session_jti
+            await verify_claims_not_revoked(decoded)
+            request.state.jti = compute_session_jti(decoded) or decoded.get("sub")
+        except HTTPException:
+            raise
         except Exception as exc:
             event_log(
                 logger,
