@@ -147,7 +147,7 @@ export default function OutreachHome({ onNavigate, onOpenWizard, onOpenCampaign 
         eventSource.close();
       }
     };
-  }, []);
+  }, [loadOverview]);
 
   const isAccountConnected = connectedAccountsCount > 0;
   const isCampaignCreated = recentCampaigns.length > 0;

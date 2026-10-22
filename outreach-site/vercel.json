@@ -1,0 +1,30 @@
+{
+  "redirects": [
+    {
+      "source": "/login.html",
+      "destination": "https://app.unravler.com",
+      "permanent": false
+    },
+    {
+      "source": "/login",
+      "destination": "https://app.unravler.com",
+      "permanent": false
+    },
+    {
+      "source": "/app",
+      "destination": "https://app.unravler.com",
+      "permanent": false
+    },
+    {
+      "source": "/outreach",
+      "destination": "https://app.unravler.com",
+      "permanent": false
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "http://3.107.7.100/api/$1"
+    }
+  ]
+}
