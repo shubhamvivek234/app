@@ -30,7 +30,15 @@ function read(file) {
   return fs.readFileSync(path.join(root, file), 'utf8');
 }
 
-test('all public pages are complete, navigable HTML documents', () => {
+function resolveRouteToFile(target) {
+  if (!target || target === '/') return 'index.html';
+  const stripped = target.replace(/^\/+/, '');
+  if (fs.existsSync(path.join(root, stripped))) return stripped;
+  if (fs.existsSync(path.join(root, `${stripped}.html`))) return `${stripped}.html`;
+  return stripped;
+}
+
+test('all public pages are complete, navigable HTML documents with clean URLs', () => {
   for (const page of pages) {
     const html = read(page);
     assert.match(html, /<!doctype html>/i, `${page} needs a doctype`);
@@ -40,8 +48,9 @@ test('all public pages are complete, navigable HTML documents', () => {
     assert.match(html, /<main\b/i, `${page} needs a main landmark`);
     assert.match(html, /<footer\b/i, `${page} needs a footer`);
     assert.equal((html.match(/<h1\b/gi) || []).length, 1, `${page} needs one H1`);
-    assert.match(html, /href="privacy\.html"/i, `${page} should link the privacy notice`);
-    assert.match(html, /href="terms\.html"/i, `${page} should link the terms`);
+    assert.match(html, /href="\/privacy"/i, `${page} should link the privacy notice via clean URL`);
+    assert.match(html, /href="\/terms"/i, `${page} should link the terms via clean URL`);
+    assert.doesNotMatch(html, /href="[^"]*\.html/i, `${page} must not expose .html extensions in href attributes`);
 
     for (const [, raw] of html.matchAll(/(?:href|src)="([^"]+)"/g)) {
       if (/^(?:https?:|mailto:|tel:|data:)/.test(raw)) continue;
@@ -50,9 +59,10 @@ test('all public pages are complete, navigable HTML documents', () => {
         if (fragment) assert.match(html, new RegExp(`id="${fragment}"`), `${page} has a missing anchor: ${raw}`);
         continue;
       }
-      assert.ok(fs.existsSync(path.join(root, target)), `${page} has a broken local link: ${raw}`);
-      if (fragment && target.endsWith('.html')) {
-        assert.match(read(target), new RegExp(`id="${fragment}"`), `${page} has a missing anchor: ${raw}`);
+      const resolvedFile = resolveRouteToFile(target);
+      assert.ok(fs.existsSync(path.join(root, resolvedFile)), `${page} has a broken local link: ${raw}`);
+      if (fragment && resolvedFile.endsWith('.html')) {
+        assert.match(read(resolvedFile), new RegExp(`id="${fragment}"`), `${page} has a missing anchor: ${raw}`);
       }
     }
   }
@@ -94,29 +104,29 @@ test('shared motion respects reduced-motion preferences', () => {
   assert.match(read('site.js'), /IntersectionObserver/);
 });
 
-test('features mega menu contains links to all dedicated feature pages and directory', () => {
+test('features mega menu contains clean-URL links to all dedicated feature pages and directory', () => {
   const indexHtml = read('index.html');
   assert.match(indexHtml, /class="nav-item nav-item-dropdown"/);
   assert.match(indexHtml, /class="nav-dropdown-trigger"/);
   assert.match(indexHtml, /id="features-mega-menu"/);
 
-  const expectedFeaturePages = [
-    'feature-sequences.html',
-    'feature-leads.html',
-    'feature-engage.html',
-    'feature-personalization.html',
-    'feature-inbox.html',
-    'feature-safety.html',
-    'feature-analytics.html',
-    'feature-teams.html',
-    'features.html',
+  const expectedFeatureRoutes = [
+    ['/feature-sequences', 'feature-sequences.html'],
+    ['/feature-leads', 'feature-leads.html'],
+    ['/feature-engage', 'feature-engage.html'],
+    ['/feature-personalization', 'feature-personalization.html'],
+    ['/feature-inbox', 'feature-inbox.html'],
+    ['/feature-safety', 'feature-safety.html'],
+    ['/feature-analytics', 'feature-analytics.html'],
+    ['/feature-teams', 'feature-teams.html'],
+    ['/features', 'features.html'],
   ];
 
-  for (const page of expectedFeaturePages) {
-    assert.match(indexHtml, new RegExp(`href="${page}"`), `Mega menu should link to ${page}`);
-    const featureHtml = read(page);
-    assert.match(featureHtml, /<h1\b/, `${page} must have an H1 title`);
-    assert.match(featureHtml, /contact\.html/, `${page} must offer pilot access CTA`);
+  for (const [route, file] of expectedFeatureRoutes) {
+    assert.match(indexHtml, new RegExp(`href="${route}"`), `Mega menu should link to ${route}`);
+    const featureHtml = read(file);
+    assert.match(featureHtml, /<h1\b/, `${file} must have an H1 title`);
+    assert.match(featureHtml, /href="\/contact"/, `${file} must offer pilot access CTA`);
   }
 
   // Ensure JS includes dropdown click and hover handling
@@ -141,4 +151,3 @@ test('login page is a standalone auth switch document without header or footer',
   assert.doesNotMatch(html, /Unravler Account Access/i, 'login.html must not have Unravler Account Access text');
   assert.match(read('styles.css'), /\.auth-body\s*\{[^}]*background:\s*#FFFFFF/i, 'auth-body must have white background');
 });
-
