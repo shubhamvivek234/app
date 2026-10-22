@@ -34,7 +34,7 @@ function parseQueryParams(fallbackTab = 'home') {
   };
 }
 
-export default function OutreachApp({ initialTab = 'home' }) {
+export default function OutreachApp({ initialTab = 'home', onSignOut }) {
   const initial = parseQueryParams(initialTab);
   const [activeTab, setActiveTab] = useState(initial.tab);
   const [isWizardOpen, setIsWizardOpen] = useState(initial.isWizard);
@@ -133,6 +133,7 @@ export default function OutreachApp({ initialTab = 'home' }) {
       activeTab={isWizardOpen ? 'campaigns' : activeTab}
       onNavigate={handleNavigate}
       onOpenWizard={() => handleOpenWizard('new', 1)}
+      onSignOut={onSignOut}
       hideTopHeader={isWizardOpen}
       isFullBleed={isWizardOpen}
     >

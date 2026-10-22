@@ -12,10 +12,11 @@ import {
   Sparkles,
   Bookmark,
   Shield,
+  LogOut,
 } from 'lucide-react';
 import UnravlerLogo from '@/components/UnravlerLogo';
 
-export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hideTopHeader = false, isFullBleed = false, children }) {
+export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, onSignOut, hideTopHeader = false, isFullBleed = false, children }) {
   const [workspaceName, setWorkspaceName] = useState('Workspace');
   const [actorInitials, setActorInitials] = useState('?');
   const [accountsCount, setAccountsCount] = useState(null);
@@ -73,20 +74,20 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hi
   return (
     <div className="h-screen max-h-screen flex bg-neutral-50/50 font-sans text-gray-900 selection:bg-indigo-500 selection:text-white overflow-hidden">
       {/* Prosp Minimal Left Nav Sidebar matching all user screenshots */}
-      <aside className="w-16 md:w-20 h-full max-h-screen border-r border-gray-200/80 bg-white flex flex-col items-center py-5 justify-between shrink-0 z-20">
-        <div className="flex flex-col items-center gap-7 w-full">
+      <aside className="w-16 md:w-20 h-full max-h-screen border-r border-gray-200/80 bg-white flex flex-col items-center py-4 justify-between shrink-0 z-20 overflow-y-auto">
+        <div className="flex flex-col items-center gap-4 w-full">
           {/* Logo */}
           <div
             onClick={() => onNavigate('home')}
-            className="w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer hover:bg-gray-100/80 active:scale-95 transition-all focus:outline-none select-none"
+            className="w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer hover:bg-gray-100/80 active:scale-95 transition-all focus:outline-none select-none shrink-0"
             title="Unravler Outreach - Home"
             aria-label="Unravler Outreach - Home"
           >
-            <UnravlerLogo height={32} showText={false} animated={true} />
+            <UnravlerLogo height={30} showText={false} animated={true} />
           </div>
 
           {/* Navigation Items */}
-          <nav className="flex flex-col items-center gap-4 w-full">
+          <nav className="flex flex-col items-center gap-1.5 w-full">
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = activeTab === item.id;
@@ -95,7 +96,7 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hi
                   key={item.id}
                   onClick={() => onNavigate(item.id)}
                   title={item.label}
-                  className={`flex flex-col items-center justify-center w-12 py-2 rounded-xl transition-all duration-200 group relative ${
+                  className={`flex flex-col items-center justify-center w-12 py-1.5 rounded-xl transition-all duration-200 group relative ${
                     isActive
                       ? 'bg-indigo-50/80 text-indigo-600 font-semibold'
                       : 'text-gray-400 hover:text-gray-700 hover:bg-gray-100/60'
@@ -106,7 +107,7 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hi
                       isActive ? 'stroke-[2.5]' : 'stroke-[1.75] group-hover:scale-105'
                     }`}
                   />
-                  <span className="text-[10px] mt-1 tracking-tight">{item.label}</span>
+                  <span className="text-[10px] mt-0.5 tracking-tight">{item.label}</span>
                 </button>
               );
             })}
@@ -114,7 +115,7 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hi
         </div>
 
         {/* Bottom Profile / Settings */}
-        <div className="flex flex-col items-center gap-3 w-full">
+        <div className="flex flex-col items-center gap-2.5 w-full pt-2">
           <button
             onClick={() => onNavigate('settings')}
             title="Settings"
@@ -180,7 +181,7 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hi
               </div>
             </div>
 
-            {/* Primary Action Button matching media_1790104087386.png */}
+            {/* Actions: Create campaign & Sign out */}
             <div className="flex items-center gap-3">
               <button
                 onClick={onOpenWizard}
@@ -189,6 +190,16 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hi
                 <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
                 Create campaign
               </button>
+              {onSignOut && (
+                <button
+                  onClick={onSignOut}
+                  title="Sign out of workspace"
+                  className="px-3 py-2 text-xs font-medium text-gray-600 hover:text-red-600 hover:bg-red-50/60 rounded-lg transition-colors flex items-center gap-1.5 border border-gray-200"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  Sign out
+                </button>
+              )}
             </div>
           </header>
         )}
