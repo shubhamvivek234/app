@@ -5,6 +5,19 @@ export const isPostHogConfigured = () => {
   return Boolean(key && key !== 'YOUR_POSTHOG_KEY');
 };
 
+export const initAnalytics = () => {
+  if (!isPostHogConfigured()) return;
+  try {
+    posthog.init(process.env.REACT_APP_POSTHOG_KEY, {
+      api_host: process.env.REACT_APP_POSTHOG_HOST || 'https://us.i.posthog.com',
+      autocapture: true,
+      capture_pageview: true,
+    });
+  } catch (err) {
+    console.warn('[PostHog] Init failed:', err);
+  }
+};
+
 export const computeDaysRemaining = (paidThrough) => {
   if (!paidThrough) return null;
   const target = new Date(paidThrough).getTime();
