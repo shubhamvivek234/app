@@ -275,4 +275,20 @@ describe('OutreachSettings page', () => {
     expect(container.textContent).toContain('1,250 / 20,000 chars');
     expect(container.textContent).toContain('Alice LinkedIn');
   });
+
+  it('renders Sign out as the last button inside Settings navigation and invokes onSignOut', async () => {
+    const onSignOut = jest.fn();
+    global.fetch = jest.fn((url) => {
+      if (url === '/api/v1/outreach/billing/plans') return Promise.resolve(ok({}));
+      return Promise.reject(new Error(`Unexpected request: ${url}`));
+    });
+
+    await act(async () => root.render(<OutreachSettings initialTab="help" onSignOut={onSignOut} />));
+
+    const signOutBtn = container.querySelector('[data-testid="settings-signout-button"]');
+    expect(signOutBtn).not.toBeNull();
+    expect(signOutBtn.textContent).toContain('Sign out');
+    await act(async () => signOutBtn.click());
+    expect(onSignOut).toHaveBeenCalledTimes(1);
+  });
 });

@@ -426,6 +426,25 @@ async def test_send_password_reset_email_falls_back_to_firebase_managed_email(mo
     assert call_store["email"] == "user@example.com"
 
 
+@pytest.mark.asyncio
+async def test_send_password_reset_email_falls_back_when_outbound_email_provider_unconfigured(monkeypatch):
+    monkeypatch.delenv("RESEND_API_KEY", raising=False)
+    monkeypatch.delenv("SENDER_EMAIL", raising=False)
+    monkeypatch.setenv("FIREBASE_WEB_API_KEY", "firebase-web-key")
+
+    call_store = {}
+
+    async def _fallback(email):
+        call_store["email"] = email
+
+    monkeypatch.setattr(auth_emails_utils, "_send_password_reset_via_firebase", _fallback)
+
+    await auth_emails_utils.send_password_reset_email("user@example.com")
+
+    assert call_store["email"] == "user@example.com"
+
+
+
 def test_auth_email_config_canonicalizes_preview_or_apex_frontend_url(monkeypatch):
     monkeypatch.setenv("RESEND_API_KEY", "resend_test")
     monkeypatch.setenv("SENDER_EMAIL", "contact@unravler.com")

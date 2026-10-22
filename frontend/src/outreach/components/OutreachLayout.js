@@ -12,7 +12,6 @@ import {
   Sparkles,
   Bookmark,
   Shield,
-  LogOut,
 } from 'lucide-react';
 import UnravlerLogo from '@/components/UnravlerLogo';
 import { identifyOutreachContext } from '@/lib/analytics';
@@ -190,7 +189,7 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, on
               </div>
             </div>
 
-            {/* Actions: Create campaign & Sign out */}
+            {/* Actions: Create campaign */}
             <div className="flex items-center gap-3">
               <button
                 onClick={onOpenWizard}
@@ -199,16 +198,6 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, on
                 <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
                 Create campaign
               </button>
-              {onSignOut && (
-                <button
-                  onClick={onSignOut}
-                  title="Sign out of workspace"
-                  className="px-3 py-2 text-xs font-medium text-gray-600 hover:text-red-600 hover:bg-red-50/60 rounded-lg transition-colors flex items-center gap-1.5 border border-gray-200"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  Sign out
-                </button>
-              )}
             </div>
           </header>
         )}

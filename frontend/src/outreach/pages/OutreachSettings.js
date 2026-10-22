@@ -20,6 +20,7 @@ import {
   AlertTriangle,
   Globe,
   Sliders,
+  LogOut,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import OutreachAccounts from './OutreachAccounts';
@@ -30,7 +31,7 @@ import OutreachIntegrations from './OutreachIntegrations';
 import OutreachSubscriptionMonitor from './OutreachSubscriptionMonitor';
 import LeadTagManager from '../components/LeadTagManager';
 
-export default function OutreachSettings({ initialTab = 'accounts' }) {
+export default function OutreachSettings({ initialTab = 'accounts', onSignOut }) {
   const [activeTab, setActiveTab] = useState(() => (
     typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('mailbox_job_id')
       ? 'mailboxes' : initialTab
@@ -368,6 +369,19 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
     toast.success(label);
   };
 
+  const handleSignOut = async () => {
+    if (typeof onSignOut === 'function') {
+      await onSignOut();
+      return;
+    }
+    try {
+      localStorage.removeItem('token');
+      await fetch('/api/auth/session/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
+    } finally {
+      window.location.assign('/login');
+    }
+  };
+
   // ── Navigation Tabs (Import from V1 permanently removed) ───────────────────
   const tabs = [
     { id: 'accounts', label: 'Accounts' },
@@ -426,6 +440,17 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
                 {tab.label}
               </button>
             ))}
+            <div className="pt-2 mt-2 border-t border-gray-200/80">
+              <button
+                type="button"
+                onClick={handleSignOut}
+                data-testid="settings-signout-button"
+                className="w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-medium text-red-600 hover:text-red-700 hover:bg-red-50/80 transition-all flex items-center gap-2"
+              >
+                <LogOut className="w-3.5 h-3.5 shrink-0" />
+                Sign out
+              </button>
+            </div>
           </div>
 
           {/* Right Main Pane */}

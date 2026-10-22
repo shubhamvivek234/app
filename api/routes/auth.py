@@ -416,14 +416,14 @@ async def request_password_reset(
     await _verify_turnstile_if_enabled(body.cf_turnstile_token, client_ip)
 
     config_status = get_auth_email_config_status()
-    if not config_status["configured"]:
+    if not config_status.get("configured") and not config_status.get("firebase_fallback_configured"):
         event_log(
             logger,
             "error",
             "auth.password_reset.unavailable",
             route="/auth/password-reset/request",
             failure_type="missing_auth_email_config",
-            missing_config=config_status["missing"],
+            missing_config=config_status.get("missing"),
             outcome="misconfigured",
         )
         raise HTTPException(

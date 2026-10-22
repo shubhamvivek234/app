@@ -24,6 +24,11 @@ import CookieConsent from '@/components/CookieConsent';
 
 const OutreachApp = React.lazy(() => import('@/outreach/OutreachApp'));
 
+const OutreachRouteShell = () => {
+  const { logout } = useAuth();
+  return <OutreachApp onSignOut={logout} />;
+};
+
 // FE-4: Catch render errors so the entire app doesn't crash to a white screen
 class ErrorBoundary extends Component {
   constructor(props) {
@@ -175,7 +180,7 @@ function App() {
                 path="/outreach/*"
                 element={
                   <PrivateRoute>
-                    <OutreachApp />
+                    <OutreachRouteShell />
                   </PrivateRoute>
                 }
               />

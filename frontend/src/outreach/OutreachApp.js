@@ -183,7 +183,7 @@ export default function OutreachApp({ initialTab = 'home', onSignOut }) {
           {activeTab === 'inbox' && <OutreachInbox />}
           {activeTab === 'voice' && <OutreachVoice />}
           {activeTab === 'swipe' && <OutreachSwipeFiles />}
-          {activeTab === 'settings' && <OutreachSettings />}
+          {activeTab === 'settings' && <OutreachSettings onSignOut={onSignOut} />}
         </>
       )}
     </OutreachLayout>

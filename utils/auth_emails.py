@@ -108,6 +108,7 @@ def get_auth_email_config_status() -> dict[str, object]:
         "custom_link_domain_configured": bool(link_domain),
         "custom_sender_configured": custom_sender,
         "sender_name_configured": sender_name_ok,
+        "firebase_fallback_configured": bool(_firebase_web_api_key()),
     }
 
 
@@ -277,14 +278,31 @@ async def _send_password_reset_via_firebase(email: str) -> None:
         raise AuthEmailDeliveryError(f"httpx unavailable: {exc}") from exc
 
     url = f"https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key={api_key}"
+    continue_url = _build_frontend_url("/login", query={"passwordReset": "completed"})
     payload = {
         "requestType": "PASSWORD_RESET",
         "email": email,
+        "continueUrl": continue_url,
     }
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(url, json=payload)
+            if response.status_code != 200:
+                try:
+                    err_data = response.json()
+                except Exception:
+                    err_data = {}
+                err_msg = str(
+                    err_data.get("error", {}).get("message")
+                    or err_data.get("message")
+                    or ""
+                ).upper()
+                if "CONTINUE_URI" in err_msg or "UNAUTHORIZED_DOMAIN" in err_msg:
+                    response = await client.post(
+                        url,
+                        json={"requestType": "PASSWORD_RESET", "email": email},
+                    )
     except Exception as exc:
         raise AuthEmailDeliveryError(str(exc)) from exc
 
@@ -308,7 +326,20 @@ async def _send_password_reset_via_firebase(email: str) -> None:
 
 
 async def send_password_reset_email(email: str) -> None:
-    _require_auth_email_config()
+    status = get_auth_email_config_status()
+    if not status.get("configured"):
+        if _firebase_web_api_key():
+            await _send_password_reset_via_firebase(email)
+            event_log(
+                logger,
+                "info",
+                "auth.password_reset.firebase_fallback_succeeded",
+                email=email,
+                outcome="fallback_succeeded",
+            )
+            return
+        _require_auth_email_config()
+
     settings = _build_action_code_settings(
         "/login",
         query={"passwordReset": "completed"},
@@ -325,6 +356,7 @@ async def send_password_reset_email(email: str) -> None:
             ),
             timeout=2.5,
         )
+        await _send_email("password_reset", email, action_url, None)
     except (firebase_auth.UserNotFoundError, firebase_auth.EmailNotFoundError) as exc:
         raise AuthEmailUnknownRecipientError(str(exc)) from exc
     except Exception as exc:
@@ -351,8 +383,6 @@ async def send_password_reset_email(email: str) -> None:
             raise
         except Exception as fallback_exc:
             raise AuthEmailDeliveryError(str(fallback_exc)) from fallback_exc
-
-    await _send_email("password_reset", email, action_url, None)
 
 
 async def send_verification_email(email: str, *, display_name: str | None = None, return_to: str | None = None) -> None:
