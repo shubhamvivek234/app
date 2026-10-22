@@ -66,7 +66,13 @@ const createDefaultSchedule = () => WEEK_DAYS.map((day, index) => ({
 
 const formatTimeLabel = (value) => {
   if (!value) return '09:00 AM';
-  if (/\s(AM|PM)$/i.test(value)) return value.toUpperCase();
+  if (/\s(AM|PM)$/i.test(value)) {
+    const [timePart, meridiem] = String(value).trim().split(/\s+/);
+    const [rawH, rawM = '00'] = timePart.split(':');
+    const h = Number(rawH);
+    if (!Number.isFinite(h) || h < 1 || h > 12) return value.toUpperCase();
+    return `${String(h).padStart(2, '0')}:${String(rawM).padStart(2, '0')} ${meridiem.toUpperCase()}`;
+  }
   const [rawHours, rawMinutes = '00'] = String(value).split(':');
   const hours = Number(rawHours);
   if (!Number.isFinite(hours) || hours < 0 || hours > 23) return '09:00 AM';
@@ -1091,7 +1097,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                         setSchedule((prev) =>
                           prev.map((d) =>
                             d.day === 'Friday'
-                              ? { ...d, enabled: true, ranges: [{ start: '9:00 AM', end: '1:00 PM' }] }
+                              ? { ...d, enabled: true, ranges: [{ start: '09:00 AM', end: '01:00 PM' }] }
                               : d
                           )
                         );

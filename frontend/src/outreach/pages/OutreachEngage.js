@@ -661,8 +661,12 @@ export default function OutreachEngage() {
         if (res.ok) {
           await waitForPostAction(postId, 'liked');
           successCount++;
-          setPosts((prev) => prev.filter((p) => p.id !== postId));
-          setTotalPosts((total) => Math.max(0, total - 1));
+          if (statusFilter === 'pending') {
+            setPosts((prev) => prev.filter((p) => p.id !== postId));
+            setTotalPosts((total) => Math.max(0, total - 1));
+          } else {
+            setPosts((prev) => prev.map((p) => (p.id === postId ? { ...p, status: 'liked', action_queued_at: null } : p)));
+          }
         } else if (res.status === 429) {
           rateLimited = true;
           break;
@@ -966,7 +970,10 @@ export default function OutreachEngage() {
       });
       if (!res.ok) throw new Error(await readError(res, 'Could not push contacts to campaign'));
       const data = await res.json();
-      toast.success(`Pushed ${data.pushed_count} lead${data.pushed_count !== 1 ? 's' : ''} to campaign (${data.skipped_count} already in campaign)`);
+      const pushedCount = data.pushed_count ?? 0;
+      const skippedCount = data.skipped_duplicates ?? data.skipped_count ?? 0;
+      toast.success(`Pushed ${pushedCount} lead${pushedCount !== 1 ? 's' : ''} to campaign (${skippedCount} already in campaign)`);
+      fetchCampaigns();
     } catch (error) {
       toast.error(error.message || 'Failed to push contacts to campaign');
     } finally {

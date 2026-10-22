@@ -99,7 +99,7 @@ export default function OutreachAccounts() {
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Could not save daily limits');
       const updated = await res.json();
-      setAccounts((current) => current.map((account) => (account.id === accountId ? updated : account)));
+      setAccounts((current) => current.map((account) => (account.id === accountId ? { ...account, ...updated } : account)));
       setEditingLimitsId(null);
       toast.success('Daily limits saved');
     } catch (err) {
@@ -125,7 +125,7 @@ export default function OutreachAccounts() {
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Could not update Activity Control');
       const updated = await res.json();
-      setAccounts((current) => current.map((account) => (account.id === acc.id ? updated : account)));
+      setAccounts((current) => current.map((account) => (account.id === acc.id ? { ...account, ...updated } : account)));
       toast.success(!currentlyEnabled ? 'Activity Control enabled' : 'Activity Control disabled');
     } catch (err) {
       toast.error(err.message || 'Could not update Activity Control');

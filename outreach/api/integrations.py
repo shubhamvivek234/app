@@ -582,8 +582,11 @@ async def preview_sheets_import(
     existing_urls = {l.get("linkedin_url") for l in existing_leads if l.get("linkedin_url")}
     existing_emails = {l.get("email").lower() for l in existing_leads if l.get("email")}
 
+    from outreach.core.lead_importer import normalize_any_linkedin_profile_url
+
     valid_rows = []
     duplicate_rows = 0
+    invalid_rows = 0
     formula_neutralized_count = 0
 
     for raw_row in req.rows:
@@ -595,10 +598,12 @@ async def preview_sheets_import(
         url_key = req.column_mapping.get("linkedin_url", "linkedin_url")
         email_key = req.column_mapping.get("email", "email")
 
-        url_val = normalize_linkedin_url(str(row.get(url_key, "")))
+        url_val = normalize_any_linkedin_profile_url(str(row.get(url_key, ""))) or normalize_linkedin_url(str(row.get(url_key, "")))
         email_val = str(row.get(email_key, "")).strip().lower()
 
-        if (url_val and url_val in existing_urls) or (email_val and email_val in existing_emails):
+        if not url_val:
+            invalid_rows += 1
+        elif (url_val and url_val in existing_urls) or (email_val and email_val in existing_emails):
             duplicate_rows += 1
         else:
             valid_rows.append(row)
@@ -607,6 +612,7 @@ async def preview_sheets_import(
         "total_rows": len(req.rows),
         "valid_count": len(valid_rows),
         "duplicate_count": duplicate_rows,
+        "invalid_count": invalid_rows,
         "formula_neutralized_count": formula_neutralized_count,
         "sample_preview": valid_rows[:5],
     }

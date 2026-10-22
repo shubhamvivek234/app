@@ -91,7 +91,7 @@ async def list_action_reviews(
         }, {"_id": 0, "first_name": 1, "last_name": 1, "email": 1, "execution_state": 1})
         account = await db.outreach_accounts.find_one({
             "workspace_id": workspace_id, "id": task.get("account_id"),
-        }, {"_id": 0, "full_name": 1})
+        }, {"_id": 0, "account_name": 1, "name": 1, "full_name": 1})
         email_op = await _email_operation(db, workspace_id, task) if task.get("task_type") == "send_email" else None
         resolution = task.get("resolution") if view == "resolved" else None
         items.append({
@@ -103,7 +103,7 @@ async def list_action_reviews(
             "lead_name": " ".join(filter(None, [(lead or {}).get("first_name"), (lead or {}).get("last_name")])) or "Deleted lead",
             "lead_email": (lead or {}).get("email") if task.get("task_type") == "send_email" else None,
             "lead_status": (lead or {}).get("execution_state"),
-            "sender_name": (account or {}).get("full_name") or "Sender unavailable",
+            "sender_name": (account or {}).get("account_name") or (account or {}).get("full_name") or (account or {}).get("name") or "Sender unavailable",
             "created_at": task.get("created_at"), "updated_at": task.get("updated_at"),
             "reason": _PUBLIC_REASON if view == "pending" else None,
             "can_confirm": bool(task.get("task_type") != "send_email" or email_op),

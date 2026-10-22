@@ -20,7 +20,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from db.mongo import get_db
 from outreach.api.dependencies import get_outreach_user, require_outreach_permission
-from outreach.core.lead_importer import normalize_linkedin_url
+from outreach.core.lead_importer import normalize_linkedin_url, normalize_any_linkedin_profile_url
 from outreach.core.rate_limiter import OutboundRateLimiter
 from outreach.core.safety_shield import SafetyShield
 from outreach.engine.voyager_client import VoyagerClient
@@ -94,8 +94,17 @@ class UpdateEngageDraftRequest(BaseModel):
 
 # ── Helper Functions ───────────────────────────────────────────────────────
 
+def _workspace_id(current_user: dict) -> str:
+    return (
+        current_user.get("default_workspace_id")
+        or current_user.get("current_workspace_id")
+        or current_user.get("workspace_id")
+        or current_user.get("user_id")
+    )
+
+
 def _extract_vanity(url: str) -> str:
-    cleaned = normalize_linkedin_url(url)
+    cleaned = normalize_any_linkedin_profile_url(url) or normalize_linkedin_url(url)
     parts = cleaned.rstrip("/").split("/")
     return parts[-1] if parts else "prospect"
 
@@ -225,7 +234,7 @@ async def list_engage_lists(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Retrieve all engagement lists for the workspace with live contact/pending counts."""
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
 
     cursor = db.outreach_engage_lists.find({"workspace_id": workspace_id}, {"_id": 0}).sort("created_at", -1)
     lists = await cursor.to_list(100)
@@ -248,7 +257,7 @@ async def get_engage_list(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Get details and contacts for an engagement list."""
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
     engage_list = await db.outreach_engage_lists.find_one({"id": list_id, "workspace_id": workspace_id}, {"_id": 0})
     if not engage_list:
         raise HTTPException(status_code=404, detail="Engagement list not found")
@@ -304,7 +313,7 @@ async def list_engage_accounts(
     current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
     accounts = await db.outreach_accounts.find(
         {"workspace_id": workspace_id, "status": "active"},
         {"_id": 0, "id": 1, "account_name": 1, "avatar_url": 1, "vanity_name": 1},
@@ -319,7 +328,7 @@ async def update_engage_list_settings(
     current_user: dict = require_outreach_permission('engage:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
     from outreach.core.suppression import mutate_suppression, SuppressionUnavailable
 
     if req.name is not None and not req.name.strip():
@@ -382,7 +391,7 @@ async def get_engage_list_stats(
     current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
     if not await db.outreach_engage_lists.find_one({"id": list_id, "workspace_id": workspace_id}):
         raise HTTPException(status_code=404, detail="Engagement list not found")
     base = {"list_id": list_id, "workspace_id": workspace_id}
@@ -403,7 +412,7 @@ async def get_engage_report(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Printable summary of recorded actions, excluding drafts and legacy status-only rows."""
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
     engage_list = await db.outreach_engage_lists.find_one({"id": list_id, "workspace_id": workspace_id})
     if not engage_list:
         raise HTTPException(status_code=404, detail="Engagement list not found")
@@ -436,7 +445,7 @@ async def list_engage_drafts(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """List human-reviewed comment drafts. Self-reported completion is not engagement."""
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
     if status_filter not in {"pending", "completed", "dismissed", "all"}:
         raise HTTPException(status_code=400, detail="Invalid draft status")
     if not await db.outreach_engage_lists.find_one({"id": list_id, "workspace_id": workspace_id}):
@@ -455,7 +464,7 @@ async def create_engage_draft(
     current_user: dict = require_outreach_permission('engage:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
     from outreach.core.suppression import mutate_suppression, SuppressionUnavailable
     async def apply(current):
         db = current
@@ -499,7 +508,7 @@ async def update_engage_draft(
     current_user: dict = require_outreach_permission('engage:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
     from outreach.core.suppression import mutate_suppression, SuppressionUnavailable
     async def apply(current):
         db = current
@@ -579,7 +588,7 @@ async def delete_engage_list(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Delete an engagement list, including its contacts, posts, and review drafts."""
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
     from outreach.core.suppression import mutate_suppression, SuppressionUnavailable
 
     async def apply(current):
@@ -607,7 +616,7 @@ async def add_contacts_to_list(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Add LinkedIn profile URLs to an engagement list manually or via CSV."""
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
     # Readiness is advisory here; its global resource checks run outside the scoped transaction.
     try:
         selected_account = await _resolve_sender_account(workspace_id, db, req.sender_account_id)
@@ -647,7 +656,7 @@ async def add_contacts_to_list(
                 for row in reader:
                     for col in row:
                         val = col.strip()
-                        if "linkedin.com/in/" in val or "linkedin.com/sales/" in val:
+                        if "linkedin.com/in/" in val or "linkedin.com/sales/" in val or "linkedin.com/talent/" in val:
                             extracted_urls.append(val)
             except Exception as exc:
                 logger.warning("Error parsing CSV text for contacts: %s", exc)
@@ -662,7 +671,11 @@ async def add_contacts_to_list(
                 "status": "active", "is_deleted": {"$ne": True}}, {"$inc": {"lead_admission_revision": 1}})
             if getattr(checked, "matched_count", 0) != 1:
                 raise HTTPException(409, "Sender changed before contacts could be saved.")
-        cleaned_urls = [normalize_linkedin_url(raw) for raw in extracted_urls if raw.strip()]
+        cleaned_urls = [
+            (normalize_any_linkedin_profile_url(raw) or normalize_linkedin_url(raw))
+            for raw in extracted_urls
+            if raw.strip()
+        ]
         invalid_count = sum(not url for url in cleaned_urls)
         cleaned_urls = list(dict.fromkeys(url for url in cleaned_urls if url))
         if not cleaned_urls:
@@ -737,7 +750,7 @@ async def push_contacts_to_campaign(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Push engaged (or all) contacts from this Engage list into a target campaign."""
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
     from outreach.core.suppression import mutate_suppression, SuppressionUnavailable
     from outreach.models import OutreachLead, LeadExecutionState
     from outreach.core.lead_importer import build_lead_identifiers
@@ -785,7 +798,8 @@ async def push_contacts_to_campaign(
         skipped_duplicates = 0
         now = datetime.now(timezone.utc)
         for c in contacts:
-            cleaned_url = normalize_linkedin_url(c.get("profile_url", ""))
+            raw_profile_url = c.get("profile_url", "")
+            cleaned_url = normalize_any_linkedin_profile_url(raw_profile_url) or normalize_linkedin_url(raw_profile_url)
             if not cleaned_url:
                 continue
             existing = await db.outreach_leads.find_one({
@@ -836,6 +850,7 @@ async def push_contacts_to_campaign(
             "status": "success",
             "pushed_count": pushed_count,
             "skipped_duplicates": skipped_duplicates,
+            "skipped_count": skipped_duplicates,
             "campaign_id": req.campaign_id,
         }
 
@@ -852,7 +867,7 @@ async def delete_engage_contact(
     current_user: dict = require_outreach_permission('engage:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
     from outreach.core.suppression import mutate_suppression, SuppressionUnavailable
 
     async def apply(current):
@@ -893,7 +908,7 @@ async def get_engage_contact_history(
     current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
     contact = await db.outreach_engage_contacts.find_one({
         "id": contact_id, "list_id": list_id, "workspace_id": workspace_id,
     })
@@ -928,7 +943,7 @@ async def export_engage_report(
     current_user: dict = Depends(get_outreach_user),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
     if not await db.outreach_engage_lists.find_one({"id": list_id, "workspace_id": workspace_id}):
         raise HTTPException(status_code=404, detail="Engagement list not found")
     output = io.StringIO()
@@ -958,7 +973,7 @@ async def fetch_latest_posts_for_list(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Queue a bounded background fetch; never scrape LinkedIn on the API request path."""
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
     engage_list = await db.outreach_engage_lists.find_one({"id": list_id, "workspace_id": workspace_id})
     if not engage_list:
         raise HTTPException(status_code=404, detail="Engagement list not found")
@@ -1026,7 +1041,7 @@ async def get_engage_posts_feed(
 ):
 
     """Retrieve the aggregated post cards feed for this engagement list."""
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
 
     if skip < 0 or limit < 1 or limit > 100:
         raise HTTPException(status_code=400, detail="Invalid post pagination")
@@ -1079,7 +1094,7 @@ async def like_engage_post(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """1-Click Like a post via Voyager with rate limiting and safety checks."""
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
     post = await db.outreach_engage_posts.find_one({"id": post_id, "workspace_id": workspace_id})
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
@@ -1123,7 +1138,7 @@ async def comment_engage_post(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Post an in-line comment to LinkedIn with optional auto-like, rate limiting, and safety checks."""
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
     post = await db.outreach_engage_posts.find_one({"id": post_id, "workspace_id": workspace_id})
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
@@ -1229,7 +1244,7 @@ async def queue_like_engage_post(
     current_user: dict = require_outreach_permission('engage:manage'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
     return await _queue_engage_action(post_id, workspace_id, req.sender_account_id, "like", {"reaction": "LIKE"}, db, current_user.get("user_id"))
 
 
@@ -1242,7 +1257,7 @@ async def queue_comment_engage_post(
 ):
     if not req.comment_text.strip():
         raise HTTPException(status_code=400, detail="Comment text cannot be empty")
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
     return await _queue_engage_action(post_id, workspace_id, req.sender_account_id, "comment",
                                       {"body": req.comment_text.strip(), "auto_like": req.auto_like}, db, current_user.get("user_id"))
 
@@ -1253,7 +1268,7 @@ async def get_engage_post_action(
     current_user: dict = require_outreach_permission('engage:read'),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
     post = await db.outreach_engage_posts.find_one({"id": post_id, "workspace_id": workspace_id},
                                                   {"_id": 0, "status": 1, "action_queued_at": 1,
                                                    "action_claimed_at": 1, "action_error": 1,
@@ -1275,7 +1290,7 @@ async def discard_engage_post(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Dismiss a post from the pending feed."""
-    workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+    workspace_id = _workspace_id(current_user)
     post = await db.outreach_engage_posts.find_one({"id": post_id, "workspace_id": workspace_id})
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
@@ -1322,7 +1337,7 @@ async def generate_ai_comments(
     author_info = f"\nAuthor Headline: {req.author_headline}" if req.author_headline else ""
     style_instr = ""
     if req.writing_style_id:
-        workspace_id = current_user.get("default_workspace_id") or current_user.get("user_id")
+        workspace_id = _workspace_id(current_user)
         style = await db.outreach_writing_styles.find_one({
             "id": req.writing_style_id, "workspace_id": workspace_id,
         })

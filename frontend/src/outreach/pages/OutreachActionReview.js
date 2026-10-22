@@ -102,9 +102,10 @@ export default function OutreachActionReview() {
         <p className="mt-2 text-xs text-amber-800">A review does not restart a paused campaign. Resume it separately only after checking the sender, sequence, and remaining leads.</p>
       </div>
 
-      <div className="flex gap-2" aria-label="Action review view">
+      <div className="flex flex-wrap gap-2" aria-label="Action review view">
         <button type="button" onClick={() => chooseView('pending')} aria-pressed={view === 'pending'} className={`rounded-lg px-3 py-2 text-sm ${view === 'pending' ? 'bg-gray-900 text-white' : 'border border-gray-300 text-gray-700'}`}>Needs review</button>
         <button type="button" onClick={() => chooseView('resolved')} aria-pressed={view === 'resolved'} className={`rounded-lg px-3 py-2 text-sm ${view === 'resolved' ? 'bg-gray-900 text-white' : 'border border-gray-300 text-gray-700'}`}>Review history</button>
+        <button type="button" onClick={() => load()} disabled={loading || busy} className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50">Refresh reviews</button>
       </div>
 
       {error && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}

@@ -57,6 +57,7 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
   const [currentUserRole, setCurrentUserRole] = useState('viewer');
   const [permissions, setPermissions] = useState({});
   const [loadingMembers, setLoadingMembers] = useState(false);
+  const [membersError, setMembersError] = useState('');
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState('editor');
@@ -101,6 +102,7 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
   // ── Fetch Members Data ─────────────────────────────────────────────────────
   const fetchMembers = useCallback(async () => {
     setLoadingMembers(true);
+    setMembersError('');
     try {
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/workspace/members', {
@@ -113,13 +115,24 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
         setPendingInvites(data.pending_invites || []);
         setCurrentUserRole(data.current_user_role || 'viewer');
         setPermissions(data.permissions || {});
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setMembersError(err.detail || 'Could not load workspace members.');
       }
     } catch (err) {
-      console.error('Failed to load members:', err);
+      setMembersError('Could not load workspace members.');
     } finally {
       setLoadingMembers(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('mailbox_job_id')) {
+      setActiveTab('mailboxes');
+    } else if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
 
   useEffect(() => {
     fetchBilling();
@@ -443,8 +456,11 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
                       {showRoleMatrix ? 'Hide Role Comparison' : 'See Key Differences Between Roles'}
                     </button>
                     <button
+                      type="button"
                       onClick={() => setInviteModalOpen(true)}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors"
+                      disabled={permissions.can_invite === false}
+                      title={permissions.can_invite === false ? 'Only workspace owners and admins can invite teammates' : undefined}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors disabled:opacity-50"
                     >
                       <UserPlus className="w-3.5 h-3.5" /> Invite Teammates
                     </button>
@@ -525,6 +541,17 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
                   {loadingMembers ? (
                     <div className="p-12 flex justify-center text-gray-400">
                       <Loader2 className="w-6 h-6 animate-spin text-indigo-600" />
+                    </div>
+                  ) : membersError ? (
+                    <div role="alert" className="p-8 text-center text-xs text-red-700 space-y-2">
+                      <p>{membersError}</p>
+                      <button
+                        type="button"
+                        onClick={fetchMembers}
+                        className="px-3 py-1.5 rounded-lg border border-red-200 bg-red-50 text-red-700 font-semibold hover:bg-red-100"
+                      >
+                        Retry loading members
+                      </button>
                     </div>
                   ) : members.length === 0 ? (
                     <div className="p-8 text-center text-xs text-gray-500">

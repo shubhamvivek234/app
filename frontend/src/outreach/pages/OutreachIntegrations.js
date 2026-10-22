@@ -76,6 +76,8 @@ export default function OutreachIntegrations() {
   const [selectedWebhookForLogs, setSelectedWebhookForLogs] = useState(null);
   const [deliveries, setDeliveries] = useState([]);
   const [loadingDeliveries, setLoadingDeliveries] = useState(false);
+  const [replayingDeliveryId, setReplayingDeliveryId] = useState(null);
+  const [rotatingWebhookId, setRotatingWebhookId] = useState(null);
 
   // ── API Keys State ──────────────────────────────────────────────────────────
   const [apiKeys, setApiKeys] = useState([]);
@@ -90,6 +92,9 @@ export default function OutreachIntegrations() {
   const [slackConnected, setSlackConnected] = useState(false);
   const [slackWebhookUrl, setSlackWebhookUrl] = useState('');
   const [slackChannel, setSlackChannel] = useState('#sales-leads');
+  const [slackNotifyReplies, setSlackNotifyReplies] = useState(true);
+  const [slackNotifyAccepts, setSlackNotifyAccepts] = useState(true);
+  const [slackDailyDigest, setSlackDailyDigest] = useState(false);
   const [savingSlack, setSavingSlack] = useState(false);
   const [testingSlack, setTestingSlack] = useState(false);
 
@@ -164,6 +169,9 @@ export default function OutreachIntegrations() {
         const data = await res.json();
         setSlackConnected(Boolean(data.connected));
         if (data.channel_name) setSlackChannel(data.channel_name);
+        if (typeof data.notify_on_replies === 'boolean') setSlackNotifyReplies(data.notify_on_replies);
+        if (typeof data.notify_on_accepts === 'boolean') setSlackNotifyAccepts(data.notify_on_accepts);
+        if (typeof data.daily_digest_enabled === 'boolean') setSlackDailyDigest(data.daily_digest_enabled);
       }
     } catch (err) {
       outreachLogger.debug('integrations.slack_config_fetch_failed', { error: err });
@@ -272,9 +280,38 @@ export default function OutreachIntegrations() {
       if (res.ok) {
         toast.success('Webhook deleted');
         fetchWebhooks();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'Failed to delete webhook');
       }
     } catch (_) {
       toast.error('Failed to delete webhook');
+    }
+  };
+
+  const handleRotateWebhookSecret = async (whk) => {
+    if (!window.confirm('Rotate signing secret for this webhook? The previous secret will immediately stop signing new events.')) return;
+    setRotatingWebhookId(whk.id);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/v1/outreach/integrations/webhooks/${whk.id}/rotate-secret`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setNewlyCreatedSecret(data.secret);
+        setWebhookModalOpen(true);
+        toast.success(data.message || 'Webhook signing secret rotated');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'Failed to rotate webhook secret');
+      }
+    } catch (_) {
+      toast.error('Failed to rotate webhook secret');
+    } finally {
+      setRotatingWebhookId(null);
     }
   };
 
@@ -294,11 +331,39 @@ export default function OutreachIntegrations() {
       if (res.ok) {
         const data = await res.json();
         setDeliveries(data.deliveries || []);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'Failed to load deliveries');
       }
     } catch (_) {
       toast.error('Failed to load deliveries');
     } finally {
       setLoadingDeliveries(false);
+    }
+  };
+
+  const handleReplayDelivery = async (del) => {
+    setReplayingDeliveryId(del.id);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/v1/outreach/integrations/deliveries/${encodeURIComponent(del.id)}/replay`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (res.ok) {
+        toast.success('Delivery queued for replay');
+        if (selectedWebhookForLogs) {
+          await openDeliveryLogs(selectedWebhookForLogs);
+        }
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'Failed to replay delivery');
+      }
+    } catch (_) {
+      toast.error('Failed to replay delivery');
+    } finally {
+      setReplayingDeliveryId(null);
     }
   };
 
@@ -353,6 +418,9 @@ export default function OutreachIntegrations() {
       if (res.ok) {
         toast.success('API key revoked');
         fetchApiKeys();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'Failed to revoke API key');
       }
     } catch (_) {
       toast.error('Failed to revoke API key');
@@ -376,6 +444,9 @@ export default function OutreachIntegrations() {
           enabled: true,
           webhook_url: slackWebhookUrl.trim(),
           channel_name: slackChannel.trim(),
+          notify_on_replies: slackNotifyReplies,
+          notify_on_accepts: slackNotifyAccepts,
+          daily_digest_enabled: slackDailyDigest,
         }),
       });
       if (res.ok) {
@@ -414,6 +485,9 @@ export default function OutreachIntegrations() {
       if (res.ok) {
         toast.success('Slack disconnected');
         setSlackConnected(false);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'Failed to disconnect Slack');
       }
     } catch (_) {
       toast.error('Failed to disconnect Slack');
@@ -471,6 +545,9 @@ export default function OutreachIntegrations() {
         toast.success('HubSpot CRM disconnected');
         setHubspotConnected(false);
         setHubspotPortalId('');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'Failed to disconnect HubSpot');
       }
     } catch (_) {
       toast.error('Failed to disconnect HubSpot');
@@ -478,13 +555,33 @@ export default function OutreachIntegrations() {
   };
 
   // ── Google Sheets / CSV Parser & Import Handlers ────────────────────────────
+  const normalizeCsvHeader = (raw) => {
+    const clean = raw.trim().replace(/^["']|["']$/g, '').toLowerCase().replace(/[\s-]+/g, '_');
+    const aliases = {
+      url: 'linkedin_url',
+      profile_url: 'linkedin_url',
+      linkedin: 'linkedin_url',
+      linkedin_profile: 'linkedin_url',
+      linkedin_profile_url: 'linkedin_url',
+      firstname: 'first_name',
+      lastname: 'last_name',
+      company: 'company_name',
+      organization: 'company_name',
+      title: 'job_title',
+      role: 'job_title',
+      position: 'job_title',
+    };
+    return aliases[clean] || clean;
+  };
+
   const parseCsvLines = (text) => {
     const lines = text.trim().split('\n').map((l) => l.trim()).filter(Boolean);
     if (lines.length < 2) return [];
-    const headers = lines[0].split(',').map((h) => h.trim().replace(/^["']|["']$/g, ''));
+    const delimiter = lines[0].includes('\t') && !lines[0].includes(',') ? '\t' : ',';
+    const headers = lines[0].split(delimiter).map(normalizeCsvHeader);
     const rows = [];
     for (let i = 1; i < lines.length; i++) {
-      const values = lines[i].split(',').map((v) => v.trim().replace(/^["']|["']$/g, ''));
+      const values = lines[i].split(delimiter).map((v) => v.trim().replace(/^["']|["']$/g, ''));
       const obj = {};
       headers.forEach((h, idx) => {
         obj[h] = values[idx] || '';
@@ -698,6 +795,16 @@ export default function OutreachIntegrations() {
                     </button>
                     <button
                       type="button"
+                      onClick={() => handleRotateWebhookSecret(whk)}
+                      disabled={rotatingWebhookId === whk.id}
+                      className="px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-md inline-flex items-center gap-1 disabled:opacity-50"
+                      title="Rotate HMAC signing secret"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${rotatingWebhookId === whk.id ? 'animate-spin' : ''}`} />
+                      Rotate Secret
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => handleDeleteWebhook(whk.id)}
                       className="p-1.5 text-gray-400 hover:text-red-600 rounded-md"
                       title="Delete webhook"
@@ -832,6 +939,37 @@ export default function OutreachIntegrations() {
                   onChange={(e) => setSlackChannel(e.target.value)}
                   className="w-full text-xs px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
+              </div>
+
+              <div className="space-y-1.5 pt-1">
+                <span className="block text-xs font-medium text-gray-700">Notification Triggers</span>
+                <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={slackNotifyReplies}
+                    onChange={(e) => setSlackNotifyReplies(e.target.checked)}
+                    className="rounded text-blue-600"
+                  />
+                  <span>Notify on lead replies</span>
+                </label>
+                <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={slackNotifyAccepts}
+                    onChange={(e) => setSlackNotifyAccepts(e.target.checked)}
+                    className="rounded text-blue-600"
+                  />
+                  <span>Notify on connection accepts</span>
+                </label>
+                <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={slackDailyDigest}
+                    onChange={(e) => setSlackDailyDigest(e.target.checked)}
+                    className="rounded text-blue-600"
+                  />
+                  <span>Send daily summary digest</span>
+                </label>
               </div>
 
               <div className="flex items-center justify-between pt-2">
@@ -1024,6 +1162,9 @@ export default function OutreachIntegrations() {
                   <div><strong>Total Rows:</strong> {previewResult.total_rows}</div>
                   <div><strong>Valid / Ready:</strong> {previewResult.valid_count}</div>
                   <div><strong>Duplicate Skipped:</strong> {previewResult.duplicate_count}</div>
+                  {typeof previewResult.invalid_count === 'number' && previewResult.invalid_count > 0 && (
+                    <div><strong>Invalid / Missing URL:</strong> {previewResult.invalid_count}</div>
+                  )}
                   <div><strong>Formulas Neutralized:</strong> {previewResult.formula_neutralized_count}</div>
                 </div>
               )}
@@ -1358,8 +1499,18 @@ export default function OutreachIntegrations() {
                           {new Date(del.created_at).toLocaleTimeString()}
                         </td>
                         <td className="py-2 px-3 text-right">
-                          {['review_required', 'held_received'].includes(del.status) ?
-                            <span className="text-amber-700">Needs review</span> : '—'}
+                          {['review_required', 'held_received'].includes(del.status) ? (
+                            <span className="text-amber-700">Needs review</span>
+                          ) : ['failed', 'dead_letter', 'retry'].includes(del.status) ? (
+                            <button
+                              type="button"
+                              onClick={() => handleReplayDelivery(del)}
+                              disabled={replayingDeliveryId === del.id}
+                              className="px-2 py-1 text-[11px] font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded disabled:opacity-50"
+                            >
+                              {replayingDeliveryId === del.id ? 'Replaying…' : 'Replay'}
+                            </button>
+                          ) : '—'}
                         </td>
                       </tr>
                     ))}

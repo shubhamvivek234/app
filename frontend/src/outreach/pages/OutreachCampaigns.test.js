@@ -213,4 +213,50 @@ describe('Server-reviewed gallery selection', () => {
     await act(async () => duplicateBtn.click());
     expect(global.fetch.mock.calls.some(([url, opts]) => url.endsWith('/camp-draft-1/duplicate') && opts?.method === 'POST')).toBe(true);
   });
+
+  it('filters campaigns across All, Sending, Warming up, Paused, and Draft submenus', async () => {
+    const sampleCampaigns = [
+      { id: 'c-active', name: 'Active Outbound', status: 'active', leads_count: 25, leads_contacted: 10 },
+      { id: 'c-warm', name: 'Warmup Cohort', status: 'warming_up', leads_count: 15, auto_launch_missing_count: 3 },
+      { id: 'c-paused', name: 'Paused Outreach', status: 'paused', leads_count: 40 },
+      { id: 'c-draft', name: 'Draft Sequence', status: 'draft', draft_step: 2, draft_progress: 60 },
+    ];
+    global.fetch = jest.fn(() => Promise.resolve(response(sampleCampaigns)));
+    await act(async () => root.render(<OutreachCampaigns onOpenWizard={opened} />));
+
+    const clickTab = async (labelPrefix) => {
+      const tab = [...container.querySelectorAll('button')].find((b) => b.textContent.trim().startsWith(labelPrefix));
+      expect(tab).toBeTruthy();
+      await act(async () => tab.click());
+    };
+
+    // All tab shows all 4 campaigns and draft banner
+    expect(container.textContent).toContain('Active Outbound');
+    expect(container.textContent).toContain('Warmup Cohort');
+    expect(container.textContent).toContain('Paused Outreach');
+    expect(container.textContent).toContain('Your draft: Draft Sequence');
+
+    // Sending tab
+    await clickTab('Sending');
+    expect(container.textContent).toContain('Active Outbound');
+    expect(container.textContent).not.toContain('Paused Outreach');
+    expect(container.textContent).not.toContain('Your draft: Draft Sequence');
+
+    // Warming up tab
+    await clickTab('Warming up');
+    expect(container.textContent).toContain('Warmup Cohort');
+    expect(container.textContent).toContain('3 awaiting warmup');
+    expect(container.textContent).not.toContain('Active Outbound');
+
+    // Paused tab
+    await clickTab('Paused');
+    expect(container.textContent).toContain('Paused Outreach');
+    expect(container.textContent).not.toContain('Warmup Cohort');
+
+    // Draft tab
+    await clickTab('Draft');
+    expect(container.textContent).toContain('Draft Sequence');
+    expect(container.textContent).toContain('Your draft: Draft Sequence');
+    expect(container.textContent).not.toContain('Active Outbound');
+  });
 });

@@ -14,7 +14,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from db.mongo import get_db
 from outreach.api.dependencies import get_outreach_user, require_outreach_permission
 from outreach.core.dag_compiler import DAGCompiler, contains_ai_prompt_token
-from outreach.core.lead_importer import normalize_linkedin_url
+from outreach.core.lead_importer import normalize_linkedin_url, normalize_any_linkedin_profile_url
 from outreach.core.crypto import decrypt_secret
 from outreach.core.rate_limiter import OutboundRateLimiter
 from outreach.core.sequence_capabilities import sequence_capabilities, sequence_capability_map
@@ -155,7 +155,8 @@ def conditional_auto_launch_enabled() -> bool:
 
 
 def _canonical_profile(raw_url: str) -> str:
-    return normalize_linkedin_url(raw_url).replace("https://www.linkedin.com/", "https://linkedin.com/")
+    cleaned = normalize_any_linkedin_profile_url(raw_url) or normalize_linkedin_url(raw_url)
+    return cleaned.replace("https://www.linkedin.com/", "https://linkedin.com/")
 
 
 async def _evaluate_warmup(
@@ -332,6 +333,17 @@ async def list_campaigns(
         c.setdefault("leads_contacted", 0)
         c.setdefault("acceptances_count", 0)
         c.setdefault("replies_count", 0)
+        if c.get("status") == CampaignStatus.WARMING_UP.value and "auto_launch_missing_count" not in c:
+            if hasattr(db, "outreach_engage_lists") and hasattr(db, "outreach_engage_contacts") and hasattr(db, "outreach_engage_posts"):
+                try:
+                    warmup_info = await _evaluate_warmup(
+                        c.get("id", ""), workspace_id, db, required_list_id=c.get("auto_launch_list_id")
+                    )
+                    c["auto_launch_missing_count"] = warmup_info.get("missing_count", 0)
+                    if warmup_info.get("ready_at"):
+                        c["warmup_ready_at"] = warmup_info["ready_at"].isoformat()
+                except Exception as exc:
+                    logger.debug("Could not evaluate warmup for campaign %s (%s)", c.get("id"), type(exc).__name__)
     return campaigns
 
 
@@ -685,6 +697,18 @@ async def get_campaign(
         senders.sort(key=lambda s: (s.get("reply_rate") is not None, s.get("reply_rate") or 0, s.get("contacted") or 0), reverse=True)
     campaign["senders"] = senders
 
+    if campaign.get("status") == CampaignStatus.WARMING_UP.value and "auto_launch_missing_count" not in campaign:
+        if hasattr(db, "outreach_engage_lists") and hasattr(db, "outreach_engage_contacts") and hasattr(db, "outreach_engage_posts"):
+            try:
+                warmup_info = await _evaluate_warmup(
+                    campaign_id, _workspace_id(current_user), db, required_list_id=campaign.get("auto_launch_list_id")
+                )
+                campaign["auto_launch_missing_count"] = warmup_info.get("missing_count", 0)
+                if warmup_info.get("ready_at"):
+                    campaign["warmup_ready_at"] = warmup_info["ready_at"].isoformat()
+            except Exception as exc:
+                logger.debug("Could not evaluate warmup for campaign detail %s (%s)", campaign_id, type(exc).__name__)
+
     return campaign
 
 
@@ -808,6 +832,7 @@ async def duplicate_campaign(
         "sender_account_ids": list(campaign.get("sender_account_ids", [])),
         "schedule": dict(campaign.get("schedule", {})),
         "limits": dict(campaign.get("limits", {})),
+        "skip_team_campaign_leads": bool(campaign.get("skip_team_campaign_leads", False)),
         "draft_step": 1,
         "draft_progress": 20,
         "next_step_label": "Next: configure sequence",

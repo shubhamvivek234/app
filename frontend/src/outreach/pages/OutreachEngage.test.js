@@ -153,11 +153,13 @@ describe('Engage review and reporting', () => {
         }));
       }
       if (url === '/api/v1/outreach/engage/lists/list_1/push-to-campaign' && options.method === 'POST') {
-        return Promise.resolve(ok({ pushed_count: 1, skipped_count: 0, campaign_id: 'camp_1' }));
+        return Promise.resolve(ok({ pushed_count: 1, skipped_duplicates: 2, campaign_id: 'camp_1' }));
       }
       return originalFetch(url, options);
     });
 
+    const { toast } = require('sonner');
+    toast.success.mockClear();
     await act(async () => root.render(<OutreachEngage />));
     await act(async () => [...container.querySelectorAll('h3')].find((node) => node.textContent === 'Prospects')?.closest('.cursor-pointer')?.click());
     await act(async () => [...container.querySelectorAll('button')].find((node) => node.textContent.includes('Contacts ('))?.click());
@@ -178,6 +180,7 @@ describe('Engage review and reporting', () => {
     const pushCall = global.fetch.mock.calls.find(([url, options]) => url.endsWith('/push-to-campaign') && options?.method === 'POST');
     expect(pushCall).toBeTruthy();
     expect(JSON.parse(pushCall[1].body)).toEqual({ campaign_id: 'camp_1', only_warmed_up: true });
+    expect(toast.success).toHaveBeenCalledWith('Pushed 1 lead to campaign (2 already in campaign)');
   });
 
   it('supports inline 1-click AI tone pills, feed search/sort, edit list metadata, and daily auto-fetch toggle', async () => {

@@ -387,7 +387,18 @@ async def update_account_limits(
         await db.outreach_accounts.update_one({"id": account_id, "workspace_id": ws_id}, {"$set": updates})
 
     updated_account = await db.outreach_accounts.find_one({"id": account_id, "workspace_id": ws_id})
-    return _sanitize_account(updated_account)
+    sanitized = _sanitize_account(updated_account)
+    if updated_account:
+        now = datetime.now(timezone.utc)
+        try:
+            sanitized["readiness"] = await _compute_sender_readiness(updated_account, ws_id, db, now)
+        except Exception as exc:
+            logger.warning("Sender readiness check degraded for account=%s (%s)", account_id, type(exc).__name__)
+        try:
+            sanitized["activity_control"] = WarmUpGovernor.compute_activity_control_summary(updated_account, now=now)
+        except Exception as exc:
+            logger.warning("Activity control summary degraded for account=%s (%s)", account_id, type(exc).__name__)
+    return sanitized
 
 
 @router.patch("/{account_id}/activity-control")
@@ -425,7 +436,13 @@ async def update_activity_control(
 
     updated_account = await db.outreach_accounts.find_one({"id": account_id, "workspace_id": ws_id})
     sanitized = _sanitize_account(updated_account)
-    summary = WarmUpGovernor.compute_activity_control_summary(updated_account)
+    now = datetime.now(timezone.utc)
+    if updated_account:
+        try:
+            sanitized["readiness"] = await _compute_sender_readiness(updated_account, ws_id, db, now)
+        except Exception as exc:
+            logger.warning("Sender readiness check degraded for account=%s (%s)", account_id, type(exc).__name__)
+    summary = WarmUpGovernor.compute_activity_control_summary(updated_account, now=now)
     sanitized["activity_control"] = summary
     sanitized["daily_limits"] = summary["effective_limits"]
     return sanitized

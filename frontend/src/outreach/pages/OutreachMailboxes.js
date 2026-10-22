@@ -227,7 +227,7 @@ export default function OutreachMailboxes() {
             <label htmlFor="mailbox-sender" className="block text-xs font-semibold text-gray-700">LinkedIn sender for this mailbox</label>
             <select id="mailbox-sender" value={selectedSenderId} onChange={(event) => setSelectedSenderId(event.target.value)} className="w-full rounded-lg border border-gray-200 p-2 text-sm">
               {senders.length === 0 && <option value="">No sender available</option>}
-              {senders.map((sender) => <option key={sender.id} value={sender.id}>{sender.account_name || sender.name || sender.id}</option>)}
+              {senders.map((sender) => <option key={sender.id} value={sender.id}>{sender.account_name || sender.name || sender.full_name || sender.vanity_name || sender.id}</option>)}
             </select>
             <div className="flex flex-wrap gap-2">
               <button type="button" onClick={() => startConnection('gmail')} disabled={!connectionEnabled || !selectedSenderId || Boolean(busy)} className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Connect Gmail</button>

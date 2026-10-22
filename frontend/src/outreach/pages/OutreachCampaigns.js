@@ -886,7 +886,8 @@ export default function OutreachCampaigns({
         toast.success(`Paused “${campaignName}”`);
         fetchCampaigns();
       } else {
-        toast.error('Failed to pause campaign');
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.detail || 'Failed to pause campaign');
       }
     } catch (err) {
       console.error('Failed to pause campaign:', err);
@@ -934,7 +935,8 @@ export default function OutreachCampaigns({
         toast.success(`Duplicated as “${cloned.name}”`);
         fetchCampaigns();
       } else {
-        toast.error('Failed to duplicate campaign');
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.detail || 'Failed to duplicate campaign');
       }
     } catch (err) {
       console.error('Failed to duplicate campaign:', err);
@@ -1256,7 +1258,7 @@ export default function OutreachCampaigns({
       </div>
 
       {/* Banner 1: Draft Banner matching media_1790104399010.png */}
-      {draftCampaign && (
+      {draftCampaign && (statusFilter === 'all' || statusFilter === 'draft') && !searchQuery.trim() && (
         <div className="rounded-2xl border border-indigo-100 bg-white/90 p-4 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all">
           <div className="flex items-center gap-3.5">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-[#5145cd]">
@@ -1431,6 +1433,8 @@ export default function OutreachCampaigns({
                             ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
                             : camp.status === 'paused'
                             ? 'bg-amber-50 text-amber-700 border-amber-200'
+                            : camp.status === 'completed'
+                            ? 'bg-blue-50 text-blue-700 border-blue-200'
                             : 'bg-white text-gray-600 border-gray-200'
                         }`}
                       >
@@ -1445,6 +1449,7 @@ export default function OutreachCampaigns({
                       </p>
                       <p className="text-[11px] text-gray-400 mt-0.5 font-normal">
                         {camp.leads_count ? `${camp.leads_count} leads` : 'Audience not set'} · {camp.status || 'draft'}
+                        {camp.status === 'warming_up' && camp.auto_launch_missing_count > 0 && ` · ${camp.auto_launch_missing_count} awaiting warmup`}
                       </p>
                     </td>
 

@@ -297,13 +297,37 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
             <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
               {campaign.name}
             </h1>
-            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium text-gray-600 bg-gray-100 border border-gray-200/80">
-              <span className="h-1.5 w-1.5 rounded-full bg-gray-400" />
+            <span
+              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium border ${
+                campaign.status === 'active'
+                  ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                  : campaign.status === 'warming_up'
+                  ? 'text-indigo-700 bg-indigo-50 border-indigo-200'
+                  : campaign.status === 'paused'
+                  ? 'text-amber-700 bg-amber-50 border-amber-200'
+                  : campaign.status === 'completed'
+                  ? 'text-blue-700 bg-blue-50 border-blue-200'
+                  : 'text-gray-600 bg-gray-100 border-gray-200/80'
+              }`}
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  campaign.status === 'active'
+                    ? 'bg-emerald-500'
+                    : campaign.status === 'warming_up'
+                    ? 'bg-indigo-500'
+                    : campaign.status === 'paused'
+                    ? 'bg-amber-500'
+                    : campaign.status === 'completed'
+                    ? 'bg-blue-500'
+                    : 'bg-gray-400'
+                }`}
+              />
               {campaign.status || 'draft'}
             </span>
           </div>
           <p className="text-xs text-gray-400 mt-1">
-            Persona not set · created {createdDate}
+            {campaign.leads_count ? `${campaign.leads_count} lead${campaign.leads_count === 1 ? '' : 's'}` : 'No leads enrolled'} · {(campaign.senders?.length || campaign.sender_account_ids?.length || 0)} sender{(campaign.senders?.length || campaign.sender_account_ids?.length || 0) === 1 ? '' : 's'} · created {createdDate}
           </p>
           {campaign.status === 'warming_up' && <p className="mt-2 text-xs text-amber-800">
             Waiting for confirmed engagement from every lead and the full cooldown.
