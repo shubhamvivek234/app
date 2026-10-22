@@ -67,8 +67,48 @@ export default function OutreachSettings({ initialTab = 'accounts', onSignOut })
   const [showRoleMatrix, setShowRoleMatrix] = useState(false);
   const [updatingRoleFor, setUpdatingRoleFor] = useState(null);
 
-  // ── Help State ─────────────────────────────────────────────────────────────
+  // ── Help & Contact State ───────────────────────────────────────────────────
   const [expandedFaq, setExpandedFaq] = useState(null);
+  const [contactTopic, setContactTopic] = useState('Pilot & Dedicated IPs');
+  const [contactName, setContactName] = useState('');
+  const [contactEmail, setContactEmail] = useState('');
+  const [contactCompany, setContactCompany] = useState('');
+  const [contactMessage, setContactMessage] = useState('');
+  const [sendingContact, setSendingContact] = useState(false);
+  const [contactResult, setContactResult] = useState(null);
+
+  const handleSubmitContactForm = async (e) => {
+    e.preventDefault();
+    if (!contactName.trim() || !contactEmail.trim() || contactMessage.trim().length < 10) {
+      toast.error('Please enter your name, email, and a message of at least 10 characters.');
+      return;
+    }
+    setSendingContact(true);
+    try {
+      const res = await fetch('/api/v1/support/public-contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: contactName.trim(),
+          email: contactEmail.trim(),
+          company: contactCompany.trim(),
+          topic: contactTopic,
+          message: contactMessage.trim(),
+          acknowledged_terms: true,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Could not send message right now.');
+      }
+      setContactResult(data);
+      toast.success('Message delivered to contact@unravler.com!');
+    } catch (err) {
+      toast.error(err.message || 'Could not send message. Please email contact@unravler.com.');
+    } finally {
+      setSendingContact(false);
+    }
+  };
 
   // ── Fetch Billing Data ─────────────────────────────────────────────────────
   const fetchBilling = useCallback(async () => {
@@ -875,20 +915,164 @@ export default function OutreachSettings({ initialTab = 'accounts', onSignOut })
                   </div>
                 </div>
 
-                {/* Support Banner */}
-                <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                  <div>
-                    <h4 className="text-xs font-bold text-indigo-900">Need personalized outbound assistance?</h4>
-                    <p className="text-[11px] text-indigo-700 mt-0.5">
-                      Our support specialists can help review your campaign DAG sequences, copy, and targeting.
-                    </p>
+                {/* Interactive Contact Us Form Card (Dispatches to contact@unravler.com) */}
+                <div
+                  data-testid="outreach-settings-contact-card"
+                  className="relative overflow-hidden bg-gradient-to-br from-white via-indigo-50/30 to-blue-50/40 rounded-2xl border border-indigo-100 shadow-xs p-6 space-y-5 transition-all"
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-indigo-100/80 pb-4">
+                    <div>
+                      <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200/70 text-[10px] font-bold text-emerald-700 mb-2">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                        Direct Dispatch to contact@unravler.com
+                      </div>
+                      <h3 className="text-sm font-bold text-gray-900">Contact the Unravler Team</h3>
+                      <p className="text-[11px] text-gray-500 mt-0.5">
+                        Send a message directly to our specialists at <span className="font-semibold text-indigo-600">contact@unravler.com</span> for pilot seats, sequence help, billing, or privacy inquiries.
+                      </p>
+                    </div>
+                    <a
+                      href="mailto:contact@unravler.com?subject=Unravler%20Outreach%20Support%20Request"
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white border border-indigo-200 text-indigo-700 rounded-xl text-xs font-semibold hover:bg-indigo-50 transition-colors shrink-0"
+                    >
+                      <Mail className="w-3.5 h-3.5" /> contact@unravler.com
+                    </a>
                   </div>
-                  <a
-                    href="mailto:support@unravler.com?subject=LinkedIn%20Outreach%20Support%20Request"
-                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold hover:bg-indigo-700 transition-colors shrink-0"
-                  >
-                    <Mail className="w-3.5 h-3.5" /> Contact Support
-                  </a>
+
+                  {contactResult ? (
+                    <div className="p-6 rounded-xl bg-emerald-50/70 border border-emerald-200 text-center space-y-3">
+                      <div className="w-10 h-10 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto">
+                        <Check className="w-5 h-5" />
+                      </div>
+                      <h4 className="text-sm font-bold text-gray-900">Message Delivered to contact@unravler.com</h4>
+                      <p className="text-xs text-gray-600 max-w-md mx-auto">
+                        {contactResult.message || 'Our team has received your inquiry and will reply within 24 hours.'}
+                      </p>
+                      {contactResult.ticket_id && (
+                        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white border border-emerald-200 text-[11px] font-mono font-bold text-emerald-800">
+                          Reference: {contactResult.ticket_id}
+                        </div>
+                      )}
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setContactResult(null);
+                            setContactMessage('');
+                          }}
+                          className="mt-2 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition-colors"
+                        >
+                          Send another message
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <form onSubmit={handleSubmitContactForm} className="space-y-4">
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-700 mb-1.5">
+                          Select Topic
+                        </label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {[
+                            'Pilot & Dedicated IPs',
+                            'Product & Sequences',
+                            'Billing & Invoices',
+                            'Security & Privacy',
+                            'General Inquiry',
+                          ].map((topic) => (
+                            <button
+                              key={topic}
+                              type="button"
+                              onClick={() => setContactTopic(topic)}
+                              className={`px-3 py-1.5 rounded-full text-[11px] font-semibold transition-all ${
+                                contactTopic === topic
+                                  ? 'bg-indigo-600 text-white shadow-xs'
+                                  : 'bg-white border border-gray-200 text-gray-600 hover:border-indigo-300 hover:text-indigo-600'
+                              }`}
+                            >
+                              {topic}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                            Your Name *
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={contactName}
+                            onChange={(e) => setContactName(e.target.value)}
+                            placeholder="Alex Morgan"
+                            className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-900 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                            Work Email *
+                          </label>
+                          <input
+                            type="email"
+                            required
+                            value={contactEmail}
+                            onChange={(e) => setContactEmail(e.target.value)}
+                            placeholder="alex@company.com"
+                            className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-900 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                            Company / Workspace
+                          </label>
+                          <input
+                            type="text"
+                            value={contactCompany}
+                            onChange={(e) => setContactCompany(e.target.value)}
+                            placeholder="Acme Growth"
+                            className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-900 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                          Message *
+                        </label>
+                        <textarea
+                          rows={4}
+                          required
+                          value={contactMessage}
+                          onChange={(e) => setContactMessage(e.target.value)}
+                          placeholder="How can our team help you today?"
+                          className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-900 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15 resize-y"
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <span className="text-[11px] text-gray-500">
+                          Never include your LinkedIn password or raw session cookies.
+                        </span>
+                        <button
+                          type="submit"
+                          disabled={sendingContact}
+                          className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-semibold hover:bg-indigo-700 transition-all disabled:opacity-50"
+                        >
+                          {sendingContact ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Sending...
+                            </>
+                          ) : (
+                            <>
+                              <Mail className="w-3.5 h-3.5" /> Send Message to contact@unravler.com
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </form>
+                  )}
                 </div>
               </div>
             )}

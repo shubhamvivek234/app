@@ -174,3 +174,30 @@ test('FAQ link is removed from headers, added to footers, and /faq page renders 
   const detailsCount = (faqHtml.match(/<details class="faq-card-item">/g) || []).length;
   assert.ok(detailsCount >= 28, `Expected at least 28 FAQ items, found ${detailsCount}`);
 });
+
+test('data deletion link is removed from all footers, legal policies are updated, and contact page dispatches to contact@unravler.com', () => {
+  for (const page of pages) {
+    const html = read(page);
+    const footerMatch = html.match(/<footer\b[\s\S]*?<\/footer>/i);
+    assert.ok(footerMatch, `${page} must have a footer`);
+    assert.doesNotMatch(footerMatch[0], /data-deletion/i, `${page} footer must not contain data-deletion link`);
+  }
+
+  const privacyHtml = read('privacy.html');
+  assert.match(privacyHtml, /Customer Workspace Data/i);
+  assert.match(privacyHtml, /Google API Services User Data Policy/i);
+  assert.match(privacyHtml, /Dedicated ISP Proxies/i);
+
+  const termsHtml = read('terms.html');
+  assert.match(termsHtml, /LinkedIn Relationship &amp; Platform Risk Disclosure/i);
+  assert.match(termsHtml, /\$59 USD per sender seat per month/i);
+
+  const cookiesHtml = read('cookies.html');
+  assert.match(cookiesHtml, /How We Manage Consent &amp; Cross-Domain Scope/i);
+  assert.match(cookiesHtml, /cookie_consent/i);
+
+  const contactHtml = read('contact.html');
+  assert.match(contactHtml, /id="unravler-contact-form"/);
+  assert.match(contactHtml, /contact@unravler\.com/i);
+  assert.match(read('site.js'), /\/api\/contact/);
+});

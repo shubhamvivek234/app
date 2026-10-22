@@ -255,4 +255,237 @@
       });
     }
   }
+
+  // Interactive Animated Contact Us Page
+  const contactForm = document.querySelector('#unravler-contact-form');
+  if (contactForm) {
+    const topicInput = document.querySelector('#contact-topic');
+    const topicPills = [...document.querySelectorAll('.contact-topic-pill')];
+    const deskCards = [...document.querySelectorAll('.contact-desk-card[data-select-topic]')];
+    const nameInput = document.querySelector('#contact-name');
+    const emailInput = document.querySelector('#contact-email');
+    const companyInput = document.querySelector('#contact-company');
+    const seatsInput = document.querySelector('#contact-seats');
+    const countryInput = document.querySelector('#contact-country');
+    const messageInput = document.querySelector('#contact-message');
+    const charCounter = document.querySelector('#contact-char-counter');
+    const attachmentInput = document.querySelector('#contact-attachment');
+    const dropzone = document.querySelector('#contact-dropzone');
+    const attachmentLabel = document.querySelector('#contact-attachment-label');
+    const attachmentClear = document.querySelector('#contact-attachment-clear');
+    const termsCheckbox = document.querySelector('#contact-terms-ack');
+    const honeypotInput = document.querySelector('#contact-website-hp');
+    const alertBanner = document.querySelector('#contact-form-alert');
+    const submitBtn = document.querySelector('#contact-submit-btn');
+    const submitText = submitBtn ? submitBtn.querySelector('.contact-submit-text') : null;
+    const successPanel = document.querySelector('#contact-success-panel');
+    const successSummary = document.querySelector('#contact-success-summary');
+    const ticketIdEl = document.querySelector('#contact-ticket-id');
+    const resetBtn = document.querySelector('#contact-reset-button');
+
+    const selectTopic = (topicValue, focusMessage = false) => {
+      if (topicInput) topicInput.value = topicValue;
+      topicPills.forEach((pill) => {
+        const active = pill.dataset.topicValue === topicValue;
+        pill.classList.toggle('is-active', active);
+        pill.setAttribute('aria-checked', String(active));
+      });
+      deskCards.forEach((card) => {
+        const active = card.dataset.selectTopic === topicValue;
+        card.classList.toggle('is-selected', active);
+      });
+      if (focusMessage && messageInput && window.innerWidth <= 960) {
+        contactForm.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'start' });
+      }
+    };
+
+    topicPills.forEach((pill) => {
+      pill.addEventListener('click', () => selectTopic(pill.dataset.topicValue));
+    });
+
+    deskCards.forEach((card) => {
+      card.addEventListener('click', () => selectTopic(card.dataset.selectTopic, true));
+    });
+
+    if (messageInput && charCounter) {
+      const updateCounter = () => {
+        const len = messageInput.value.length;
+        charCounter.textContent = `${len} / 2000`;
+      };
+      messageInput.addEventListener('input', updateCounter);
+      updateCounter();
+    }
+
+    // Post-interaction accessible validation sync
+    const syncFieldValidity = (inputEl, errorId) => {
+      const errorEl = document.getElementById(errorId);
+      if (!inputEl || !errorEl) return true;
+      const isValid = inputEl.type === 'checkbox' ? inputEl.checked : inputEl.checkValidity();
+      inputEl.setAttribute('aria-invalid', String(!isValid));
+      errorEl.hidden = isValid;
+      return isValid;
+    };
+
+    [
+      [nameInput, 'contact-name-error'],
+      [emailInput, 'contact-email-error'],
+      [messageInput, 'contact-message-error'],
+      [termsCheckbox, 'contact-terms-error'],
+    ].forEach(([el, errId]) => {
+      if (!el) return;
+      el.addEventListener('blur', () => syncFieldValidity(el, errId));
+      el.addEventListener('input', () => {
+        if (el.getAttribute('aria-invalid') === 'true') {
+          syncFieldValidity(el, errId);
+        }
+      });
+      if (el.type === 'checkbox') {
+        el.addEventListener('change', () => syncFieldValidity(el, errId));
+      }
+    });
+
+    // Optional file attachment handling
+    let attachedFileName = null;
+    const updateAttachmentDisplay = (file) => {
+      if (!file) {
+        attachedFileName = null;
+        if (attachmentInput) attachmentInput.value = '';
+        if (attachmentLabel) attachmentLabel.textContent = 'Attach an optional screenshot, invoice, or log';
+        if (attachmentClear) attachmentClear.hidden = true;
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        if (alertBanner) {
+          alertBanner.textContent = 'Attachment exceeds the 10 MB maximum file size.';
+          alertBanner.hidden = false;
+        }
+        return;
+      }
+      if (alertBanner) alertBanner.hidden = true;
+      attachedFileName = file.name;
+      if (attachmentLabel) {
+        const kb = Math.max(1, Math.round(file.size / 1024));
+        attachmentLabel.textContent = `Attached: ${file.name} (${kb} KB)`;
+      }
+      if (attachmentClear) attachmentClear.hidden = false;
+    };
+
+    if (attachmentInput) {
+      attachmentInput.addEventListener('change', () => {
+        const file = attachmentInput.files && attachmentInput.files[0];
+        updateAttachmentDisplay(file || null);
+      });
+    }
+
+    if (attachmentClear) {
+      attachmentClear.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        updateAttachmentDisplay(null);
+      });
+    }
+
+    if (dropzone) {
+      ['dragenter', 'dragover'].forEach((evtName) => {
+        dropzone.addEventListener(evtName, (event) => {
+          event.preventDefault();
+          dropzone.classList.add('is-dragover');
+        });
+      });
+      ['dragleave', 'drop'].forEach((evtName) => {
+        dropzone.addEventListener(evtName, (event) => {
+          event.preventDefault();
+          dropzone.classList.remove('is-dragover');
+        });
+      });
+      dropzone.addEventListener('drop', (event) => {
+        const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+        if (file) updateAttachmentDisplay(file);
+      });
+    }
+
+    contactForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (alertBanner) alertBanner.hidden = true;
+
+      const validName = syncFieldValidity(nameInput, 'contact-name-error');
+      const validEmail = syncFieldValidity(emailInput, 'contact-email-error');
+      const validMsg = syncFieldValidity(messageInput, 'contact-message-error');
+      const validTerms = syncFieldValidity(termsCheckbox, 'contact-terms-error');
+
+      if (!validName || !validEmail || !validMsg || !validTerms) {
+        const firstInvalid = [nameInput, emailInput, messageInput, termsCheckbox].find(
+          (el) => el && el.getAttribute('aria-invalid') === 'true'
+        );
+        if (firstInvalid) firstInvalid.focus();
+        return;
+      }
+
+      const payload = {
+        name: nameInput.value.trim(),
+        email: emailInput.value.trim(),
+        company: companyInput ? companyInput.value.trim() : '',
+        topic: topicInput ? topicInput.value : 'General Inquiry',
+        seats: seatsInput ? seatsInput.value : '',
+        country: countryInput ? countryInput.value.trim() : '',
+        message: messageInput.value.trim(),
+        attachment_name: attachedFileName,
+        acknowledged_terms: Boolean(termsCheckbox && termsCheckbox.checked),
+        honeypot: honeypotInput ? honeypotInput.value : '',
+      };
+
+      const apiBase =
+        window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+          ? 'http://127.0.0.1:8001'
+          : 'https://api.unravler.com';
+
+      if (submitBtn) submitBtn.disabled = true;
+      if (submitText) submitText.textContent = 'Dispatching to contact@unravler.com...';
+
+      try {
+        const response = await fetch(`${apiBase}/api/contact`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.detail || 'Could not dispatch your message right now. Please email contact@unravler.com directly.');
+        }
+
+        if (ticketIdEl) ticketIdEl.textContent = data.ticket_id || 'UNR-RECEIVED';
+        if (successSummary) {
+          successSummary.textContent =
+            data.message ||
+            'Your message has been delivered to contact@unravler.com. Our team will respond within 24 hours.';
+        }
+        contactForm.hidden = true;
+        if (successPanel) successPanel.hidden = false;
+      } catch (err) {
+        if (alertBanner) {
+          alertBanner.textContent =
+            err.message || 'Unable to reach our contact server. Please email contact@unravler.com directly.';
+          alertBanner.hidden = false;
+        }
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+        if (submitText) submitText.textContent = 'Send message to Unravler';
+      }
+    });
+
+    if (resetBtn) {
+      resetBtn.addEventListener('click', () => {
+        contactForm.reset();
+        updateAttachmentDisplay(null);
+        selectTopic('Pilot & Dedicated IPs');
+        if (charCounter) charCounter.textContent = '0 / 2000';
+        [nameInput, emailInput, messageInput, termsCheckbox].forEach((el) => {
+          if (el) el.removeAttribute('aria-invalid');
+        });
+        if (successPanel) successPanel.hidden = true;
+        contactForm.hidden = false;
+        if (nameInput) nameInput.focus();
+      });
+    }
+  }
 })();

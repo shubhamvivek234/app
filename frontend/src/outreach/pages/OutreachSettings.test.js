@@ -288,6 +288,8 @@ describe('OutreachSettings page', () => {
     const signOutBtn = container.querySelector('[data-testid="settings-signout-button"]');
     expect(signOutBtn).not.toBeNull();
     expect(signOutBtn.textContent).toContain('Sign out');
+    expect(container.querySelector('[data-testid="outreach-settings-contact-card"]')).not.toBeNull();
+    expect(container.textContent).toContain('contact@unravler.com');
     await act(async () => signOutBtn.click());
     expect(onSignOut).toHaveBeenCalledTimes(1);
   });
