@@ -1,5 +1,7 @@
 """Private reviewed provider changes; passwords only through lazy hidden/stdin input."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import argparse
 import asyncio

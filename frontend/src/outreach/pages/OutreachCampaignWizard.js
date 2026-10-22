@@ -24,6 +24,7 @@ import ImportLeadsModal from '../components/ImportLeadsModal';
 import ConnectLinkedInModal from '../components/ConnectLinkedInModal';
 import useCampaignReadiness from '../hooks/useCampaignReadiness';
 import useTemplateSave from '../hooks/useTemplateSave';
+import { outreachLogger } from '../utils/logger';
 
 const TIME_OPTIONS = [
   '12:00 AM', '12:30 AM', '01:00 AM', '01:30 AM', '02:00 AM', '02:30 AM',
@@ -133,6 +134,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
   const [isLaunching, setIsLaunching] = useState(false);
   const [conditionalLaunchEnabled, setConditionalLaunchEnabled] = useState(false);
   const [autoLaunchAfterWarmup, setAutoLaunchAfterWarmup] = useState(false);
+  const [skipTeamCampaignLeads, setSkipTeamCampaignLeads] = useState(true);
   const [engageLists, setEngageLists] = useState([]);
   const [selectedEngageListId, setSelectedEngageListId] = useState('');
   const [warmupHours, setWarmupHours] = useState(24);
@@ -304,6 +306,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
           days: schedule,
         },
         limits,
+        skip_team_campaign_leads: skipTeamCampaignLeads,
       };
 
       if (activeCampaignId && activeCampaignId !== 'new' && activeCampaignId !== 'new_campaign') {
@@ -382,6 +385,7 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
             if (data.schedule) setSchedule(normalizeSchedule(data.schedule));
             if (data.schedule?.timezone) setTimezone(data.schedule.timezone);
             if (data.limits) setLimits(data.limits);
+            if (typeof data.skip_team_campaign_leads === 'boolean') setSkipTeamCampaignLeads(data.skip_team_campaign_leads);
             setSelectedSenders(Array.isArray(data.sender_account_ids) ? data.sender_account_ids : []);
             if (initialStep) setCurrentStep(initialStep);
             else if (data.draft_step) setCurrentStep(data.draft_step);
@@ -452,7 +456,9 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
         if (canceled) return;
         if (featureRes.ok) setConditionalLaunchEnabled(Boolean((await featureRes.json()).enabled));
         if (listRes.ok) setEngageLists((await listRes.json()) || []);
-      } catch (_) { /* Manual launch remains available. */ }
+      } catch (err) {
+        outreachLogger.debug('campaign_wizard.warmup_options_unavailable', { error: err });
+      }
     };
     loadWarmupOptions();
     return () => { canceled = true; };
@@ -1069,14 +1075,32 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                 </div>
 
                 <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-xs space-y-6">
-                  <div>
-                    <div className="flex items-center gap-2 text-sm font-bold text-gray-900">
-                      <Calendar className="w-4 h-4 text-gray-600" />
-                      <span>Weekly hours</span>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-2 text-sm font-bold text-gray-900">
+                        <Calendar className="w-4 h-4 text-gray-600" />
+                        <span>Weekly hours</span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        Turn a day off to make it unavailable, or add another time range.
+                      </p>
                     </div>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      Turn a day off to make it unavailable, or add another time range.
-                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSchedule((prev) =>
+                          prev.map((d) =>
+                            d.day === 'Friday'
+                              ? { ...d, enabled: true, ranges: [{ start: '9:00 AM', end: '1:00 PM' }] }
+                              : d
+                          )
+                        );
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 transition-colors cursor-pointer"
+                    >
+                      <Clock className="w-3.5 h-3.5" />
+                      Set Friday Half-Day (9:00 AM – 1:00 PM)
+                    </button>
                   </div>
 
                   {/* Day rows with fine horizontal dividers matching screenshot */}
@@ -1234,11 +1258,11 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                     { key: 'connection_invites', label: 'Connection invites', def: 20 },
                     { key: 'messages', label: 'Messages', def: 20 },
                     { key: 'voice_notes', label: 'Voice notes', def: 20 },
-                    { key: 'inmails', label: 'InMails', def: 20, supported: false },
+                    { key: 'inmails', label: 'InMails', def: 20 },
                     { key: 'profile_visits', label: 'Profile visits', def: 20 },
-                    { key: 'follows', label: 'Follows', def: 20, supported: false },
+                    { key: 'follows', label: 'Follows', def: 20 },
                     { key: 'post_likes', label: 'Post likes', def: 20 },
-                    { key: 'comments', label: 'Comments', def: 20, supported: false },
+                    { key: 'comments', label: 'Comments', def: 20 },
                     { key: 'email_sends', label: 'Email sends', def: 20 },
                   ].map((item) => (
                     <div key={item.key} className="flex items-center justify-between py-2.5">
@@ -1286,6 +1310,31 @@ export default function OutreachCampaignWizard({ campaignId = 'new_campaign', in
                 <p className="text-[11px] text-gray-400 pt-2 border-t border-gray-100">
                   Saved on the campaign, so these limits can be changed while it is running.
                 </p>
+              </div>
+
+              {/* Team Lead Deduplication Rules (Video #19) */}
+              <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-xs space-y-3">
+                <div>
+                  <h3 className="text-sm font-bold text-gray-900">Do not add a lead to campaign if:</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Prevent multiple team members from reaching out to the same prospect across campaigns.
+                  </p>
+                </div>
+                <label className="flex items-start gap-2.5 text-xs font-semibold text-gray-800 cursor-pointer pt-1">
+                  <input
+                    type="checkbox"
+                    aria-label="Same leads found in campaigns of your team members"
+                    checked={skipTeamCampaignLeads}
+                    onChange={(e) => setSkipTeamCampaignLeads(e.target.checked)}
+                    className="mt-0.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <div>
+                    <span>Same leads found in campaigns of your team members</span>
+                    <p className="text-[11px] font-normal text-gray-500 mt-0.5">
+                      Automatically skips prospects already enrolled in any active or paused campaign in your workspace.
+                    </p>
+                  </div>
+                </label>
               </div>
 
               <div className="rounded-2xl border border-indigo-200 bg-indigo-50/60 p-6 space-y-3">

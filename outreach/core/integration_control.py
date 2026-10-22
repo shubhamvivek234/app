@@ -1,5 +1,7 @@
 """Bounded private stopped integration control; operator drain is an assertion."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from datetime import datetime
 import re

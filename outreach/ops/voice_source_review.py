@@ -1,5 +1,7 @@
 """Trusted private same-key review: no raw key arguments or vendor calls."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import argparse
 import asyncio

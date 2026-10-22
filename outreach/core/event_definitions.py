@@ -2,6 +2,8 @@
 Outreach Event Definitions and Versioned Envelope.
 Defines frozen event catalog and structured payload contracts.
 """
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any

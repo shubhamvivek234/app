@@ -4,6 +4,8 @@ Caller assertions and input digests are review material only. The installed
 restore_epoch.positive gate continues to deny all restored execution.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from typing import Any
 

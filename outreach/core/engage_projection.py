@@ -1,4 +1,6 @@
 """Database-only parent fences for late Engage results and per-kind run status."""
+import logging
+logger = logging.getLogger(__name__)
 from typing import Any, Awaitable, Callable
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from outreach.core.suppression import mutate_suppression, SuppressionDatabase

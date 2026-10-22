@@ -615,6 +615,7 @@ export default function OutreachAnalytics() {
               <thead>
                 <tr className="border-b border-gray-100 text-[10px] font-bold uppercase tracking-wider text-gray-500">
                   <th className="py-2.5 pr-4">Sender Account</th>
+                  <th className="py-2.5 px-3">Queue &amp; Inbox Health</th>
                   <th className="py-2.5 px-3">Safety / Activity Control</th>
                   <th className="py-2.5 px-3">Today&apos;s Invites</th>
                   <th className="py-2.5 px-3">Today&apos;s Messages</th>
@@ -629,6 +630,7 @@ export default function OutreachAnalytics() {
                   const msgUsed = member.daily_usage_today?.messages ?? 0;
                   const msgMax = member.effective_limits?.messages ?? 20;
                   const pStats = member.period_stats || {};
+                  const qHealth = member.queue_health_status || 'healthy';
                   return (
                     <tr
                       key={member.account_id}
@@ -640,6 +642,39 @@ export default function OutreachAnalytics() {
                         <div className="text-[11px] text-gray-400">
                           {member.vanity_name ? `@${member.vanity_name} · ` : ''}
                           {member.premium_product === 'sales_navigator' ? 'Sales Navigator' : member.premium_product === 'recruiter' ? 'Recruiter' : 'Standard LinkedIn'}
+                          {member.connections_count != null ? ` · ${member.connections_count.toLocaleString()} conn` : ''}
+                        </div>
+                      </td>
+                      <td className="py-3 px-3">
+                        <div className="flex flex-wrap items-center gap-1">
+                          {qHealth === 'empty_queue' ? (
+                            <span
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-700"
+                              title="0 queued leads remaining in active campaigns — upload additional leads immediately"
+                            >
+                              Empty Queue (0 left)
+                            </span>
+                          ) : qHealth === 'low_queue' ? (
+                            <span
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800"
+                              title="Most leads have started the sequence (<20 queued) — time to add more leads"
+                            >
+                              Low Queue ({member.queued_leads_count ?? 0} left)
+                            </span>
+                          ) : qHealth === 'no_active_campaigns' ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gray-100 text-gray-600">
+                              0 Active Campaigns
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700">
+                              {member.active_campaigns_count ?? 1} Active ({member.queued_leads_count ?? 0} queued)
+                            </span>
+                          )}
+                          {(member.unread_messages_count ?? 0) > 0 && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700">
+                              {member.unread_messages_count} Unread
+                            </span>
+                          )}
                         </div>
                       </td>
                       <td className="py-3 px-3">

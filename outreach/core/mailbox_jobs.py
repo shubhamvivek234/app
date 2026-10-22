@@ -4,6 +4,8 @@ The authorization deadline limits code use, not evidence retention. Once an
 exchange could have happened, no lease expiry or broker redelivery can replay it.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from datetime import datetime, timedelta, timezone
 import secrets

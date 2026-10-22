@@ -1,5 +1,7 @@
 """Private reference-only legacy proxy review; no new provider facts or secrets."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import argparse
 import asyncio

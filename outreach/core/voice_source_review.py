@@ -5,6 +5,8 @@ all-writer/cache drain are process-local/operator assertions. Different keys and
 unproven legacy profiles require a separate vendor-evidence protocol.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from dataclasses import dataclass, field
 import hmac

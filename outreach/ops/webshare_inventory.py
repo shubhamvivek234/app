@@ -1,5 +1,7 @@
 """Private manual Webshare import; credentials arrive only through hidden input."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import argparse
 import asyncio

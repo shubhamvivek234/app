@@ -54,18 +54,64 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
   const [leadsLoading, setLeadsLoading] = useState(false);
   const [leadsError, setLeadsError] = useState('');
   const [leadsSearch, setLeadsSearch] = useState('');
+  const [selectedCohortFilter, setSelectedCohortFilter] = useState('all');
   const [leadsModalOpen, setLeadsModalOpen] = useState(false);
   const [selectedLeadId, setSelectedLeadId] = useState(null);
   const [sequence, setSequence] = useState(null);
   const [sequenceLoading, setSequenceLoading] = useState(false);
   const [sequenceError, setSequenceError] = useState('');
   const [statusUpdating, setStatusUpdating] = useState(false);
+  const [togglingLeadId, setTogglingLeadId] = useState(null);
   const scheduleSummary = getScheduleSummary(campaign?.schedule);
   const totalLeads = campaign?.leads_count || 0;
   const contactedLeads = campaign?.leads_contacted || 0;
   const acceptedLeads = campaign?.acceptances_count || 0;
   const repliedLeads = campaign?.replies_count || 0;
   const interestedLeads = campaign?.interested_count || 0;
+  const acceptanceRatePct = contactedLeads > 0 ? Math.round((acceptedLeads / contactedLeads) * 100) : null;
+  const replyRatePct = contactedLeads > 0 ? Math.round((repliedLeads / contactedLeads) * 100) : null;
+  const funnelStages = campaign?.funnel_stages || {
+    completed: 0,
+    paused: 0,
+    moving: 0,
+    queued: Math.max(0, totalLeads - contactedLeads),
+    staged: 0,
+    low_queue_warning: false,
+  };
+
+  const handleToggleLeadPause = async (lead, e) => {
+    if (e) e.stopPropagation();
+    if (!lead?.id) return;
+    setTogglingLeadId(lead.id);
+    const isPaused = lead.execution_state === 'paused' || lead.execution_state === 'replied';
+    const endpoint = isPaused
+      ? `/api/v1/outreach/leads/${lead.id}/resume`
+      : `/api/v1/outreach/leads/${lead.id}/pause`;
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: isPaused ? undefined : JSON.stringify({ reason: 'Manually paused from campaign leads table' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.detail || `Failed to ${isPaused ? 'resume' : 'pause'} lead`);
+        return;
+      }
+      toast.success(isPaused ? 'Lead sequence resumed' : 'Lead sequence paused');
+      fetchLeads(leadsSearch);
+      fetchCampaign();
+    } catch (err) {
+      toast.error('Could not update lead sequence state');
+    } finally {
+      setTogglingLeadId(null);
+    }
+  };
   const openEditor = (step) => {
     if (['active', 'warming_up'].includes(campaign?.status)) {
       toast.error('Pause the campaign before editing its sequence or settings.');
@@ -356,29 +402,61 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
             </div>
 
             <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-2xs">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                ACCEPTED
-              </p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                  ACCEPTED
+                </p>
+                {acceptanceRatePct !== null && (
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      acceptanceRatePct >= 30
+                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        : acceptanceRatePct < 20
+                        ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                        : 'bg-amber-50 text-amber-800 border border-amber-200'
+                    }`}
+                  >
+                    {acceptanceRatePct >= 30
+                      ? 'Healthy (30–35% target)'
+                      : acceptanceRatePct < 20
+                      ? 'Low (<20%) · Review ICP'
+                      : 'Building (Target 30–35%)'}
+                  </span>
+                )}
+              </div>
               <p className="text-2xl font-bold text-gray-900 mt-1">
                 {campaign.acceptances_count || 0}
               </p>
               <p className="text-[11px] text-gray-400 mt-0.5">
                 {campaign.leads_contacted > 0
-                  ? `${Math.round((campaign.acceptances_count / campaign.leads_contacted) * 100)}% acceptance`
+                  ? `${acceptanceRatePct}% acceptance`
                   : 'Not available'}
               </p>
             </div>
 
             <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-2xs">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                REPLIED
-              </p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                  REPLIED
+                </p>
+                {replyRatePct !== null && (
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      replyRatePct >= 10
+                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        : 'bg-amber-50 text-amber-800 border border-amber-200'
+                    }`}
+                  >
+                    {replyRatePct >= 10 ? 'Healthy (10–15%+ target)' : 'Target 10–15%'}
+                  </span>
+                )}
+              </div>
               <p className="text-2xl font-bold text-gray-900 mt-1">
                 {campaign.replies_count || 0}
               </p>
               <p className="text-[11px] text-gray-400 mt-0.5">
                 {campaign.leads_contacted > 0
-                  ? `${Math.round((campaign.replies_count / campaign.leads_contacted) * 100)}% reply rate`
+                  ? `${replyRatePct}% reply rate`
                   : 'Not available'}
               </p>
             </div>
@@ -427,6 +505,40 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
               <p className="text-xs text-gray-400 mt-6 pt-4 border-t border-gray-100">
                 {contactedLeads ? 'Funnel rates are based on the previous stage.' : 'No runner activity yet.'}
               </p>
+
+              {/* Dripify 5-Stage Lead Status Breakdown (Video #9: 2ZosGksIVRQ) */}
+              <div className="mt-5 pt-4 border-t border-gray-100">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-xs font-bold text-gray-900 uppercase tracking-wider">
+                    Lead Sequence Status Breakdown
+                  </h4>
+                  {funnelStages.low_queue_warning && (
+                    <button
+                      type="button"
+                      onClick={() => setLeadsModalOpen(true)}
+                      className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2.5 py-0.5 text-[11px] font-bold text-amber-800 hover:bg-amber-100 cursor-pointer"
+                    >
+                      <AlertCircle className="w-3 h-3" />
+                      Low Queue ({funnelStages.queued} left) · + Add Lead List
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 text-xs">
+                  {[
+                    { label: 'Completed', desc: 'Finished all steps', count: funnelStages.completed || 0, tone: 'bg-emerald-50/70 border-emerald-200 text-emerald-900' },
+                    { label: 'Paused / Replied', desc: 'Stopped for reply/manual', count: funnelStages.paused || 0, tone: 'bg-amber-50/70 border-amber-200 text-amber-900' },
+                    { label: 'Moving in Sequence', desc: 'Active between steps', count: funnelStages.moving || 0, tone: 'bg-indigo-50/70 border-indigo-200 text-indigo-900' },
+                    { label: 'Waiting in Queue', desc: 'Getting ready to start', count: funnelStages.queued || 0, tone: 'bg-sky-50/70 border-sky-200 text-sky-900' },
+                    { label: 'Uploading / Staged', desc: 'Pending source review', count: funnelStages.staged || 0, tone: 'bg-gray-50 border-gray-200 text-gray-700' },
+                  ].map((stage) => (
+                    <div key={stage.label} className={`rounded-xl border p-2.5 ${stage.tone}`}>
+                      <p className="text-lg font-bold leading-tight">{stage.count}</p>
+                      <p className="text-[11px] font-semibold mt-0.5">{stage.label}</p>
+                      <p className="text-[10px] opacity-75">{stage.desc}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
 
             {/* Right Stack: Audience, Sending from, Schedule */}
@@ -483,16 +595,27 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
             </div>
             {campaign.sequence?.nodes?.length ? (
               <div className="divide-y divide-gray-100">
-                {campaign.sequence.nodes.map((node, index) => (
-                  <div key={node.id || `${node.type}-${index}`} className="flex items-center gap-3 px-5 py-3">
-                    <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 text-xs font-bold text-indigo-700">{index + 1}</span>
-                    <div className="min-w-0">
-                      <p className="truncate text-xs font-semibold text-gray-800">{node.title || node.type}</p>
-                      <p className="text-[11px] text-gray-400">{node.type?.replaceAll('_', ' ')}</p>
+                {campaign.sequence.nodes.map((node, index) => {
+                  const stepStats = campaign.step_performance?.[node.id];
+                  const hasStepEvents = stepStats && (stepStats.completed > 0 || stepStats.queued > 0 || stepStats.failed > 0);
+                  return (
+                    <div key={node.id || `${node.type}-${index}`} className="flex items-center gap-3 px-5 py-3">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 text-xs font-bold text-indigo-700">{index + 1}</span>
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-semibold text-gray-800">{node.title || node.type}</p>
+                        <p className="text-[11px] text-gray-400">{node.type?.replaceAll('_', ' ')}</p>
+                      </div>
+                      {hasStepEvents ? (
+                        <span className="ml-auto text-[11px] font-mono text-gray-600">
+                          {stepStats.completed || 0} completed · {stepStats.queued || 0} active
+                          {stepStats.failed > 0 ? ` · ${stepStats.failed} failed` : ''}
+                        </span>
+                      ) : (
+                        <span className="ml-auto text-[11px] text-gray-400">No step events yet</span>
+                      )}
                     </div>
-                    <span className="ml-auto text-[11px] text-gray-400">No step events yet</span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="py-14 px-4 text-center">
@@ -509,14 +632,120 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
                 Reply rate by sender in this campaign, best first.
               </p>
             </div>
-            <div className="py-14 px-4 text-center">
-              <p className="text-xs text-gray-400">
-                {campaign.senders && campaign.senders.length > 0
-                  ? 'No sender activity recorded yet.'
-                  : 'No sender is configured.'}
-              </p>
-            </div>
+            {campaign.senders?.some((s) => (s.contacted || 0) > 0 || (s.requests_sent || 0) > 0 || (s.messages_sent || 0) > 0) ? (
+              <div className="divide-y divide-gray-100">
+                {campaign.senders.map((sender) => (
+                  <div key={sender.id} className="flex items-center justify-between gap-4 px-5 py-3.5 text-xs">
+                    <div>
+                      <p className="font-semibold text-gray-900">{sender.account_name}</p>
+                      <p className="text-[11px] text-gray-400">
+                        {sender.contacted || 0} contacted · {sender.acceptances || 0} accepted · {sender.replies || 0} replied
+                      </p>
+                    </div>
+                    <span className="font-mono text-xs font-semibold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-full">
+                      {sender.reply_rate !== null && sender.reply_rate !== undefined ? `${sender.reply_rate}% reply rate` : 'Not available'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="py-14 px-4 text-center">
+                <p className="text-xs text-gray-400">
+                  {campaign.senders && campaign.senders.length > 0
+                    ? 'No sender activity recorded yet.'
+                    : 'No sender is configured.'}
+                </p>
+              </div>
+            )}
           </div>
+
+          {/* Bottom Section 3: Per-Lead-List Performance Comparison (Video #9: 2ZosGksIVRQ) */}
+          {Array.isArray(campaign.list_performance) && campaign.list_performance.length > 0 && (
+            <div className="rounded-2xl border border-gray-200 bg-white shadow-2xs overflow-hidden">
+              <div className="p-5 border-b border-gray-100 flex items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-bold text-gray-900">Lead list performance comparison</h3>
+                  <p className="text-[11px] text-gray-400 mt-0.5">
+                    Acceptance and response rates by imported lead list cohort (target 30–35% acceptance, 10–15% reply).
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setLeadsModalOpen(true)}
+                  className="rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  + Add Lead List
+                </button>
+              </div>
+              <div className="divide-y divide-gray-100">
+                {campaign.list_performance.map((lp) => (
+                  <div key={lp.list_name} className="flex flex-wrap items-center justify-between gap-4 px-5 py-3.5 text-xs">
+                    <div>
+                      <p className="font-bold text-gray-900">{lp.list_name}</p>
+                      <p className="text-[11px] text-gray-400">
+                        {lp.leads_count} leads · {lp.contacted} contacted · {lp.accepted} accepted · {lp.replied} replied
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
+                        {lp.acceptance_rate !== null && lp.acceptance_rate !== undefined ? `${lp.acceptance_rate}% acceptance` : '0% acceptance'}
+                      </span>
+                      <span className="font-mono text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-full">
+                        {lp.reply_rate !== null && lp.reply_rate !== undefined ? `${lp.reply_rate}% reply` : '0% reply'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Bottom Section 4: Campaign Recent Activity Feed (Video #9 & Video #11) */}
+          {Array.isArray(campaign.recent_activity) && campaign.recent_activity.length > 0 && (
+            <div className="rounded-2xl border border-gray-200 bg-white shadow-2xs overflow-hidden">
+              <div className="p-5 border-b border-gray-100">
+                <h3 className="text-sm font-bold text-gray-900">Campaign recent activity</h3>
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  Chronological log of actions executed on prospects in this campaign.
+                </p>
+              </div>
+              <div className="divide-y divide-gray-100">
+                {campaign.recent_activity.slice(0, 10).map((act) => (
+                  <div key={act.id || `${act.lead_id}-${act.timestamp}`} className="flex items-center justify-between gap-3 px-5 py-3 text-xs">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 font-semibold text-[11px] capitalize shrink-0">
+                        {String(act.action_type || 'action').replace(/_/g, ' ')}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => act.lead_id && setSelectedLeadId(act.lead_id)}
+                        className="font-bold text-gray-900 hover:text-indigo-600 truncate cursor-pointer"
+                      >
+                        {act.lead_name}
+                      </button>
+                      {act.lead_company && (
+                        <span className="text-gray-400 truncate hidden sm:inline">· {act.lead_company}</span>
+                      )}
+                      {act.lead_linkedin_url && (
+                        <a
+                          href={act.lead_linkedin_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-gray-400 hover:text-[#0A66C2] shrink-0"
+                          title="Open LinkedIn Profile"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </a>
+                      )}
+                    </div>
+                    <span className="text-[11px] text-gray-400 font-mono shrink-0">
+                      {act.timestamp ? new Date(act.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -558,6 +787,38 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
             </div>
           </div>
 
+          {/* Cohort / Lead List Filter Bar */}
+          {Array.isArray(campaign.list_performance) && campaign.list_performance.length > 1 && (
+            <div className="px-5 py-2.5 bg-gray-50/70 border-b border-gray-100 flex items-center gap-1.5 flex-wrap">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mr-1">Lead List:</span>
+              <button
+                type="button"
+                onClick={() => setSelectedCohortFilter('all')}
+                className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors cursor-pointer ${
+                  selectedCohortFilter === 'all'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-100'
+                }`}
+              >
+                All Lists ({leads.length})
+              </button>
+              {campaign.list_performance.map((lp) => (
+                <button
+                  key={lp.list_name}
+                  type="button"
+                  onClick={() => setSelectedCohortFilter(lp.list_name)}
+                  className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors cursor-pointer ${
+                    selectedCohortFilter === lp.list_name
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-100'
+                  }`}
+                >
+                  {lp.list_name} ({lp.leads_count})
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* Leads Table */}
           {leadsLoading ? (
             <div className="flex items-center justify-center py-16 text-gray-400">
@@ -585,7 +846,15 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {leads.map((l) => (
+                  {leads
+                    .filter((l) => {
+                      if (selectedCohortFilter === 'all') return true;
+                      const cohort = l.list_name || l.source_metadata?.list_name || 'Default Cohort';
+                      return cohort === selectedCohortFilter || (Array.isArray(l.tags) && l.tags.includes(selectedCohortFilter));
+                    })
+                    .map((l) => {
+                      const isLeadPaused = l.execution_state === 'paused' || l.execution_state === 'replied';
+                      return (
                     <tr
                       key={l.id}
                       onClick={() => setSelectedLeadId(l.id)}
@@ -625,19 +894,37 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
                         {l.updated_at ? new Date(l.updated_at).toLocaleDateString() : '—'}
                       </td>
                       <td className="py-3.5 px-5 text-right">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedLeadId(l.id);
-                          }}
-                          className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 hover:underline"
-                        >
-                          Timeline →
-                        </button>
+                        <div className="inline-flex items-center justify-end gap-2">
+                          {l.execution_state !== 'staged' && (
+                            <button
+                              type="button"
+                              disabled={togglingLeadId === l.id}
+                              onClick={(e) => handleToggleLeadPause(l, e)}
+                              className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold border transition-colors cursor-pointer ${
+                                isLeadPaused
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                                  : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                              }`}
+                            >
+                              {isLeadPaused ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
+                              {isLeadPaused ? 'Resume' : 'Pause'}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedLeadId(l.id);
+                            }}
+                            className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 hover:underline"
+                          >
+                            Timeline →
+                          </button>
+                        </div>
                       </td>
                     </tr>
-                  ))}
+                      );
+                    })}
                 </tbody>
               </table>
             </div>
@@ -760,6 +1047,15 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-12 gap-2 py-2 border-t border-gray-100">
+              <span className="md:col-span-3 text-gray-500 font-medium">Team Deduplication</span>
+              <span className="md:col-span-9 text-gray-700">
+                {campaign.skip_team_campaign_leads
+                  ? 'Skip leads found in campaigns of your team members'
+                  : 'Contacted leads & Do-Not-Contact list only'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-2 py-2 border-t border-gray-100">
               <span className="md:col-span-3 text-gray-500 font-medium">Senders</span>
               <span className="md:col-span-9 text-gray-700">
                 {campaign.senders && campaign.senders.length > 0
@@ -787,11 +1083,11 @@ export default function OutreachCampaignDetail({ campaignId, onBack, onEdit }) {
                   { label: 'Connection invites', val: campaign.limits?.connection_invites ?? 20 },
                   { label: 'Messages', val: campaign.limits?.messages ?? 20 },
                   { label: 'Voice notes', val: campaign.limits?.voice_notes ?? 20 },
-                  { label: 'InMails', val: campaign.limits?.inmails ?? 20, supported: false },
+                  { label: 'InMails', val: campaign.limits?.inmails ?? 20 },
                   { label: 'Profile visits', val: campaign.limits?.profile_visits ?? 20 },
-                  { label: 'Follows', val: campaign.limits?.follows ?? 20, supported: false },
+                  { label: 'Follows', val: campaign.limits?.follows ?? 20 },
                   { label: 'Post likes', val: campaign.limits?.post_likes ?? 20 },
-                  { label: 'Comments', val: campaign.limits?.comments ?? 20, supported: false },
+                  { label: 'Comments', val: campaign.limits?.comments ?? 20 },
                 ].map((lim) => (
                   <span
                     key={lim.label}

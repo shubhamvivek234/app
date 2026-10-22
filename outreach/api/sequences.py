@@ -69,11 +69,14 @@ class SaveSequenceRequest(ValidateSequenceRequest):
 class LiveEditSequenceRequest(SaveSequenceRequest):
     reengage_completed_leads: StrictBool = True
     resume_failed_on_deleted_steps: StrictBool = True
+    node_mapping: dict[str, str] | None = Field(default=None)
+    sender_mapping: dict[str, str] | None = Field(default=None)
 
 
 class SaveTemplateRequest(ValidateSequenceRequest):
     name: str = Field(min_length=1, max_length=100)
     description: str | None = Field(default="", max_length=1000)
+    add_to_team_templates: bool = Field(default=True, description="Share template across all workspace team members")
 
 
 class DeleteTemplateRequest(BaseModel):
@@ -588,6 +591,111 @@ async def save_campaign_sequence(
     return {"status": "success", "message": "Sequence saved and compiled successfully"}
 
 
+@router.post("/migration-preview")
+async def preview_campaign_sequence_migration(
+    req: LiveEditSequenceRequest,
+    current_user: dict = require_outreach_permission('sequence:read'),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Previews a sequence or sender migration without mutating campaign state.
+    Reports which leads move safely (preserving waiting timestamps and history)
+    and which leads sit on deleted steps or removed senders that need explicit mapping.
+    """
+    ws_id = _workspace_id(current_user)
+    campaign = await db.outreach_campaigns.find_one(_campaign_filter(req.campaign_id, current_user))
+    if not campaign:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+
+    try:
+        compiled_dag, analysis = _authoring_graph(req)
+        _require_executable_analysis(analysis)
+    except DAGValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    prior_seq = await load_sequence(db, ws_id, req.campaign_id, campaign=campaign)
+    prior_dag = (prior_seq or {}).get("compiled_dag") or {}
+    prior_nodes = prior_dag.get("nodes") or {}
+    new_nodes = compiled_dag.get("nodes") or {}
+    deleted_node_ids = sorted(set(prior_nodes.keys()) - set(new_nodes.keys()))
+    node_mapping = req.node_mapping or {}
+    sender_mapping = req.sender_mapping or {}
+
+    leads_cursor = db.outreach_leads.find({
+        "workspace_id": ws_id,
+        "campaign_id": req.campaign_id,
+        "execution_state": {"$ne": "staged"},
+    })
+    leads = await leads_cursor.to_list(length=5000) if hasattr(leads_cursor, "to_list") else list(leads_cursor)
+
+    active_senders = set(campaign.get("sender_account_ids") or [])
+    safe_leads_count = 0
+    preserved_waiting_count = 0
+    needs_node_mapping: list[dict[str, Any]] = []
+    needs_sender_mapping: list[dict[str, Any]] = []
+    mapped_nodes_count = 0
+    mapped_senders_count = 0
+
+    for lead in leads:
+        if lead.get("has_replied") or lead.get("execution_state") in ("replied", "finished", "bounced", "failed"):
+            continue
+        cur_node = lead.get("current_node_id")
+        assigned_sender = lead.get("assigned_account_id")
+        is_waiting = bool(
+            lead.get("waiting_for_connection_at")
+            or lead.get("waiting_for_reply_at")
+            or lead.get("execution_state") in ("waiting_trigger", "waiting_delay", "accepted")
+        )
+        node_ok = cur_node is None or cur_node in new_nodes
+        if not node_ok and cur_node in node_mapping and node_mapping[cur_node] in new_nodes:
+            node_ok = True
+            mapped_nodes_count += 1
+        elif not node_ok:
+            old_node = prior_nodes.get(cur_node) or {}
+            default_succ = old_node.get("next_default")
+            if not is_waiting and default_succ and default_succ in new_nodes:
+                node_ok = True
+                mapped_nodes_count += 1
+            else:
+                needs_node_mapping.append({
+                    "lead_id": lead.get("id"),
+                    "first_name": lead.get("first_name"),
+                    "current_node_id": cur_node,
+                    "execution_state": lead.get("execution_state"),
+                    "waiting_for_connection_at": lead.get("waiting_for_connection_at"),
+                    "waiting_for_reply_at": lead.get("waiting_for_reply_at"),
+                })
+
+        sender_ok = assigned_sender is None or assigned_sender in active_senders
+        if not sender_ok and assigned_sender in sender_mapping:
+            sender_ok = True
+            mapped_senders_count += 1
+        elif not sender_ok:
+            needs_sender_mapping.append({
+                "lead_id": lead.get("id"),
+                "first_name": lead.get("first_name"),
+                "assigned_account_id": assigned_sender,
+                "execution_state": lead.get("execution_state"),
+            })
+
+        if node_ok and sender_ok:
+            safe_leads_count += 1
+            if is_waiting:
+                preserved_waiting_count += 1
+
+    return {
+        "campaign_id": req.campaign_id,
+        "can_migrate_safely": len(needs_node_mapping) == 0 and len(needs_sender_mapping) == 0,
+        "safe_leads_count": safe_leads_count,
+        "preserved_waiting_count": preserved_waiting_count,
+        "mapped_nodes_count": mapped_nodes_count,
+        "mapped_senders_count": mapped_senders_count,
+        "deleted_node_ids": deleted_node_ids,
+        "needs_node_mapping": needs_node_mapping[:100],
+        "needs_sender_mapping": needs_sender_mapping[:100],
+    }
+
+
 @router.post("/live-edit")
 async def live_edit_campaign_sequence(
     req: LiveEditSequenceRequest,
@@ -655,6 +763,29 @@ async def live_edit_campaign_sequence(
 
     reengaged_count = 0
     migrated_deleted_count = 0
+    migrated_senders_count = 0
+
+    # 0. Apply explicit sender replacement mapping while preserving waiting timestamps/history
+    if req.sender_mapping:
+        for old_sender_id, new_sender_id in req.sender_mapping.items():
+            if not old_sender_id or not new_sender_id or old_sender_id == new_sender_id:
+                continue
+            s_res = await db.outreach_leads.update_many(
+                {
+                    "workspace_id": ws_id,
+                    "campaign_id": req.campaign_id,
+                    "assigned_account_id": old_sender_id,
+                    "has_replied": {"$ne": True},
+                },
+                {
+                    "$set": {
+                        "assigned_account_id": new_sender_id,
+                        "previous_assigned_account_id": old_sender_id,
+                        "updated_at": now,
+                    }
+                },
+            )
+            migrated_senders_count += int(getattr(s_res, "modified_count", 0) or 0)
 
     # 1. Detect previously terminal steps that now have a new successor step (`next_default`)
     extended_successors: list[str] = []
@@ -693,18 +824,40 @@ async def live_edit_campaign_sequence(
         )
         reengaged_count = int(getattr(reengage_res, "modified_count", 0) or 0)
 
-    # 2. Migrate leads sitting on deleted non-branching steps to their successor or root
+    # 2. Migrate leads sitting on deleted or explicitly mapped steps while preserving waiting periods
     deleted_node_ids = set(prior_nodes.keys()) - set(new_nodes.keys())
+    explicit_node_map = req.node_mapping or {}
     fallback_root = (compiled_dag.get("root_node_ids") or [None])[0]
-    for del_id in deleted_node_ids:
+    for del_id in sorted(deleted_node_ids | set(explicit_node_map.keys())):
         old_node = prior_nodes.get(del_id) or {}
-        next_target = old_node.get("next_default")
+        next_target = explicit_node_map.get(del_id) or old_node.get("next_default")
         if next_target not in new_nodes:
             next_target = fallback_root
         if next_target and next_target in new_nodes:
-            states_to_move = ["queued", "waiting_delay", "in_progress"]
+            states_to_move = ["queued", "waiting_delay", "waiting_trigger", "accepted", "in_progress"]
             if req.resume_failed_on_deleted_steps:
                 states_to_move.append("failed")
+            # For leads in waiting_trigger / accepted / waiting_delay mapped explicitly, preserve their state and waiting timestamps
+            if del_id in explicit_node_map:
+                wait_res = await db.outreach_leads.update_many(
+                    {
+                        "workspace_id": ws_id,
+                        "campaign_id": req.campaign_id,
+                        "current_node_id": del_id,
+                        "execution_state": {"$in": ["waiting_trigger", "waiting_delay", "accepted"]},
+                        "has_replied": {"$ne": True},
+                    },
+                    {
+                        "$set": {
+                            "current_node_id": next_target,
+                            "sequence_version": new_version,
+                            "authorized_revision": new_revision,
+                            "updated_at": now,
+                        }
+                    },
+                )
+                migrated_deleted_count += int(getattr(wait_res, "modified_count", 0) or 0)
+                states_to_move = [s for s in states_to_move if s not in ("waiting_trigger", "waiting_delay", "accepted")]
             mig_res = await db.outreach_leads.update_many(
                 {
                     "workspace_id": ws_id,
@@ -726,13 +879,13 @@ async def live_edit_campaign_sequence(
             )
             migrated_deleted_count += int(getattr(mig_res, "modified_count", 0) or 0)
 
-    # 3. Sync remaining active leads onto the new sequence version & revision
+    # 3. Sync remaining active leads (including waiting_trigger and accepted) onto the new sequence version & revision
     await db.outreach_leads.update_many(
         {
             "workspace_id": ws_id,
             "campaign_id": req.campaign_id,
             "current_node_id": {"$in": list(new_nodes.keys())},
-            "execution_state": {"$in": ["queued", "waiting_delay", "in_progress"]},
+            "execution_state": {"$in": ["queued", "waiting_delay", "waiting_trigger", "accepted", "in_progress"]},
             "has_replied": {"$ne": True},
         },
         {"$set": {"sequence_version": new_version, "authorized_revision": new_revision, "updated_at": now}},
@@ -745,4 +898,5 @@ async def live_edit_campaign_sequence(
         "authorization_revision": new_revision,
         "reengaged_completed_leads": reengaged_count,
         "migrated_deleted_step_leads": migrated_deleted_count,
+        "migrated_sender_leads": migrated_senders_count,
     }

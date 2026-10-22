@@ -109,6 +109,7 @@ class CreateCampaignRequest(BaseModel):
     sender_account_ids: list[str] = Field(default_factory=list)
     schedule: WorkingSchedule = Field(default_factory=WorkingSchedule)
     limits: DailyLimits = Field(default_factory=DailyLimits)
+    skip_team_campaign_leads: bool = False
 
 
 class AutoDraftRequest(BaseModel):
@@ -120,6 +121,7 @@ class AutoDraftRequest(BaseModel):
     sender_account_ids: list[str] | None = None
     schedule: dict[str, Any] | None = None
     limits: dict[str, Any] | None = None
+    skip_team_campaign_leads: bool | None = None
 
 
 class UpdateCampaignRequest(BaseModel):
@@ -127,6 +129,7 @@ class UpdateCampaignRequest(BaseModel):
     sender_account_ids: list[str] | None = None
     schedule: WorkingSchedule | None = None
     limits: DailyLimits | None = None
+    skip_team_campaign_leads: bool | None = None
     draft_step: int | None = None
     draft_progress: int | None = None
     next_step_label: str | None = None
@@ -380,6 +383,8 @@ async def auto_draft_campaign(
                 updates["schedule"] = req.schedule if isinstance(req.schedule, dict) else req.schedule.model_dump()
             if req.limits is not None:
                 updates["limits"] = req.limits if isinstance(req.limits, dict) else req.limits.model_dump()
+            if req.skip_team_campaign_leads is not None:
+                updates["skip_team_campaign_leads"] = bool(req.skip_team_campaign_leads)
 
             # The UI uses auto-draft for settings too. Match the observed native
             # record and authority so a suspended save cannot edit a later active
@@ -417,6 +422,7 @@ async def auto_draft_campaign(
         "sender_account_ids": req.sender_account_ids or [],
         "schedule": schedule_data,
         "limits": limits_data,
+        "skip_team_campaign_leads": bool(req.skip_team_campaign_leads) if req.skip_team_campaign_leads is not None else False,
         "draft_step": req.draft_step or 1,
         "draft_progress": req.draft_progress or 20,
         "next_step_label": req.next_step_label or "Next: configure sequence",
@@ -448,6 +454,7 @@ async def create_campaign(
         sender_account_ids=req.sender_account_ids,
         schedule=req.schedule,
         limits=req.limits,
+        skip_team_campaign_leads=bool(req.skip_team_campaign_leads),
     ).model_dump()
 
     await db.outreach_campaigns.insert_one(campaign_doc)
@@ -485,12 +492,162 @@ async def get_campaign(
         "campaign_id": campaign_id, "workspace_id": workspace_id,
         "$or": [{"has_replied": True}, {"execution_state": "replied"}],
     })
-    interested = campaign.get("interested_count", 0)
+    interested = int(campaign.get("interested_count", 0) or 0)
+    if hasattr(db, "outreach_inbox_threads") and hasattr(db.outreach_inbox_threads, "count_documents"):
+        try:
+            thread_interested = await db.outreach_inbox_threads.count_documents({
+                "campaign_id": campaign_id, "workspace_id": workspace_id, "intent_tag": "interested",
+            })
+            if isinstance(thread_interested, int):
+                interested = max(interested, thread_interested)
+        except Exception as exc:
+            logger.debug("Campaign interested threads count skipped for campaign=%s (%s)", campaign_id, type(exc).__name__)
     campaign["leads_count"] = total_leads
     campaign["leads_contacted"] = contacted_leads
     campaign["acceptances_count"] = acceptances
     campaign["replies_count"] = replies
     campaign["interested_count"] = interested
+
+    # Sequence summary & per-step / per-sender activity breakdown
+    sequence = await load_sequence(db, workspace_id, campaign_id, campaign=campaign)
+    if sequence:
+        sequence.pop("_id", None)
+        campaign["sequence"] = sequence
+
+    campaign_tasks: list[dict[str, Any]] = []
+    if hasattr(db, "outreach_tasks") and hasattr(db.outreach_tasks, "find"):
+        try:
+            campaign_tasks = await _fetch_cursor_docs(
+                db.outreach_tasks.find({"campaign_id": campaign_id, "workspace_id": workspace_id}),
+                length=10000,
+            )
+        except Exception as exc:
+            logger.debug("Campaign tasks fetch skipped for campaign=%s (%s)", campaign_id, type(exc).__name__)
+            campaign_tasks = []
+
+    campaign_leads: list[dict[str, Any]] = []
+    if hasattr(db, "outreach_leads") and hasattr(db.outreach_leads, "find"):
+        try:
+            campaign_leads = await _fetch_cursor_docs(
+                db.outreach_leads.find({"campaign_id": campaign_id, "workspace_id": workspace_id}),
+                length=10000,
+            )
+        except Exception as exc:
+            logger.debug("Campaign leads fetch skipped for campaign=%s (%s)", campaign_id, type(exc).__name__)
+            campaign_leads = []
+
+    step_performance: dict[str, dict[str, int]] = {}
+    for t in campaign_tasks:
+        if not isinstance(t, dict):
+            continue
+        tid = str(t.get("id") or "")
+        node_key = t.get("step_id") or t.get("node_id") or (tid.split(":", 1)[1] if ":" in tid else None)
+        if not node_key:
+            continue
+        bucket = step_performance.setdefault(str(node_key), {"completed": 0, "queued": 0, "failed": 0})
+        st = t.get("status")
+        if st in ("completed", "accepted", "skipped"):
+            bucket["completed"] += 1
+        elif st in ("queued", "preparing", "dispatching", "running", "pending"):
+            bucket["queued"] += 1
+        elif st == "failed":
+            bucket["failed"] += 1
+    for ld in campaign_leads:
+        if not isinstance(ld, dict):
+            continue
+        cnode = ld.get("current_node_id")
+        if cnode and ld.get("execution_state") in ("queued", "in_progress", "waiting_delay"):
+            bucket = step_performance.setdefault(str(cnode), {"completed": 0, "queued": 0, "failed": 0})
+            bucket["queued"] += 1
+    campaign["step_performance"] = step_performance
+
+    # Dripify 5-Stage Campaign Funnel Status Breakdown (Completed, Paused, Moving in Sequence, Waiting in Queue, Uploading/Staged)
+    f_completed = 0
+    f_paused = 0
+    f_moving = 0
+    f_queued = 0
+    f_staged = 0
+    list_buckets: dict[str, dict[str, int]] = {}
+    lead_by_id: dict[str, dict[str, Any]] = {}
+    for ld in campaign_leads:
+        if not isinstance(ld, dict):
+            continue
+        lid = str(ld.get("id") or "")
+        if lid:
+            lead_by_id[lid] = ld
+        ex_state = str(ld.get("execution_state") or "queued").lower()
+        if ex_state in ("finished", "completed", "failed", "bounced") or ld.get("do_not_contact") is True:
+            f_completed += 1
+        elif ex_state in ("paused", "replied", "waiting_trigger") or ld.get("has_replied") is True:
+            f_paused += 1
+        elif ex_state in ("in_progress", "waiting_delay", "invited", "connected", "messaged", "accepted"):
+            f_moving += 1
+        elif ex_state == "staged":
+            f_staged += 1
+        else:
+            f_queued += 1
+
+        src_meta = ld.get("source_metadata") if isinstance(ld.get("source_metadata"), dict) else {}
+        cohort_name = str(ld.get("list_name") or src_meta.get("list_name") or "").strip() or "Default Cohort"
+        lb = list_buckets.setdefault(cohort_name, {"leads_count": 0, "contacted": 0, "accepted": 0, "replied": 0})
+        lb["leads_count"] += 1
+        if ld.get("last_action_at") or ex_state in ("invited", "connected", "messaged", "completed", "accepted", "replied"):
+            lb["contacted"] += 1
+        if ld.get("is_connected") is True or ex_state in ("connected", "accepted"):
+            lb["accepted"] += 1
+        if ld.get("has_replied") is True or ex_state == "replied":
+            lb["replied"] += 1
+
+    campaign["funnel_stages"] = {
+        "completed": f_completed,
+        "paused": f_paused,
+        "moving": f_moving,
+        "queued": f_queued,
+        "staged": f_staged,
+        "low_queue_warning": bool(campaign.get("status") == "active" and f_queued < 20),
+    }
+
+    list_performance: list[dict[str, Any]] = []
+    for cname, counts in list_buckets.items():
+        denom = counts["contacted"] or counts["leads_count"]
+        list_performance.append({
+            "list_name": cname,
+            "leads_count": counts["leads_count"],
+            "contacted": counts["contacted"],
+            "accepted": counts["accepted"],
+            "acceptance_rate": round((counts["accepted"] / denom) * 100, 1) if denom > 0 else None,
+            "replied": counts["replied"],
+            "reply_rate": round((counts["replied"] / denom) * 100, 1) if denom > 0 else None,
+        })
+    list_performance.sort(key=lambda item: item["leads_count"], reverse=True)
+    campaign["list_performance"] = list_performance
+
+    # Campaign Recent Activity Timeline (most recent 25 tasks hydrated with lead name & LinkedIn URL)
+    def _task_ts(t: dict[str, Any]) -> str:
+        val = t.get("completed_at") or t.get("updated_at") or t.get("created_at") or ""
+        return val.isoformat() if isinstance(val, datetime) else str(val or "")
+
+    recent_tasks = sorted(
+        [t for t in campaign_tasks if isinstance(t, dict) and t.get("status") in ("completed", "accepted", "skipped", "failed")],
+        key=_task_ts,
+        reverse=True,
+    )[:25]
+    campaign_recent_activity: list[dict[str, Any]] = []
+    for t in recent_tasks:
+        lid = str(t.get("lead_id") or "")
+        ld = lead_by_id.get(lid, {})
+        lname = f"{ld.get('first_name', '')} {ld.get('last_name', '')}".strip() or ld.get("vanity_name") or "Lead"
+        campaign_recent_activity.append({
+            "id": str(t.get("id") or ""),
+            "action_type": str(t.get("task_type") or t.get("action_type") or "action"),
+            "status": str(t.get("status") or "completed"),
+            "lead_id": lid,
+            "lead_name": lname,
+            "lead_company": ld.get("company_name") or "",
+            "lead_linkedin_url": ld.get("linkedin_url") or "",
+            "timestamp": _task_ts(t),
+        })
+    campaign["recent_activity"] = campaign_recent_activity
 
     # Senders summary
     sender_ids = campaign.get("sender_account_ids", [])
@@ -503,22 +660,30 @@ async def get_campaign(
             }),
             length=100,
         )
-        senders = [
-            {
-                "id": a["id"],
+        for a in acc_docs:
+            sid = a["id"]
+            s_tasks = [t for t in campaign_tasks if isinstance(t, dict) and t.get("account_id") == sid and t.get("status") in ("completed", "accepted")]
+            s_leads = [l for l in campaign_leads if isinstance(l, dict) and l.get("assigned_account_id") == sid]
+            s_contacted = sum(1 for l in s_leads if l.get("last_action_at") or l.get("execution_state") in ("invited", "connected", "messaged", "completed", "accepted", "replied"))
+            s_accepted = sum(1 for l in s_leads if l.get("is_connected") is True or l.get("execution_state") in ("connected", "accepted"))
+            s_replied = sum(1 for l in s_leads if l.get("has_replied") is True or l.get("execution_state") == "replied")
+            s_req_sent = sum(1 for t in s_tasks if t.get("task_type") == "connection_request")
+            s_msg_sent = sum(1 for t in s_tasks if t.get("task_type") in ("send_message", "inmail", "voice_note"))
+            denom = s_contacted or (s_req_sent + s_msg_sent)
+            senders.append({
+                "id": sid,
                 "account_name": a.get("account_name", "LinkedIn Sender"),
                 "vanity_name": a.get("vanity_name", ""),
                 "avatar_url": a.get("avatar_url"),
-            }
-            for a in acc_docs
-        ]
+                "contacted": s_contacted,
+                "requests_sent": s_req_sent,
+                "messages_sent": s_msg_sent,
+                "acceptances": s_accepted,
+                "replies": s_replied,
+                "reply_rate": round((s_replied / denom) * 100, 1) if denom > 0 else None,
+            })
+        senders.sort(key=lambda s: (s.get("reply_rate") is not None, s.get("reply_rate") or 0, s.get("contacted") or 0), reverse=True)
     campaign["senders"] = senders
-
-    # Sequence summary
-    sequence = await load_sequence(db, workspace_id, campaign_id, campaign=campaign)
-    if sequence:
-        sequence.pop("_id", None)
-        campaign["sequence"] = sequence
 
     return campaign
 
@@ -550,6 +715,8 @@ async def update_campaign(
         updates["schedule"] = req.schedule.model_dump()
     if req.limits is not None:
         updates["limits"] = req.limits.model_dump()
+    if req.skip_team_campaign_leads is not None:
+        updates["skip_team_campaign_leads"] = bool(req.skip_team_campaign_leads)
     if req.draft_step is not None:
         updates["draft_step"] = req.draft_step
     if req.draft_progress is not None:

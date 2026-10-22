@@ -3,6 +3,8 @@
 Only an operator with a verified external invoice can activate access. A
 customer-facing API must never create or extend an entitlement.
 """
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorClientSession

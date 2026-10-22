@@ -4,6 +4,8 @@ This is a sequential observation, never an execution permission or health proof.
 Key access and final transactional worker authority remain separate.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import asyncio
 from dataclasses import dataclass

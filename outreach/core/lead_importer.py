@@ -73,6 +73,49 @@ def normalize_linkedin_url(raw_url: str) -> str:
     return f"https://{parsed.hostname}/in/{parts[2]}"
 
 
+def normalize_any_linkedin_profile_url(raw_url: str) -> str:
+    """
+    Normalizes any LinkedIn profile URL across Standard (/in/, /pub/),
+    Sales Navigator (/sales/lead/, /sales/people/), and Recruiter (/talent/profile/, /talent/hire/.../profile/).
+    """
+    standard = normalize_linkedin_url(raw_url)
+    if standard:
+        return standard
+    if not raw_url:
+        return ""
+    raw = raw_url.strip()
+    raw = re.sub(r"\?.*$", "", raw)
+    if raw.lower().startswith("http://"):
+        raw = "https://" + raw[7:]
+    elif not raw.lower().startswith("https://"):
+        raw = "https://" + raw
+    try:
+        parsed = urlparse(raw)
+    except ValueError:
+        return ""
+    host = (parsed.hostname or "").lower()
+    if host not in {"linkedin.com", "www.linkedin.com"}:
+        return ""
+    path = (parsed.path or "").rstrip("/")
+    # Public /pub/<slug> profile URLs
+    pub_match = re.match(r"^/pub/([A-Za-z0-9._-]+)(?:/.*)?$", path)
+    if pub_match and pub_match.group(1) not in {".", ".."}:
+        return f"https://{host}/in/{pub_match.group(1).lower()}"
+    # Sales Navigator profile URLs (/sales/lead/<id> or /sales/people/<id>)
+    sales_match = re.match(r"^/sales/(?:lead|people)/([^/?#]+)$", path, re.IGNORECASE)
+    if sales_match:
+        token = sales_match.group(1).split(",")[0].strip()
+        if token and re.fullmatch(r"[A-Za-z0-9._:-]+", token):
+            return f"https://{host}/sales/lead/{token}"
+    # LinkedIn Recruiter profile URLs (/talent/profile/<id> or /talent/hire/<proj>/profile/<id>)
+    recruiter_match = re.match(r"^/talent/(?:hire/[^/]+/)?profile/([^/?#]+)$", path, re.IGNORECASE)
+    if recruiter_match:
+        token = recruiter_match.group(1).split(",")[0].strip()
+        if token and re.fullmatch(r"[A-Za-z0-9._:-]+", token):
+            return f"https://{host}/talent/profile/{token}"
+    return ""
+
+
 def extract_vanity_name(raw_url: str) -> str:
     """Extracts the vanity handle (e.g., 'john-doe') from a LinkedIn profile URL."""
     normalized = normalize_linkedin_url(raw_url)
@@ -95,7 +138,7 @@ def _host_variants(url: str) -> set[str]:
 
 
 def extract_sales_lead_urn(url_or_urn: str) -> str:
-    """Extracts a sales profile URN or identifier from a Sales Navigator URL or raw URN."""
+    """Extracts a sales/recruiter profile URN or identifier from a Sales Navigator / Recruiter URL or raw URN."""
     if not url_or_urn:
         return ""
     val = url_or_urn.strip()
@@ -107,6 +150,14 @@ def extract_sales_lead_urn(url_or_urn: str) -> str:
             return match.group(1).rstrip(",")
     if "sales/people/" in val:
         match = re.search(r"sales/people/([^/?#,]+)", val)
+        if match:
+            return match.group(1).rstrip(",")
+    if "talent/profile/" in val:
+        match = re.search(r"talent/profile/([^/?#,]+)", val)
+        if match:
+            return match.group(1).rstrip(",")
+    if "/profile/" in val and "talent/hire/" in val:
+        match = re.search(r"talent/hire/[^/]+/profile/([^/?#,]+)", val)
         if match:
             return match.group(1).rstrip(",")
     return ""
@@ -524,7 +575,8 @@ class LeadImporter:
             try:
                 reader = csv.reader([line], delimiter=delimiter)
                 row = next(reader, [])
-            except Exception:
+            except Exception as exc:
+                logger.debug("Pasted URL CSV row parser fallback (%s)", type(exc).__name__)
                 row = [c.strip() for c in line.split(delimiter)]
             row = [col.strip() for col in row if col is not None]
             if not row:
@@ -533,13 +585,13 @@ class LeadImporter:
             # Handle space-separated URL and names if single unquoted column
             if len(row) == 1 and " " in row[0]:
                 words = row[0].split()
-                if "linkedin.com" in words[0].lower() or normalize_linkedin_url(words[0]):
+                if "linkedin.com" in words[0].lower() or normalize_any_linkedin_profile_url(words[0]):
                     row = [words[0], " ".join(words[1:])]
 
             # Identify column with LinkedIn URL
             url_idx = -1
             for idx, col in enumerate(row):
-                if "linkedin.com" in col.lower() or normalize_linkedin_url(col):
+                if "linkedin.com" in col.lower() or normalize_any_linkedin_profile_url(col):
                     url_idx = idx
                     break
 
@@ -550,7 +602,7 @@ class LeadImporter:
                 raw_url = row[0]
                 other_cols = row[1:]
 
-            cleaned_url = normalize_linkedin_url(raw_url)
+            cleaned_url = normalize_linkedin_url(raw_url) or normalize_any_linkedin_profile_url(raw_url)
             vanity = extract_vanity_name(cleaned_url)
 
             first_name = ""
@@ -655,7 +707,7 @@ class LeadImporter:
             elif "url" in row:
                 raw_url = row.get("url", "")
 
-            cleaned_url = normalize_linkedin_url(raw_url or "")
+            cleaned_url = normalize_linkedin_url(raw_url or "") or normalize_any_linkedin_profile_url(raw_url or "")
             if not cleaned_url and not include_invalid:
                 continue
 
@@ -744,6 +796,7 @@ class LeadImporter:
         skip_do_not_contact: bool = True,
         require_name: bool = False,
         _match_limit: int | None = None,
+        skip_team_campaign_leads: bool | None = None,
     ) -> dict[str, Any]:
         """
         Validates lead intake preview against deduplication, DNC, and field requirements.
@@ -759,6 +812,16 @@ class LeadImporter:
                 "invalid_count": 0,
                 "rows": [],
             }
+
+        if skip_team_campaign_leads is None and hasattr(db, "outreach_campaigns"):
+            try:
+                c_doc = await db.outreach_campaigns.find_one({"id": campaign_id, **workspace_scope(workspace_id)})
+                if isinstance(c_doc, dict):
+                    skip_team_campaign_leads = bool(c_doc.get("skip_team_campaign_leads"))
+            except Exception as exc:
+                logger.debug("Campaign team deduplication setting lookup skipped for campaign=%s (%s)", campaign_id, type(exc).__name__)
+                skip_team_campaign_leads = False
+        skip_team = bool(skip_team_campaign_leads)
 
         candidate_urls: set[str] = set()
         for lead in leads:
@@ -776,7 +839,7 @@ class LeadImporter:
             max_matches=_match_limit,
         )
 
-        # 2. Fetch cross-campaign contacted leads if enabled (compound)
+        # 2. Fetch cross-campaign contacted leads or team campaign leads if enabled (compound)
         cross_campaign_dupes = {}
         if skip_already_contacted:
             cross_campaign_dupes = await check_compound_suppression(
@@ -785,6 +848,16 @@ class LeadImporter:
                 db=db,
                 collection_name="outreach_leads",
                 extra_filter={"last_action_at": {"$ne": None}},
+                max_matches=_match_limit,
+            )
+        team_campaign_dupes = {}
+        if skip_team:
+            team_campaign_dupes = await check_compound_suppression(
+                workspace_id=workspace_id,
+                candidates=leads,
+                db=db,
+                collection_name="outreach_leads",
+                extra_filter={"campaign_id": {"$ne": campaign_id}},
                 max_matches=_match_limit,
             )
 
@@ -817,7 +890,10 @@ class LeadImporter:
 
         for idx, lead in enumerate(leads, start=1):
             raw_url = lead.get("raw_url") or lead.get("linkedin_url") or ""
-            cleaned_url = normalize_linkedin_url(lead.get("linkedin_url") or raw_url)
+            cleaned_url = (
+                normalize_linkedin_url(lead.get("linkedin_url") or raw_url)
+                or normalize_any_linkedin_profile_url(lead.get("linkedin_url") or raw_url)
+            )
             raw_first, cleaned_first, first_name = intake_names(lead)
             vanity = (lead.get("vanity_name") or extract_vanity_name(cleaned_url)).strip().lower()
 
@@ -849,6 +925,11 @@ class LeadImporter:
                 rejection_code = "duplicate_contacted"
                 match_info = cross_campaign_dupes[idx - 1]
                 error_reason = f"Lead was already contacted in another workspace campaign (matched by {match_info.get('matched_by', 'identifier')})"
+            elif skip_team and (idx - 1) in team_campaign_dupes:
+                status = "rejected"
+                rejection_code = "duplicate_team_campaign"
+                match_info = team_campaign_dupes[idx - 1]
+                error_reason = f"Lead is already enrolled in another team member's campaign in this workspace (matched by {match_info.get('matched_by', 'identifier')})"
             elif (idx - 1) in dnc_matches:
                 status = "rejected"
                 rejection_code = "do_not_contact"
@@ -891,7 +972,7 @@ class LeadImporter:
             })
 
         valid_count = sum(1 for r in rows if r["status"] == "valid")
-        duplicate_count = sum(1 for r in rows if r["rejection_code"] in {"duplicate_batch", "duplicate_campaign"})
+        duplicate_count = sum(1 for r in rows if r["rejection_code"] in {"duplicate_batch", "duplicate_campaign", "duplicate_team_campaign"})
         contacted_count = sum(1 for r in rows if r["rejection_code"] == "duplicate_contacted")
         dnc_count = sum(1 for r in rows if r["rejection_code"] in {"do_not_contact", "email_suppressed"})
         withdrawn_count = sum(1 for r in rows if r["rejection_code"] == "withdrawn_cooldown")
@@ -927,6 +1008,7 @@ class LeadImporter:
         _record_decisions: bool = False,
         _match_limit: int | None = None,
         _import_scope: ImportScope | None = None,
+        skip_team_campaign_leads: bool | None = None,
     ) -> dict[str, Any]:
         """
         Deduplicates and bulk-inserts parsed leads into MongoDB for the given campaign.
@@ -939,7 +1021,7 @@ class LeadImporter:
             async def admit(current):
                 return await LeadImporter.ingest_leads(leads, campaign_id, workspace_id, current,
                     skip_already_contacted, skip_do_not_contact, None, source, source_metadata,
-                    require_name, include_rejections, _ordered=True, _staged_rows=_staged_rows, _record_decisions=_record_decisions, _match_limit=_match_limit, _import_scope=_import_scope)
+                    require_name, include_rejections, _ordered=True, _staged_rows=_staged_rows, _record_decisions=_record_decisions, _match_limit=_match_limit, _import_scope=_import_scope, skip_team_campaign_leads=skip_team_campaign_leads)
             try:
                 return await mutate_suppression(db, workspace_id, admit)
             except SuppressionUnavailable:
@@ -1057,7 +1139,7 @@ class LeadImporter:
             max_matches=_match_limit,
         )
 
-        # 2. Fetch cross-campaign contacted leads if enabled (compound)
+        # 2. Fetch cross-campaign contacted leads or team campaign leads if enabled (compound)
         cross_campaign_dupes = {}
         if skip_already_contacted:
             cross_campaign_dupes = await check_compound_suppression(
@@ -1066,6 +1148,17 @@ class LeadImporter:
                 db=db,
                 collection_name="outreach_leads",
                 extra_filter={"last_action_at": {"$ne": None}},
+                max_matches=_match_limit,
+            )
+        skip_team = bool(skip_team_campaign_leads) if skip_team_campaign_leads is not None else bool(campaign.get("skip_team_campaign_leads"))
+        team_campaign_dupes = {}
+        if skip_team:
+            team_campaign_dupes = await check_compound_suppression(
+                workspace_id=workspace_id,
+                candidates=leads,
+                db=db,
+                collection_name="outreach_leads",
+                extra_filter={"campaign_id": {"$ne": campaign_id}},
                 max_matches=_match_limit,
             )
 
@@ -1105,7 +1198,10 @@ class LeadImporter:
 
         for idx, lead in enumerate(leads):
             raw_url = lead.get("raw_url") or lead.get("linkedin_url") or ""
-            url = normalize_linkedin_url(lead.get("linkedin_url", "") or raw_url)
+            url = (
+                normalize_linkedin_url(lead.get("linkedin_url", "") or raw_url)
+                or normalize_any_linkedin_profile_url(lead.get("linkedin_url", "") or raw_url)
+            )
             raw_first, cleaned_first, first_name = intake_names(lead)
             vanity = (lead.get("vanity_name") or extract_vanity_name(url)).strip().lower()
 
@@ -1166,6 +1262,18 @@ class LeadImporter:
                 })
                 continue
 
+            # Deduplicate against team members' campaigns in the workspace (Dripify Team Management)
+            if skip_team and idx in team_campaign_dupes:
+                duplicates_count += 1
+                match_info = team_campaign_dupes[idx]
+                reject({
+                    "linkedin_url": url,
+                    "first_name": first_name,
+                    "rejection_code": "duplicate_team_campaign",
+                    "reason": f"Already enrolled in another team member's campaign in this workspace (matched by {match_info.get('matched_by', 'identifier')})",
+                })
+                continue
+
             # Check Do-Not-Contact list (always mandatory)
             if idx in dnc_matches:
                 skipped_count += 1
@@ -1203,6 +1311,10 @@ class LeadImporter:
             meta.setdefault("source_type", source)
             meta.setdefault("consent_basis", "user_provided")
             meta.setdefault("imported_at", datetime.now(timezone.utc).isoformat())
+            initial_tags = list(lead.get("tags") or [])
+            list_name_tag = str(meta.get("list_name") or "").strip()
+            if list_name_tag and list_name_tag not in initial_tags:
+                initial_tags.append(list_name_tag)
 
             lead_doc = OutreachLead(
                 campaign_id=campaign_id,
@@ -1225,6 +1337,7 @@ class LeadImporter:
                 phone=lead.get("phone"),
                 source=source,
                 source_metadata=meta,
+                tags=initial_tags,
                 custom_variables=lead.get("custom_variables", {}),
                 execution_state=LeadExecutionState.QUEUED,
                 created_at=datetime.now(timezone.utc),

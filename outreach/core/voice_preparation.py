@@ -74,8 +74,8 @@ class VoicePreparation:
                 try:
                     await VoiceArtifacts(current).metadata(workspace, job["_id"], now=now)
                     return job
-                except ValueError:
-                    pass
+                except ValueError as exc:
+                    logger.debug("Prepared voice artifact requires re-preparation for job=%s (%s)", job.get("_id"), type(exc).__name__)
             elif job and job["status"] not in {"blocked", "superseded"}:
                 return job
             await current.outreach_voice_preparation_jobs.update_one(scope, {"$set": {

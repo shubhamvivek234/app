@@ -5,6 +5,8 @@ Retained progress must already carry the exact current integer version. These
 queries observe current records; older/raw writers and rolled-back data need
 separate review. Helpers perform no writes; launch owns conditional rebinding.
 """
+import logging
+logger = logging.getLogger(__name__)
 from bson import Int64
 
 from outreach.core.workspace_scope import workspace_scope

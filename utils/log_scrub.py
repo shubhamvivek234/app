@@ -22,6 +22,9 @@ _PATTERNS = [
     # Authorization header
     (re.compile(r'(Authorization:\s*Bearer\s+)\S+', re.IGNORECASE), r'\1[REDACTED]'),
     (re.compile(r'(Bearer\s+)[A-Za-z0-9\-_\.]{20,}', re.IGNORECASE), r'\1[REDACTED]'),
+    # LinkedIn session cookies & proxy credentials in URLs (must run before email pattern)
+    (re.compile(r'((?:li_at|li_a|JSESSIONID)\s*[:=]\s*[\'"]?)[^;\s"\',&}]+([\'"]?)', re.IGNORECASE), r'\1[REDACTED]\2'),
+    (re.compile(r'(https?://)[^/\s:@]+:[^/\s@]+@', re.IGNORECASE), r'\1[REDACTED]@'),
     # Email addresses
     (re.compile(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}'), '[EMAIL]'),
     # Generic token-like fields in JSON
@@ -45,6 +48,20 @@ _SENSITIVE_KEYS = {
     "outreach_elevenlabs_api_key_enc",
     "webshare_api_key",
     "outreach_webshare_api_key_enc",
+    "li_at",
+    "li_a",
+    "jsessionid",
+    "jsession_id",
+    "li_at_enc",
+    "li_a_enc",
+    "jsession_id_enc",
+    "session_cookie",
+    "session_cookie_enc",
+    "encrypted_session_cookie",
+    "password_enc",
+    "proxy_password",
+    "smtp_password",
+    "imap_password",
 }
 
 

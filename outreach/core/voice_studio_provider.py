@@ -1,4 +1,6 @@
 """Exactly one bounded ElevenLabs request; no redirects/retries/mock fallback."""
+import logging
+logger = logging.getLogger(__name__)
 import json
 import re
 import httpx

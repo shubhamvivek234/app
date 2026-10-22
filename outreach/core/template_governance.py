@@ -4,6 +4,8 @@ Pure review grants no authority. Saves and deletions fence current user/role
 records and mutate templates inside the shared workspace transaction.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import hashlib
 import re

@@ -5,6 +5,8 @@ the artifact nor a caller-supplied local view proves provider facts, database
 completeness, stopped authority, or permission to reactivate.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import base64
 from collections.abc import Mapping

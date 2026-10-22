@@ -7,6 +7,8 @@ owns its separate atomic receipt. Unknown legacy
 commits must be inspected, never automatically replayed with a newer review.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from copy import deepcopy
 from datetime import datetime, timezone

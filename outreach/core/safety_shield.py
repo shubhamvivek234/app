@@ -88,7 +88,7 @@ class WarmUpGovernor:
         3. Account tier (`premium_product`: classic, sales_navigator, recruiter).
         """
         now = now or datetime.now(timezone.utc)
-        configured = account.get("limits") or {}
+        configured = account.get("limits") or account.get("daily_limits") or {}
 
         # 1. Determine warm-up maturity factor (0.25 -> 0.50 -> 0.75 -> 1.0)
         started_raw = account.get("warmup_started_at") or account.get("created_at")
@@ -135,6 +135,17 @@ class WarmUpGovernor:
             elif connections_count < 500:
                 network_ceilings.update({"connection_invites": 35, "messages": 75, "profile_visits": 90})
 
+        # 4. Pending sent invitations safety throttle (Dripify Activity Control Video #20):
+        # Automatically reduces daily invite limits into the safe zone if pending sent invitations are high.
+        pending_invitations = account.get("pending_invitations_count")
+        if not (isinstance(pending_invitations, int) and not isinstance(pending_invitations, bool)):
+            pending_invitations = account.get("pending_sent_invites")
+        if isinstance(pending_invitations, int) and not isinstance(pending_invitations, bool) and pending_invitations >= 0:
+            if pending_invitations >= 150:
+                network_ceilings["connection_invites"] = min(network_ceilings["connection_invites"], 10)
+            elif pending_invitations >= 100:
+                network_ceilings["connection_invites"] = min(network_ceilings["connection_invites"], 15)
+
         effective: dict[str, int] = {}
         for field, hard_max in cls.HARD_CEILINGS.items():
             raw_target = configured.get(field, 20)
@@ -159,7 +170,7 @@ class WarmUpGovernor:
         now = now or datetime.now(timezone.utc)
         enabled = bool(account.get("activity_control_enabled") or account.get("status") == "warming")
         effective = cls.get_activity_control_limits(account, now=now)
-        configured = account.get("limits") or {}
+        configured = account.get("limits") or account.get("daily_limits") or {}
         tier = str(account.get("premium_product") or "classic").lower()
         weekly_ceiling = cls.WEEKLY_INVITE_CEILINGS.get(tier, 100)
         reset_at = account.get("weekly_invite_reset_at")
@@ -171,20 +182,43 @@ class WarmUpGovernor:
         )
         if weekly_capped:
             effective = {**effective, "connection_invites": 0}
+        pending_invitations = account.get("pending_invitations_count")
+        if not (isinstance(pending_invitations, int) and not isinstance(pending_invitations, bool)):
+            pending_invitations = account.get("pending_sent_invites")
+        pending_throttled = bool(
+            isinstance(pending_invitations, int)
+            and not isinstance(pending_invitations, bool)
+            and pending_invitations >= 100
+        )
+        effective_out = effective if enabled else {
+            k: (0 if weekly_capped and k == "connection_invites" else min(int(configured.get(k, 20)), v))
+            for k, v in cls.HARD_CEILINGS.items()
+            if isinstance(configured.get(k, 20), int)
+        }
         return {
+            "enabled": enabled,
             "activity_control_enabled": enabled,
             "warmup_level": account.get("warmup_level", 1),
             "connections_count": account.get("connections_count"),
+            "pending_invitations_count": pending_invitations if isinstance(pending_invitations, int) and not isinstance(pending_invitations, bool) else None,
+            "pending_invitations_throttled": pending_throttled,
             "premium_product": account.get("premium_product", "classic"),
+            "safety_status": (
+                "throttled_safe_zone" if (enabled and (pending_throttled or weekly_capped))
+                else ("protected" if enabled else "manual")
+            ),
+            "factors_evaluated": [
+                "connections_count",
+                "pending_sent_invitations",
+                "account_type",
+                "previous_activity",
+            ],
             "weekly_invite_limit_reached": weekly_capped,
             "weekly_invite_reset_at": reset_at.isoformat() if isinstance(reset_at, datetime) else reset_at,
             "weekly_invites_sent": int(account.get("weekly_invites_sent") or 0),
             "weekly_invite_ceiling": weekly_ceiling,
-            "effective_limits": effective if enabled else {
-                k: (0 if weekly_capped and k == "connection_invites" else min(int(configured.get(k, 20)), v))
-                for k, v in cls.HARD_CEILINGS.items()
-                if isinstance(configured.get(k, 20), int)
-            },
+            "effective_limits": effective_out,
+            "recommended_limits": effective,
             "hard_ceilings": dict(cls.HARD_CEILINGS),
         }
 
@@ -296,6 +330,7 @@ class SafetyShield:
         query: dict[str, Any] = {"id": account_id, **scope}
 
         now = datetime.now(timezone.utc)
+        cooldown_until = now + timedelta(hours=24)
         await db.outreach_accounts.update_one(
             query,
             {
@@ -305,6 +340,7 @@ class SafetyShield:
                     "circuit_break_reason": reason,
                     "stop_reason": reason,
                     "stopped_at": now,
+                    "cooldown_until": cooldown_until,
                     "updated_at": now,
                 }
             },

@@ -22,8 +22,10 @@ from outreach.api.action_reconciliation import router as action_reconciliation_r
 from outreach.api.content_approvals import router as content_approvals_router
 from outreach.api.integrations import router as integrations_router, public_router
 from outreach.api.dependencies import get_outreach_user
+import logging
 import os
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/outreach", tags=["LinkedIn Outreach Engine"])
 
 

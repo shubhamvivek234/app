@@ -4,6 +4,8 @@ Manifests contain private recipient identifiers. Origin, outside-backup storage
 and completeness are operator responsibilities, not established by the digest.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from dataclasses import dataclass
 from datetime import datetime

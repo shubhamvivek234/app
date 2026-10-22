@@ -27,3 +27,39 @@ def test_encoded_query_secrets_and_url_arguments_are_redacted(key,sep):
     record=logging.LogRecord('test',logging.INFO,'local',1,'URL %s', (httpx.URL('https://local.invalid/?'+key+sep+'short%2Fvalue&safe=ok'),),None)
     LogScrubFilter().filter(record)
     assert 'short' not in record.getMessage() and 'safe=ok' in record.getMessage()
+
+
+def test_linkedin_cookies_and_proxy_credentials_are_redacted():
+    raw_msg = (
+        "Cookie: li_at=AQEDAR_SECRET_COOKIE_12345; JSESSIONID=\"ajax:987654321\"; "
+        "proxy=http://proxy_user:proxy_secret_pass@isp.proxy.example.com:8080"
+    )
+    record = logging.LogRecord('test', logging.WARNING, 'local', 1, raw_msg, (), None)
+    LogScrubFilter().filter(record)
+    rendered = record.getMessage()
+    assert "AQEDAR_SECRET_COOKIE_12345" not in rendered
+    assert "ajax:987654321" not in rendered
+    assert "proxy_user:proxy_secret_pass" not in rendered
+    assert "http://[REDACTED]@isp.proxy.example.com:8080" in rendered
+
+
+def test_log_outreach_event_scrubs_sensitive_fields_and_records_error_type(caplog):
+    from outreach.core.logging_utils import get_outreach_logger, log_outreach_event
+
+    test_logger = get_outreach_logger("outreach.test_logger")
+    with caplog.at_level(logging.WARNING, logger="outreach.test_logger"):
+        log_outreach_event(
+            test_logger,
+            "warning",
+            "outreach.test.event",
+            error=RuntimeError("raw_secret_cookie_value"),
+            workspace_id="ws-123",
+            session_cookie_enc="ENCRYPTED_SECRET_VALUE",
+            proxy_url="http://user1:secretpass2@proxy.internal:3128",
+        )
+    assert "outreach.test.event" in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert "raw_secret_cookie_value" not in caplog.text
+    assert "ENCRYPTED_SECRET_VALUE" not in caplog.text
+    assert "secretpass2" not in caplog.text
+

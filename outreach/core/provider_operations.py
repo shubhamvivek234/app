@@ -1,4 +1,6 @@
 """Provider-local stable operations; only proven non-calls may be reclaimed."""
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 
 from pymongo.errors import DuplicateKeyError

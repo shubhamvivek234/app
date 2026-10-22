@@ -182,8 +182,24 @@ async def get_outreach_analytics(
             sender_docs = await acc_cursor.to_list(length=50) if hasattr(acc_cursor, "to_list") else []
             if not isinstance(sender_docs, list):
                 sender_docs = []
-        except Exception:
+        except Exception as exc:
+            logger.warning("Analytics sender list query degraded for workspace=%s (%s)", workspace_id, type(exc).__name__)
             sender_docs = []
+
+        # Preload active campaigns in this workspace for team queue health calculation
+        active_campaign_ids_by_sender: dict[str, list[str]] = {}
+        if hasattr(db, "outreach_campaigns") and hasattr(db.outreach_campaigns, "find"):
+            try:
+                active_c_cursor = db.outreach_campaigns.find({**scope, "status": "active", "is_deleted": {"$ne": True}})
+                active_c_docs = await active_c_cursor.to_list(length=200) if hasattr(active_c_cursor, "to_list") else []
+                if isinstance(active_c_docs, list):
+                    for cdoc in active_c_docs:
+                        if isinstance(cdoc, dict) and cdoc.get("id"):
+                            for c_sid in (cdoc.get("sender_account_ids") or []):
+                                active_campaign_ids_by_sender.setdefault(str(c_sid), []).append(str(cdoc["id"]))
+            except Exception as exc:
+                logger.debug("Active campaign sender map lookup skipped for workspace=%s (%s)", workspace_id, type(exc).__name__)
+                active_campaign_ids_by_sender = {}
 
         for sdoc in sender_docs:
             if not isinstance(sdoc, dict) or not sdoc.get("id"):
@@ -196,16 +212,76 @@ async def get_outreach_analytics(
             if campaign_id and campaign_id != "all":
                 s_lead_base["campaign_id"] = campaign_id
 
-            s_req_sent, s_req_acc, s_msg_sent, s_msg_rep, s_visits = await asyncio.gather(
+            s_req_sent, s_req_acc, s_msg_sent, s_msg_rep, s_visits, s_inmails, s_follows, s_pending_inv = await asyncio.gather(
                 db.outreach_tasks.count_documents({**s_task_base, "task_type": "connection_request"}),
                 db.outreach_leads.count_documents({**s_lead_base, "is_connected": True, "accepted_at": {"$gte": period_start, "$lte": now}}),
                 db.outreach_tasks.count_documents({**s_task_base, "task_type": "send_message"}),
                 db.outreach_leads.count_documents({**s_lead_base, "has_replied": True, "replied_at": {"$gte": period_start, "$lte": now}}),
                 db.outreach_tasks.count_documents({**s_task_base, "task_type": "visit_profile"}),
+                db.outreach_tasks.count_documents({**s_task_base, "task_type": "inmail"}),
+                db.outreach_tasks.count_documents({**s_task_base, "task_type": "follow"}),
+                db.outreach_leads.count_documents({**scope, "assigned_account_id": sid, "execution_state": "invited", "is_connected": {"$ne": True}}),
             )
+            sender_active_campaigns = active_campaign_ids_by_sender.get(sid, [])
+            active_campaigns_count = len(sender_active_campaigns)
+            queued_leads_count = 0
+            if active_campaigns_count > 0:
+                try:
+                    q_cnt = await db.outreach_leads.count_documents({
+                        **scope,
+                        "campaign_id": {"$in": sender_active_campaigns},
+                        "$or": [{"assigned_account_id": sid}, {"assigned_account_id": None}],
+                        "execution_state": "queued",
+                    })
+                    if isinstance(q_cnt, int):
+                        queued_leads_count = q_cnt
+                except Exception as exc:
+                    logger.debug("Queued leads count skipped for sender=%s (%s)", sid, type(exc).__name__)
+                    queued_leads_count = 0
+            if active_campaigns_count == 0:
+                queue_health_status = "no_active_campaigns"
+            elif queued_leads_count == 0:
+                queue_health_status = "empty_queue"
+            elif queued_leads_count < 20:
+                queue_health_status = "low_queue"
+            else:
+                queue_health_status = "healthy"
+
+            unread_messages_count = 0
+            if hasattr(db, "outreach_inbox_threads") and hasattr(db.outreach_inbox_threads, "count_documents"):
+                try:
+                    u_cnt = await db.outreach_inbox_threads.count_documents({
+                        **scope,
+                        "account_id": sid,
+                        "unread_count": {"$gt": 0},
+                    })
+                    if isinstance(u_cnt, int):
+                        unread_messages_count = u_cnt
+                except Exception as exc:
+                    logger.debug("Unread inbox count skipped for sender=%s (%s)", sid, type(exc).__name__)
+                    unread_messages_count = 0
+
+            stored_pending = sdoc.get("pending_invitations_count")
+            effective_pending_inv = (
+                stored_pending
+                if isinstance(stored_pending, int) and not isinstance(stored_pending, bool)
+                else (s_pending_inv if isinstance(s_pending_inv, int) else 0)
+            )
+            last_active_raw = sdoc.get("last_active_at") or sdoc.get("updated_at") or sdoc.get("created_at")
+            last_active_str = last_active_raw.isoformat() if isinstance(last_active_raw, datetime) else str(last_active_raw or "")
+
             ac_summary = WarmUpGovernor.compute_activity_control_summary(sdoc, now=now)
             counters = sdoc.get("counters") or {}
             is_today = counters.get("date") == today_str
+            budget_actions: dict[str, int] = {}
+            if hasattr(db, "outreach_request_budgets") and hasattr(db.outreach_request_budgets, "find_one"):
+                try:
+                    bdoc = await db.outreach_request_budgets.find_one({"workspace_id": workspace_id, "sender_id": sid})
+                    if isinstance(bdoc, dict) and bdoc.get("day") == now.strftime("%Y%m%d") and isinstance(bdoc.get("actions"), dict):
+                        budget_actions = bdoc["actions"]
+                except Exception as exc:
+                    logger.debug("Daily request budget lookup skipped for sender=%s (%s)", sid, type(exc).__name__)
+                    budget_actions = {}
             eff_limits = ac_summary["effective_limits"]
             weekly_limit_reached = bool(sdoc.get("weekly_invite_limit_reached", False))
             weekly_reset_at = sdoc.get("weekly_invite_reset_at")
@@ -215,19 +291,27 @@ async def get_outreach_analytics(
                 weekly_limit_reached = False
             team_performance.append({
                 "account_id": sid,
+                "user_id": sdoc.get("user_id") or "",
                 "account_name": sdoc.get("account_name") or "LinkedIn Sender",
                 "vanity_name": sdoc.get("vanity_name") or "",
                 "status": sdoc.get("status") or "active",
                 "premium_product": sdoc.get("premium_product") or "classic",
                 "activity_control_enabled": ac_summary["activity_control_enabled"],
+                "safety_status": ac_summary.get("safety_status", "manual"),
                 "warmup_level": sdoc.get("warmup_level", 1),
                 "connections_count": sdoc.get("connections_count"),
+                "pending_invitations_count": effective_pending_inv,
+                "active_campaigns_count": active_campaigns_count,
+                "queued_leads_count": queued_leads_count,
+                "queue_health_status": queue_health_status,
+                "unread_messages_count": unread_messages_count,
+                "last_active_at": last_active_str,
                 "weekly_invite_limit_reached": weekly_limit_reached,
                 "weekly_invite_reset_at": weekly_reset_at.isoformat() if isinstance(weekly_reset_at, datetime) else weekly_reset_at,
                 "daily_usage_today": {
-                    "connection_invites": int(counters.get("connection_invites", 0)) if is_today else 0,
-                    "messages": int(counters.get("messages", 0)) if is_today else 0,
-                    "profile_visits": int(counters.get("profile_visits", 0)) if is_today else 0,
+                    "connection_invites": max(int(counters.get("connection_invites", 0)) if is_today else 0, int(budget_actions.get("invite", 0) or 0)),
+                    "messages": max(int(counters.get("messages", 0)) if is_today else 0, int(budget_actions.get("message", 0) or 0)),
+                    "profile_visits": max(int(counters.get("profile_visits", 0)) if is_today else 0, int(budget_actions.get("visit", 0) or 0)),
                 },
                 "effective_limits": {
                     "connection_invites": eff_limits.get("connection_invites", 20),
@@ -239,27 +323,32 @@ async def get_outreach_analytics(
                     "requests_accepted": s_req_acc,
                     "acceptance_rate": round((s_req_acc / s_req_sent) * 100, 1) if s_req_sent > 0 else None,
                     "messages_sent": s_msg_sent,
+                    "inmails_sent": s_inmails if isinstance(s_inmails, int) else 0,
                     "messages_replied": s_msg_rep,
                     "reply_rate": round((s_msg_rep / s_msg_sent) * 100, 1) if s_msg_sent > 0 else None,
                     "profile_visits": s_visits,
+                    "follows_count": s_follows if isinstance(s_follows, int) else 0,
                 },
             })
 
     # A/B Testing Variant Breakdown (A, B, C)
     ab_variants_breakdown: dict[str, dict[str, Any]] = {}
     if hasattr(db, "outreach_tasks") and hasattr(db.outreach_tasks, "find"):
-        for vid in ("A", "B", "C"):
-            v_req_sent, v_msg_sent = await asyncio.gather(
-                db.outreach_tasks.count_documents(task_filter("connection_request", {"variant_id": vid, "updated_at": {"$gte": period_start, "$lte": now}})),
-                db.outreach_tasks.count_documents(task_filter("send_message", {"variant_id": vid, "updated_at": {"$gte": period_start, "$lte": now}})),
-            )
-            if v_req_sent > 0 or v_msg_sent > 0:
-                ab_variants_breakdown[vid] = {
-                    "variant_id": vid,
-                    "requests_sent": v_req_sent,
-                    "messages_sent": v_msg_sent,
-                    "total_sent": v_req_sent + v_msg_sent,
-                }
+        try:
+            for vid in ("A", "B", "C"):
+                v_req_sent, v_msg_sent = await asyncio.gather(
+                    db.outreach_tasks.count_documents(task_filter("connection_request", {"variant_id": vid, "updated_at": {"$gte": period_start, "$lte": now}})),
+                    db.outreach_tasks.count_documents(task_filter("send_message", {"variant_id": vid, "updated_at": {"$gte": period_start, "$lte": now}})),
+                )
+                if isinstance(v_req_sent, int) and isinstance(v_msg_sent, int) and (v_req_sent > 0 or v_msg_sent > 0):
+                    ab_variants_breakdown[vid] = {
+                        "variant_id": vid,
+                        "requests_sent": v_req_sent,
+                        "messages_sent": v_msg_sent,
+                        "total_sent": v_req_sent + v_msg_sent,
+                    }
+        except (StopAsyncIteration, Exception) as exc:
+            logger.debug("A/B variant breakdown query skipped for workspace=%s (%s)", workspace_id, type(exc).__name__)
 
     sequence_funnel = {
         "total_leads": total_leads,
@@ -354,8 +443,94 @@ async def get_outreach_analytics(
             "action": "Continue monitoring sender Activity Control levels and scale daily limits gradually.",
         })
 
+    # Dripify Account Stats & Recent Activity Feed (Videos #10 & #11)
+    pending_invitations_count = 0
+    try:
+        pending_res = db.outreach_leads.count_documents(lead_filter({
+            "execution_state": {"$in": ["invited", "waiting_delay"]},
+            "is_connected": {"$ne": True},
+        }))
+        if hasattr(pending_res, "__await__"):
+            pending_res = await pending_res
+        if isinstance(pending_res, (int, float)):
+            pending_invitations_count = int(pending_res)
+    except Exception as exc:
+        logger.debug("Pending invitations count skipped for workspace=%s (%s)", workspace_id, type(exc).__name__)
+        pending_invitations_count = 0
+
+    unread_inbox_count = 0
+    if hasattr(db, "outreach_inbox_threads") and hasattr(db.outreach_inbox_threads, "count_documents"):
+        try:
+            unread_res = db.outreach_inbox_threads.count_documents({**scope, "unread_count": {"$gt": 0}})
+            if hasattr(unread_res, "__await__"):
+                unread_res = await unread_res
+            if isinstance(unread_res, (int, float)):
+                unread_inbox_count = int(unread_res)
+        except Exception as exc:
+            logger.debug("Unread inbox count skipped for workspace=%s (%s)", workspace_id, type(exc).__name__)
+            unread_inbox_count = 0
+
+    account_stats = {
+        "pending_invitations_count": pending_invitations_count,
+        "excessive_pending_invites_warning": pending_invitations_count >= 100,
+        "unread_inbox_count": unread_inbox_count,
+        "profile_views_count": profile_visits,
+    }
+
+    recent_activity: list[dict[str, Any]] = []
+    if hasattr(db, "outreach_tasks") and hasattr(db.outreach_tasks, "find"):
+        try:
+            task_cursor = db.outreach_tasks.find(queue_query)
+            raw_tasks = await task_cursor.to_list(length=50) if hasattr(task_cursor, "to_list") else []
+            if isinstance(raw_tasks, list):
+                def _ts_str(item: dict[str, Any]) -> str:
+                    v = item.get("completed_at") or item.get("updated_at") or item.get("created_at") or ""
+                    return v.isoformat() if isinstance(v, datetime) else str(v or "")
+
+                sorted_tasks = sorted(
+                    [t for t in raw_tasks if isinstance(t, dict) and t.get("status") in ("completed", "accepted", "skipped", "failed")],
+                    key=_ts_str,
+                    reverse=True,
+                )[:25]
+                lead_ids = list({str(t.get("lead_id")) for t in sorted_tasks if t.get("lead_id")})
+                camp_ids = list({str(t.get("campaign_id")) for t in sorted_tasks if t.get("campaign_id")})
+                lead_map: dict[str, dict[str, Any]] = {}
+                camp_map: dict[str, str] = {}
+                if lead_ids and hasattr(db, "outreach_leads") and hasattr(db.outreach_leads, "find"):
+                    l_cur = db.outreach_leads.find({**scope, "id": {"$in": lead_ids}})
+                    l_docs = await l_cur.to_list(length=50) if hasattr(l_cur, "to_list") else []
+                    if isinstance(l_docs, list):
+                        lead_map = {str(d.get("id")): d for d in l_docs if isinstance(d, dict) and d.get("id")}
+                if camp_ids and hasattr(db, "outreach_campaigns") and hasattr(db.outreach_campaigns, "find"):
+                    c_cur = db.outreach_campaigns.find({**scope, "id": {"$in": camp_ids}})
+                    c_docs = await c_cur.to_list(length=50) if hasattr(c_cur, "to_list") else []
+                    if isinstance(c_docs, list):
+                        camp_map = {str(d.get("id")): str(d.get("name") or "Campaign") for d in c_docs if isinstance(d, dict) and d.get("id")}
+                for t in sorted_tasks:
+                    lid = str(t.get("lead_id") or "")
+                    cid = str(t.get("campaign_id") or "")
+                    ld = lead_map.get(lid, {})
+                    lname = f"{ld.get('first_name', '')} {ld.get('last_name', '')}".strip() or ld.get("vanity_name") or "Lead"
+                    recent_activity.append({
+                        "id": str(t.get("id") or ""),
+                        "task_type": str(t.get("task_type") or "action"),
+                        "status": str(t.get("status") or "completed"),
+                        "lead_id": lid,
+                        "lead_name": lname,
+                        "lead_company": ld.get("company_name") or "",
+                        "lead_linkedin_url": ld.get("linkedin_url") or "",
+                        "campaign_id": cid,
+                        "campaign_name": camp_map.get(cid, "Campaign"),
+                        "timestamp": _ts_str(t),
+                    })
+        except Exception as exc:
+            logger.debug("Recent activity feed query skipped for workspace=%s (%s)", workspace_id, type(exc).__name__)
+            recent_activity = []
+
     return {
         "has_connected_account": has_connected_account,
+        "account_stats": account_stats,
+        "recent_activity": recent_activity,
         "kpis": {
             "requests": {
                 "sent": linkedin_cohorts["requests"]["denominator"],

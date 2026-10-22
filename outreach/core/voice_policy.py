@@ -1,4 +1,6 @@
 """Versioned campaign voice generation and bounded PCM WAV validation."""
+import logging
+logger = logging.getLogger(__name__)
 import io
 import os
 import re

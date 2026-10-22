@@ -73,4 +73,23 @@ describe('Campaign detail launch flow', () => {
     expect(container.textContent).not.toContain('0% acceptance');
     expect(container.textContent).not.toContain('0% reply rate');
   });
+
+  it('renders recorded step performance and sender performance sorted by reply rate', async () => {
+    global.fetch = jest.fn(() => Promise.resolve({ ok: true, json: async () => ({
+      id: 'campaign-b', name: 'Active campaign', status: 'active',
+      leads_count: 20, leads_contacted: 10, acceptances_count: 6, replies_count: 3, interested_count: 2,
+      sequence: { nodes: [{ id: 'step-1', type: 'connection_request', title: 'Send Invite' }] },
+      step_performance: { 'step-1': { completed: 10, queued: 4, failed: 1 } },
+      senders: [
+        { id: 's-1', account_name: 'Alice Best', contacted: 6, acceptances: 4, replies: 3, reply_rate: 50 },
+        { id: 's-2', account_name: 'Bob Second', contacted: 4, acceptances: 2, replies: 0, reply_rate: 0 },
+      ],
+      schedule: {},
+    }) }));
+    await act(async () => root.render(<OutreachCampaignDetail campaignId="campaign-b" onBack={() => {}} />));
+    expect(container.textContent).toContain('10 completed · 4 active · 1 failed');
+    expect(container.textContent).toContain('Alice Best');
+    expect(container.textContent).toContain('50% reply rate');
+    expect(container.textContent).toContain('6 contacted · 4 accepted · 3 replied');
+  });
 });

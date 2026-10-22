@@ -24,6 +24,7 @@ from outreach.core.lead_tags import (
     edit_tag,
     hydrate_lead_tags,
     hydrate_thread_tags,
+    seed_default_tags,
     validate_tag_id,
     unique_resource,
     captured_scope,
@@ -95,7 +96,9 @@ async def list_inbox_threads(
     search: str | None = Query(None, description="Search prospect name or message snippet"),
     intent: str | None = Query(None, description="Filter by intent tag"),
     tag_ids: str | None = Query(None, description="Comma-separated lead tag ids"),
+    tag_match: str = Query("all", pattern="^(all|any)$"),
     view: str = Query("all", pattern="^(all|inbox|starred|archived)$"),
+    unread_only: bool = Query(False, description="Filter to unread threads only"),
     skip: int = 0,
     limit: int = 50,
     current_user: dict = Depends(get_outreach_user),
@@ -135,8 +138,10 @@ async def list_inbox_threads(
         definitions = await active_tag_map(db, ws_id, requested_tags)
         if len(definitions) != len(requested_tags):
             raise HTTPException(status_code=404, detail="One or more tags were not found")
+        selected_tag_match = tag_match.lower() if isinstance(tag_match, str) else "all"
+        tag_op = "$in" if selected_tag_match == "any" else "$all"
         tagged_leads = await db.outreach_leads.find(
-            {**workspace_scope(ws_id), "tag_ids": {"$all": requested_tags}, "id.0": {"$exists": False}}, {"id": 1}
+            {**workspace_scope(ws_id), "tag_ids": {tag_op: requested_tags}, "id.0": {"$exists": False}}, {"id": 1}
         ).limit(5001).to_list(length=5001)
         if len(tagged_leads) > 5000:
             raise HTTPException(status_code=422, detail="This tag covers more than 5,000 leads. Use Leads to review this group.")
@@ -149,6 +154,9 @@ async def list_inbox_threads(
                 {"campaign_id": {"$exists": True, "$ne": None}},
             ]
         })
+
+    if unread_only is True:
+        base_conditions.append({"unread_count": {"$gt": 0}})
 
     if srch:
         pattern = re.escape(srch[:100])
@@ -204,7 +212,129 @@ async def get_thread(
     # Validate linked tag identities before consuming the unread indication.
     await db.outreach_inbox_threads.update_one(captured_scope(ws_id, thread), {"$set": {"unread_count": 0}})
     doc["unread_count"] = 0
+
+    # Hydrate linked CRM lead details & synced Lead Profile notes (Video #14 Smart Inbox right sidebar)
+    lead_id = doc.get("lead_id")
+    if isinstance(lead_id, str) and lead_id:
+        leads_col = getattr(db, "outreach_leads", None)
+        if leads_col is not None and hasattr(leads_col, "find_one"):
+            try:
+                lead_doc = await leads_col.find_one({"id": lead_id, **workspace_scope(ws_id)})
+                if isinstance(lead_doc, dict):
+                    doc["lead_company"] = lead_doc.get("company_name") or lead_doc.get("company") or ""
+                    doc["lead_location"] = lead_doc.get("location") or ""
+                    doc["lead_email"] = lead_doc.get("email") or ""
+                    doc["lead_linkedin_email"] = lead_doc.get("linkedin_email") or lead_doc.get("email") or ""
+                    doc["lead_execution_state"] = lead_doc.get("execution_state") or ""
+                    doc["lead_pause_reason"] = lead_doc.get("pause_reason")
+                    doc["lead_current_node_id"] = lead_doc.get("current_node_id")
+                    doc["lead_last_action_taken"] = lead_doc.get("last_action_taken")
+                    doc["lead_is_connected"] = bool(lead_doc.get("is_connected"))
+                    doc["lead_do_not_contact"] = bool(lead_doc.get("do_not_contact"))
+            except Exception as exc:
+                logger.debug("Inbox thread lead hydration skipped for lead=%s (%s)", lead_id, type(exc).__name__)
+        notes_col = getattr(db, "outreach_lead_notes", None)
+        if notes_col is not None and hasattr(notes_col, "find"):
+            try:
+                notes_cursor = notes_col.find({"lead_id": lead_id, **workspace_scope(ws_id)}, {"_id": 0}).sort("created_at", -1)
+                notes_list = await _fetch_cursor_docs(notes_cursor, length=50)
+                for n in notes_list:
+                    n.pop("_id", None)
+                    note_val = n.get("body") or n.get("note") or ""
+                    n["body"] = note_val
+                    n["note"] = note_val
+                    if isinstance(n.get("created_at"), datetime):
+                        n["created_at"] = n["created_at"].isoformat()
+                doc["lead_notes"] = notes_list
+            except Exception as exc:
+                logger.debug("Inbox thread lead notes hydration skipped for lead=%s (%s)", lead_id, type(exc).__name__)
+                doc["lead_notes"] = []
     return doc
+
+
+@router.post("/{thread_id}/mark-unread")
+async def mark_thread_unread(
+    thread_id: str,
+    current_user: dict = require_outreach_permission("inbox:manage"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Marks a conversation thread as unread (unread_count = 1)."""
+    ws_id = resolved_workspace_id(current_user)
+    thread = await unique_resource(db.outreach_inbox_threads, ws_id, thread_id)
+    if not thread:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    await db.outreach_inbox_threads.update_one(
+        captured_scope(ws_id, thread),
+        {"$set": {"unread_count": 1, "updated_at": datetime.now(timezone.utc)}},
+    )
+    return {"status": "unread", "thread_id": thread_id, "unread_count": 1}
+
+
+class InboxLeadNoteRequest(BaseModel):
+    body: str = Field(..., min_length=1, max_length=2000)
+
+
+@router.get("/{thread_id}/notes")
+async def list_thread_lead_notes(
+    thread_id: str,
+    current_user: dict = Depends(get_outreach_user),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Returns synced CRM lead notes for the lead linked to this inbox thread."""
+    ws_id = resolved_workspace_id(current_user)
+    thread = await unique_resource(db.outreach_inbox_threads, ws_id, thread_id)
+    if not thread:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    lead_id = thread.get("lead_id")
+    if not isinstance(lead_id, str) or not lead_id:
+        return []
+    cursor = db.outreach_lead_notes.find({"lead_id": lead_id, **workspace_scope(ws_id)}, {"_id": 0}).sort("created_at", -1)
+    notes = await _fetch_cursor_docs(cursor, length=100)
+    for n in notes:
+        n.pop("_id", None)
+        note_val = n.get("body") or n.get("note") or ""
+        n["body"] = note_val
+        n["note"] = note_val
+        if isinstance(n.get("created_at"), datetime):
+            n["created_at"] = n["created_at"].isoformat()
+    return notes
+
+
+@router.post("/{thread_id}/notes")
+async def add_thread_lead_note(
+    thread_id: str,
+    req: InboxLeadNoteRequest,
+    current_user: dict = require_outreach_permission("lead:update"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Adds a note in Smart Inbox that is synced with the lead's profile (`outreach_lead_notes`)."""
+    ws_id = resolved_workspace_id(current_user)
+    user_id = current_user.get("user_id")
+    thread = await unique_resource(db.outreach_inbox_threads, ws_id, thread_id)
+    if not thread:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    lead_id = thread.get("lead_id")
+    if not isinstance(lead_id, str) or not lead_id:
+        raise HTTPException(status_code=409, detail="This conversation is not linked to a CRM lead yet")
+    text = req.body.strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="Note body cannot be blank")
+    now = datetime.now(timezone.utc)
+    note_doc = {
+        "id": f"note_{uuid.uuid4().hex[:10]}",
+        "lead_id": lead_id,
+        "thread_id": thread_id,
+        "user_id": user_id,
+        "workspace_id": ws_id,
+        "author_name": current_user.get("name") or current_user.get("email") or "Team Member",
+        "note": text,
+        "body": text,
+        "created_at": now,
+    }
+    await db.outreach_lead_notes.insert_one(note_doc)
+    note_doc.pop("_id", None)
+    note_doc["created_at"] = now.isoformat()
+    return note_doc
 
 
 @router.patch("/{thread_id}/organization")
@@ -232,6 +362,11 @@ async def send_thread_reply(
     user_id = current_user.get("user_id")
     ws_id = current_user.get("default_workspace_id") or user_id
     job_id = _reply_request_job_id(ws_id, user_id, req.request_id) if req.request_id else f"inbox_{uuid.uuid4().hex}"
+    expected_reply_content: dict[str, Any] = {"body": req.body.strip()}
+    if req.attachment_url and req.attachment_url.strip():
+        expected_reply_content["attachment_url"] = req.attachment_url.strip()
+        if req.attachment_name and req.attachment_name.strip():
+            expected_reply_content["attachment_name"] = req.attachment_name.strip()
     if req.request_id:
         if not req.context:
             raise HTTPException(422, 'Reply recipient context is required')
@@ -240,7 +375,7 @@ async def send_thread_reply(
         if prior:
             binding = prior.get('binding', {})
             if (prior.get('target_id') != thread_id or prior.get('account_id') != req.context.account_id
-                    or prior.get('content') != {'body': req.body.strip()}
+                    or prior.get('content') != expected_reply_content
                     or binding.get('recipient') != req.context.conversation_urn
                     or binding.get('context', {}).get('thread_revision') != req.context.thread_revision):
                 raise HTTPException(409, 'This reply request already belongs to different content or a different recipient')
@@ -359,29 +494,70 @@ async def edit_thread_message(
             detail="LinkedIn messages can only be edited within 1 hour of sending",
         )
 
-    # If live mode and non-demo thread, call VoyagerClient.edit_conversation_message
-    if not thread.get("is_demo") and thread.get("conversation_urn"):
-        account_id = thread.get("account_id")
-        account = await db.outreach_accounts.find_one({"id": account_id, "workspace_id": ws_id}) if account_id else None
-        if account and (account.get("session_cookie_enc") or account.get("encrypted_session_cookie")):
-            from outreach.engine.voyager_client import VoyagerClient
-            from utils.encryption import decrypt_token
-            enc = account.get("session_cookie_enc") or account.get("encrypted_session_cookie")
-            try:
-                li_at = decrypt_token(enc)
-            except Exception:
-                li_at = "mock_li_at_cookie"
-            async with VoyagerClient(li_at_cookie=li_at) as client:
-                edit_res = await client.edit_conversation_message(
-                    thread_urn=thread["conversation_urn"],
-                    message_id=message_id,
-                    new_body=new_body,
-                )
-                if not edit_res.get("success"):
-                    raise HTTPException(
-                        status_code=status.HTTP_502_BAD_GATEWAY,
-                        detail=edit_res.get("error") or "LinkedIn rejected the message edit",
-                    )
+    if thread.get("is_demo"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Sample conversations cannot be edited on LinkedIn",
+        )
+    if not thread.get("conversation_urn"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Conversation details are incomplete; sync the inbox first",
+        )
+    account_id = thread.get("account_id")
+    account = await db.outreach_accounts.find_one({"id": account_id, "workspace_id": ws_id}) if account_id else None
+    if not account or account.get("status") != "active":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Assigned sender account is not active")
+    if not (account.get("session_cookie_enc") or account.get("encrypted_session_cookie")):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sender account has no LinkedIn session")
+
+    from outreach.core.paid_access import sender_is_ready
+    if not await sender_is_ready(db, ws_id, account):
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Active paid sender access and a dedicated provider IP are required",
+        )
+
+    from outreach.core.proxy_custody import prepare_proxy
+    from outreach.core.session_custody import account_session
+    from outreach.core.inbox_freshness import credential_generation
+    from outreach.core.request_guard import RequestEnvelope, RequestDenied
+    from outreach.engine.voyager_client import VoyagerClient
+
+    proxy = account.get("proxy_config") or account.get("proxy")
+    prepared = await prepare_proxy(proxy, ws_id) if proxy else None
+    proxy_url = prepared.url if prepared else None
+    session_kwargs = await account_session(account)
+    client = VoyagerClient(
+        **session_kwargs,
+        proxy_url=proxy_url,
+        user_agent=account.get("user_agent"),
+        request_envelope=RequestEnvelope(
+            db,
+            ws_id,
+            account_id,
+            credential_generation(account),
+            "inbox_reply",
+            proxy_url,
+            prepared_proxy=prepared,
+        ),
+    )
+    try:
+        edit_res = await client.edit_conversation_message(
+            thread_urn=thread["conversation_urn"],
+            message_id=message_id,
+            new_body=new_body,
+        )
+    except RequestDenied as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"LinkedIn message edit blocked ({exc.reason})",
+        )
+    if edit_res.get("status") != "edited":
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=edit_res.get("error") or "LinkedIn rejected the message edit",
+        )
 
     updated_msg = dict(target_msg)
     updated_msg["body"] = new_body
@@ -394,7 +570,7 @@ async def edit_thread_message(
 
     await db.outreach_inbox_threads.update_one(
         {"id": thread_id, "workspace_id": ws_id},
-        {"$set": update_fields},
+        {"$set": update_fields, "$inc": {"thread_revision": 1}},
     )
 
     return {
@@ -939,6 +1115,15 @@ async def create_tag(
     return await create_canonical_tag(db, resolved_workspace_id(current_user), current_user.get("user_id"), req.name, req.color)
 
 
+@router.post("/tags/seed-defaults")
+async def seed_inbox_default_tags(
+    current_user: dict = require_outreach_permission("lead:update"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Explicitly seeds preset Dripify/sales workflow tags (Interested, High priority, etc.)."""
+    return await seed_default_tags(db, resolved_workspace_id(current_user), current_user.get("user_id"))
+
+
 @router.delete("/tags/{tag_id}")
 async def delete_tag(
     tag_id: str,
@@ -975,3 +1160,47 @@ async def toggle_thread_tag(
         raise HTTPException(409, "Conversation changed; reload its tags")
     await hydrate_thread_tags(db, workspace, [thread])
     return {**result, "thread_id": thread_id, **{key: thread[key] for key in ("tag_ids", "tag_revision", "tags", "legacy_tags", "tags_editable")}}
+
+
+class InboxPauseSequenceRequest(BaseModel):
+    reason: str | None = Field(default="Paused from Inbox conversation", max_length=300)
+
+
+@router.post("/{thread_id}/pause-sequence")
+async def pause_thread_lead_sequence(
+    thread_id: str,
+    req: InboxPauseSequenceRequest | None = None,
+    current_user: dict = require_outreach_permission("lead:update"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Pauses the automated campaign sequence for the CRM lead linked to this inbox thread."""
+    ws_id = resolved_workspace_id(current_user)
+    thread = await unique_resource(db.outreach_inbox_threads, ws_id, thread_id)
+    if not thread:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    lead_id = thread.get("lead_id")
+    if not isinstance(lead_id, str) or not lead_id:
+        raise HTTPException(status_code=409, detail="This conversation is not linked to an enrolled campaign lead")
+    from outreach.api.leads import pause_lead, PauseLeadRequest
+    pause_req = PauseLeadRequest(reason=(req.reason if req and req.reason else "Paused from Inbox conversation"))
+    res = await pause_lead(lead_id=lead_id, req=pause_req, current_user=current_user, db=db)
+    return {**res, "thread_id": thread_id, "lead_execution_state": "paused", "lead_pause_reason": res.get("pause_reason")}
+
+
+@router.post("/{thread_id}/resume-sequence")
+async def resume_thread_lead_sequence(
+    thread_id: str,
+    current_user: dict = require_outreach_permission("lead:update"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Unpauses/resumes the automated campaign sequence for the CRM lead linked to this inbox thread."""
+    ws_id = resolved_workspace_id(current_user)
+    thread = await unique_resource(db.outreach_inbox_threads, ws_id, thread_id)
+    if not thread:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    lead_id = thread.get("lead_id")
+    if not isinstance(lead_id, str) or not lead_id:
+        raise HTTPException(status_code=409, detail="This conversation is not linked to an enrolled campaign lead")
+    from outreach.api.leads import resume_lead
+    res = await resume_lead(lead_id=lead_id, current_user=current_user, db=db)
+    return {**res, "thread_id": thread_id, "lead_execution_state": res.get("execution_state", "queued"), "lead_pause_reason": None}

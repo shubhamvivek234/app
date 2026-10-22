@@ -1,5 +1,7 @@
 """Reference-only, cancellable CSV/profile admission into a reviewed audience list."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import csv
 from datetime import datetime, timezone

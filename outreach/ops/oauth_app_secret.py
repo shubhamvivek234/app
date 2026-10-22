@@ -4,6 +4,8 @@ No database, OAuth or deployment operation occurs. Uses the pinned KMS adapter
 only when an operator explicitly runs this command with scoped custody configured.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import argparse
 import asyncio

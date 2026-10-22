@@ -239,4 +239,114 @@ describe('Server-driven sequence capabilities', () => {
       }),
     ]));
   });
+
+  it('inserts AI prompt into step, previews with real campaign leads, applies AI copy, and enables Voice Note controls', async () => {
+    global.fetch = jest.fn((url, opts) => {
+      if (url.includes('sequence-capabilities')) {
+        return Promise.resolve(ok({
+          capabilities: [
+            { type: 'connection_request', supported: true, builder_available: true, live_enabled: true },
+            { type: 'voice_note', supported: true, builder_available: true, live_enabled: true },
+          ],
+        }));
+      }
+      if (url.includes('/api/v1/outreach/voice')) {
+        return Promise.resolve(ok({
+          voices: [{ id: 'v-1', name: 'Mohit Cloned Voice', status: 'ready' }],
+        }));
+      }
+      if (url.includes('node-counts')) {
+        return Promise.resolve(ok({ node_counts: {}, waiting_node_counts: {}, total_leads: 1 }));
+      }
+      if (url === '/api/v1/outreach/prompts') {
+        return Promise.resolve(ok([
+          { id: 'curated_activity-snippet', name: "Saw you're doing X (3-5 words)", prompt_text: 'Extract 3-5 words', is_system: true },
+        ]));
+      }
+      if (url === '/api/v1/outreach/prompts/preview' && opts?.method === 'POST') {
+        return Promise.resolve(ok({
+          evaluated_text: 'Hey Son, saw you enhancing customer connection with AI. Would love to connect.',
+          ai_generated_text: 'Hey Son, saw you enhancing customer connection with AI. Would love to connect.',
+          has_ai_tokens: true,
+          is_illustrative_preview: false,
+          selected_lead_id: 'lead-son',
+          available_leads: [
+            { id: 'lead-son', first_name: 'Son', last_name: 'Nguyen', company_name: 'Prosp' },
+          ],
+          lead_preview: {
+            first_name: 'Son',
+            last_name: 'Nguyen',
+            company_name: 'Prosp',
+            job_title: 'Founder',
+            location: 'San Francisco',
+          },
+          notice: 'AI prompt personalized against lead profile.',
+        }));
+      }
+      if (url.includes('/api/v1/outreach/sequences')) {
+        return Promise.resolve(ok({
+          tree: [
+            {
+              id: 'node_invite',
+              type: 'connection_request',
+              title: 'Send Invite',
+              subtitle: 'Blank invite',
+              delay_hours: 0,
+              config: { note: 'Hey {{first_name}}, saw you' },
+            },
+            {
+              id: 'node_voice',
+              type: 'voice_note',
+              title: 'Voice note',
+              subtitle: 'Action required',
+              delay_hours: 24,
+              config: { script: 'Hey {{first_name}}' },
+            },
+          ],
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    await act(async () => root.render(<SequenceCanvas campaignId="camp-video-parity" />));
+
+    // Select Connection Request step
+    const inviteCard = [...container.querySelectorAll('h4')].find((el) => el.textContent.includes('Send Invite'));
+    expect(inviteCard).toBeTruthy();
+    await act(async () => inviteCard.click());
+
+    // Open Prompt guidance library and click Insert prompt
+    const promptGuidanceBtn = [...container.querySelectorAll('button')].find((b) => b.textContent.includes('Prompt guidance'));
+    expect(promptGuidanceBtn).toBeTruthy();
+    await act(async () => promptGuidanceBtn.click());
+
+    const insertPromptBtn = [...container.querySelectorAll('button')].find((b) => b.textContent.includes('Insert prompt'));
+    expect(insertPromptBtn).toBeTruthy();
+    await act(async () => insertPromptBtn.click());
+
+    // Click Preview and verify real lead switcher + AI Apply button
+    const previewBtn = [...container.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Preview');
+    expect(previewBtn).toBeTruthy();
+    await act(async () => previewBtn.click());
+
+    expect(container.textContent).toContain('Real Lead');
+    expect(container.textContent).toContain('Hey Son, saw you enhancing customer connection with AI.');
+
+    const applyAiBtn = [...container.querySelectorAll('button')].find((b) => b.textContent.includes('Apply AI Copy to Step'));
+    expect(applyAiBtn).toBeTruthy();
+    await act(async () => applyAiBtn.click());
+
+    // Select Voice note step and verify Record audio & Upload MP3 are enabled
+    const voiceCard = [...container.querySelectorAll('h4')].find((el) => el.textContent.includes('Voice note'));
+    expect(voiceCard).toBeTruthy();
+    await act(async () => voiceCard.click());
+
+    const recordBtn = [...container.querySelectorAll('button')].find((b) => b.textContent.includes('Record audio'));
+    const uploadBtn = [...container.querySelectorAll('button')].find((b) => b.textContent.includes('Upload MP3'));
+    expect(recordBtn).toBeTruthy();
+    expect(recordBtn.disabled).toBe(false);
+    expect(uploadBtn).toBeTruthy();
+    expect(uploadBtn.disabled).toBe(false);
+    expect(container.textContent).toContain('Mohit Cloned Voice');
+  });
 });

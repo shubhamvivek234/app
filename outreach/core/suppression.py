@@ -4,6 +4,8 @@ The guard serializes participating writers even when the recipient query returns
 no row. It deliberately covers all identities in a workspace for this pilot.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import asyncio
 from datetime import datetime, timezone

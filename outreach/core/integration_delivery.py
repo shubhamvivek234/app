@@ -1,5 +1,7 @@
 """Reference-only integration work; possible submissions never become sendable."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import asyncio
 from copy import deepcopy

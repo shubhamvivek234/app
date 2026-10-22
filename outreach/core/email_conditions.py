@@ -3,6 +3,8 @@
 Missing verification remains compatible with provided addresses. This is a
 policy check, not a provider lookup, authentication or delivery attestation.
 """
+import logging
+logger = logging.getLogger(__name__)
 from typing import Any
 
 from outreach.core.email_finder import normalize_email

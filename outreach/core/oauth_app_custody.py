@@ -4,6 +4,8 @@ The application is a separate scope from a customer's mailbox. Configuration
 inspection is synchronous; only workers or the private sealer open key custody.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from dataclasses import dataclass, field
 import hmac

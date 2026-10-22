@@ -1,5 +1,7 @@
 """Private digest-only ip exclusion CLI; never echo raw ip or provider material."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 import argparse
 import asyncio
 import hashlib

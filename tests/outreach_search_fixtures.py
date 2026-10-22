@@ -6,8 +6,16 @@ from outreach.models import SearchImportStopReason
 def fixture_parser(url):
     keywords = parse_qs(urlsplit(url).query).get("keywords", [""])[0]
     sales = "/sales/" in url
-    return {"is_valid": True, "is_sales_nav": sales, "keywords": keywords,
-            "search_type": "sales_nav" if sales else "basic", "clean_url": url}
+    recruiter = "/talent/" in url
+    connections = "/mynetwork/invite-connect/connections" in url
+    search_type = (
+        "sales_nav" if sales
+        else "recruiter" if recruiter
+        else "connections" if connections
+        else "basic"
+    )
+    return {"is_valid": True, "is_sales_nav": sales, "is_recruiter": recruiter, "keywords": keywords,
+            "search_type": search_type, "clean_url": url}
 
 
 async def fixture_search(self, search_url, start=0, count=10):

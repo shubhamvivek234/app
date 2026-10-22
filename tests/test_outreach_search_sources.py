@@ -4,7 +4,12 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from outreach.core.search_sources import SearchSourceError, parse_search_source, search_source_capabilities
+from outreach.core.search_sources import (
+    SearchSourceError,
+    classify_linkedin_source_url,
+    parse_search_source,
+    search_source_capabilities,
+)
 from outreach.engine.voyager_client import VoyagerClient
 from outreach.models import OutreachLead
 from outreach.core.search_sources import unverified_search_lead
@@ -138,3 +143,53 @@ async def test_invalid_bounds_deny_before_transport(monkeypatch, start, count):
     with pytest.raises(SearchSourceError):
         await adapter.search_people_entities(URL, start=start, count=count)
     adapter._request.assert_not_awaited()
+
+
+def test_classify_linkedin_source_url_covers_four_dripify_channels():
+    # 1. Basic LinkedIn Search (100 pages * 10 = 1,000 max)
+    basic = classify_linkedin_source_url("https://www.linkedin.com/search/results/people/?keywords=CEO")
+    assert basic["is_valid"] is True
+    assert basic["source_type"] == "basic"
+    assert basic["max_profiles"] == 1000
+    assert basic["max_pages"] == 100
+    assert basic["page_size"] == 10
+    assert basic["is_first_degree_batch"] is False
+
+    # 1b. Basic Search with 1st-degree network=["F"] batching filter
+    first_deg = classify_linkedin_source_url("https://www.linkedin.com/search/results/people/?network=%5B%22F%22%5D")
+    assert first_deg["is_valid"] is True
+    assert first_deg["source_type"] == "basic"
+    assert first_deg["is_first_degree_batch"] is True
+    assert first_deg["sub_source"] == "first_degree_search_batch"
+
+    # 2. Sales Navigator Search & Saved List (99 pages * 25 = 2,500 max)
+    sn = classify_linkedin_source_url("https://www.linkedin.com/sales/search/people?query=(filters:List())")
+    assert sn["is_valid"] is True
+    assert sn["source_type"] == "sales_nav"
+    assert sn["max_profiles"] == 2500
+    assert sn["max_pages"] == 99
+    assert sn["page_size"] == 25
+
+    # 3. LinkedIn Recruiter Search & Project Pipeline Tab (40 pages * 25 = 1,000 max)
+    rec_search = classify_linkedin_source_url("https://www.linkedin.com/talent/hire/12345/discover/recruiterSearch")
+    assert rec_search["is_valid"] is True
+    assert rec_search["source_type"] == "recruiter"
+    assert rec_search["sub_source"] == "talent_search"
+    assert rec_search["max_profiles"] == 1000
+    assert rec_search["max_pages"] == 40
+    assert rec_search["page_size"] == 25
+    assert "1990-2000" in rec_search["graduation_year_batches"]
+
+    rec_pipe = classify_linkedin_source_url("https://www.linkedin.com/talent/hire/12345/manage/all/pipeline")
+    assert rec_pipe["is_valid"] is True
+    assert rec_pipe["source_type"] == "recruiter"
+    assert rec_pipe["sub_source"] == "pipeline"
+    assert rec_pipe["max_profiles"] == 1000
+
+    # 4. My Network · Recent 1st-Degree Connections (1,000 max, most recent first)
+    conn = classify_linkedin_source_url("https://www.linkedin.com/mynetwork/invite-connect/connections/")
+    assert conn["is_valid"] is True
+    assert conn["source_type"] == "connections"
+    assert conn["max_profiles"] == 1000
+    assert conn["sort_order"] == "most_recent_first"
+    assert "network=%5B%22F%22%5D" in conn["batching_search_url"]

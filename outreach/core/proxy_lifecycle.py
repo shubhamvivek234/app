@@ -3,6 +3,8 @@
 No purchase, vendor request, activation or ownership adoption occurs here.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone

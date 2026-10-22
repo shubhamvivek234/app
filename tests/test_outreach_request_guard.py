@@ -474,3 +474,36 @@ async def test_stable_engage_operation_retries_only_proven_non_submission(monkey
     assert record["status"] == "response_received"
     assert record["non_call_history"][0]["status"] == "not_submitted"
     assert db.outreach_request_budgets.docs[0]["actions"]["comment"] == 1
+
+
+@pytest.mark.asyncio
+async def test_weekly_invite_isolation_and_warmup_governor_across_parallel_campaigns():
+    db = database()
+    budget = PhysicalBudget(db)
+    # 1. When weekly_invite_limit_reached is active, invites are denied across all campaigns while messages proceed
+    capped_config = {
+        "limits": {"connection_invites": 25, "messages": 40},
+        "weekly_invite_limit_reached": True,
+        "weekly_invite_reset_at": NOW + timedelta(days=3),
+    }
+    allowed_inv, _, reason_inv = await budget.reserve("w", "a", "sequence", "invite", capped_config, now=NOW)
+    assert allowed_inv is False
+    assert reason_inv == "weekly_invite_limit_reached"
+    allowed_msg, _, _ = await budget.reserve("w", "a", "sequence", "message", capped_config, now=NOW)
+    assert allowed_msg is True
+
+    # 2. When activity_control_enabled is True at warmup_level=1 (25% ramp, floor=5), 6th invite across parallel campaigns is blocked
+    db2 = database()
+    budget2 = PhysicalBudget(db2)
+    warming_config = {
+        "activity_control_enabled": True,
+        "warmup_level": 1,
+        "limits": {"connection_invites": 20},
+    }
+    for _ in range(5):
+        ok_res, _, _ = await budget2.reserve("w", "a", "sequence", "invite", warming_config, now=NOW)
+        assert ok_res is True
+    blocked_sixth, _, reason_sixth = await budget2.reserve("w", "a", "sequence", "invite", warming_config, now=NOW)
+    assert blocked_sixth is False
+    assert reason_sixth == "physical_action_cap"
+

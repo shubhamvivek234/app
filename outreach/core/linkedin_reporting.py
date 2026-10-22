@@ -164,8 +164,8 @@ async def _build(db: AsyncIOMotorDatabase, workspace: str, campaign: str | None,
                 try:
                     envelope_at = _date(datetime.fromisoformat(payload["occurred_at"]))
                     envelope_at = envelope_at.replace(microsecond=envelope_at.microsecond // 1000 * 1000)
-                except ValueError:
-                    pass
+                except ValueError as exc:
+                    logger.debug("LinkedIn reporting event occurred_at parse rejected for event=%s (%s)", event.get("id"), type(exc).__name__)
             if (not _identity(event.get("id")) or event.get("workspace_id") != workspace
                     or event.get("aggregate_id") != references[1]
                     or payload.get("workspace_id") != workspace or payload.get("type") != event_type

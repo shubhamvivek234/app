@@ -758,13 +758,117 @@ class VoyagerClient:
                     elements = data.get("elements")
                     if not isinstance(elements, list):
                         raise ValueError("LinkedIn returned an unexpected inbox response")
-                    return elements
+                    return [self._normalize_conversation_element(el) for el in elements]
                 raise VoyagerRestrictionError(resp.status_code)
         except RequestDenied:
             raise
         except Exception as exc:
             logger.error("Voyager fetch_conversations error: %s", type(exc).__name__)
             raise
+
+    @staticmethod
+    def _normalize_conversation_element(el: Any) -> Any:
+        """Normalize raw Voyager conversation elements while preserving already-normalized dicts."""
+        if not isinstance(el, dict):
+            return el
+        if "lead_urn" in el or "thread_urn" in el or "conversation_urn" in el or "messages" in el:
+            return el
+        entity_urn = el.get("entityUrn") or el.get("urn") or ""
+        if not entity_urn:
+            return el
+
+        participants = el.get("participants") if isinstance(el.get("participants"), list) else []
+        lead_urn = ""
+        lead_name = ""
+        lead_headline = ""
+        lead_profile_url = ""
+        for p in participants:
+            if not isinstance(p, dict):
+                continue
+            member = (
+                p.get("com.linkedin.voyager.messaging.MessagingMember")
+                or (p.get("value") or {}).get("com.linkedin.voyager.messaging.MessagingMember")
+                or p
+            )
+            mini = member.get("miniProfile") if isinstance(member, dict) else None
+            if isinstance(mini, dict):
+                urn = mini.get("entityUrn") or mini.get("objectUrn") or ""
+                first = (mini.get("firstName") or "").strip()
+                last = (mini.get("lastName") or "").strip()
+                full = f"{first} {last}".strip()
+                pub_id = (mini.get("publicIdentifier") or "").strip()
+                if urn and not lead_urn:
+                    lead_urn = urn
+                    lead_name = full or "LinkedIn Member"
+                    lead_headline = (mini.get("occupation") or "").strip()
+                    if pub_id:
+                        lead_profile_url = f"https://www.linkedin.com/in/{pub_id}"
+
+        events = el.get("events") if isinstance(el.get("events"), list) else []
+        messages: list[dict[str, Any]] = []
+        for ev in events:
+            if not isinstance(ev, dict):
+                continue
+            ev_val = (
+                ev.get("eventContent", {}).get("com.linkedin.voyager.messaging.event.MessageEvent")
+                or ev.get("value", {}).get("com.linkedin.voyager.messaging.event.MessageEvent")
+                or ev
+            )
+            body = ""
+            if isinstance(ev_val, dict):
+                attr_body = ev_val.get("attributedBody")
+                body = (
+                    (attr_body.get("text") if isinstance(attr_body, dict) else None)
+                    or ev_val.get("body")
+                    or ""
+                )
+            from_member = (
+                (ev.get("from") or {}).get("com.linkedin.voyager.messaging.MessagingMember")
+                or ev.get("from")
+                or {}
+            )
+            from_mini = from_member.get("miniProfile") if isinstance(from_member, dict) else None
+            sender_urn = (
+                (from_mini.get("entityUrn") if isinstance(from_mini, dict) else None)
+                or ev.get("senderUrn")
+                or ""
+            )
+            sender_name = ""
+            if isinstance(from_mini, dict):
+                sender_name = f"{from_mini.get('firstName', '')} {from_mini.get('lastName', '')}".strip()
+            is_lead = bool(lead_urn and sender_urn == lead_urn)
+            created_at = ev.get("createdAt")
+            msg_dict: dict[str, Any] = {
+                "sender_type": "lead" if is_lead else "user",
+                "sender_name": sender_name or (lead_name if is_lead else "You"),
+                "sender_urn": sender_urn,
+                "body": body,
+            }
+            if created_at is not None:
+                msg_dict["timestamp"] = created_at
+            ev_urn = ev.get("entityUrn") or ev.get("backendUrn")
+            if isinstance(ev_urn, str) and ev_urn:
+                msg_dict["id"] = ev_urn
+            messages.append(msg_dict)
+
+        if not lead_urn:
+            return el
+
+        normalized: dict[str, Any] = {
+            "thread_urn": entity_urn,
+            "lead_urn": lead_urn,
+            "lead_name": lead_name or "LinkedIn Member",
+            "lead_headline": lead_headline,
+            "unread_count": int(el.get("unreadCount") or 0),
+            "messages": messages,
+        }
+        if lead_profile_url:
+            normalized["lead_profile_url"] = lead_profile_url
+        if el.get("lastActivityAt") is not None:
+            normalized["last_message_at"] = el.get("lastActivityAt")
+        if messages:
+            normalized["last_message_snippet"] = messages[-1].get("body", "")
+        return normalized
 
     async def send_conversation_reply(
         self,

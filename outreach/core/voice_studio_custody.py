@@ -1,4 +1,6 @@
 """Bounded authenticated Studio content; key work stays outside transactions."""
+import logging
+logger = logging.getLogger(__name__)
 import base64
 import json
 import os

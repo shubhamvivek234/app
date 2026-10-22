@@ -4,6 +4,8 @@ Preparation can expire. A possibly submitted request keeps ownership until the
 worker completes or its outcome is explicitly reconciled. LinkedIn requests
 share this record, which also holds the authoritative expiring permission.
 """
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime, timedelta, timezone
 
 from motor.motor_asyncio import AsyncIOMotorDatabase

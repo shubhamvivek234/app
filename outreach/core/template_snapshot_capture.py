@@ -3,6 +3,8 @@
 Policies and callbacks are selected by source wrappers, never request input.
 Successful captures write guard/user-role counters; no execution grant follows.
 """
+import logging
+logger = logging.getLogger(__name__)
 from dataclasses import dataclass
 from datetime import datetime,timezone
 import json

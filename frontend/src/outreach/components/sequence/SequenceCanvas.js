@@ -22,6 +22,7 @@ const ACTION_DEFINITIONS = [
   { type: 'reply_to_comment', label: 'Reply to comment', desc: 'Respond to prospect reply', icon: CornerDownRight, color: 'text-indigo-600 bg-indigo-50' },
   { type: 'endorse_skills', label: 'Endorse skills', desc: 'Endorse their top skills', icon: CheckCircle2, color: 'text-indigo-600 bg-indigo-50' },
   { type: 'withdraw_invite', label: 'Withdraw invite', desc: 'Withdraw pending invite (21d cooldown)', icon: X, color: 'text-amber-700 bg-amber-50' },
+  { type: 'add_tag', label: 'Add tag', desc: 'Tag prospect in CRM & Inbox', icon: Award, color: 'text-emerald-700 bg-emerald-50' },
 ];
 
 const EMAIL_ACTION_DEFINITIONS = [
@@ -89,15 +90,25 @@ const VARIABLE_PILLS = [
   '{{job_title}}',
   '{{position}}',
   '{{industry}}',
+  '{{location}}',
   '{{location_raw}}',
   '{{company_location}}',
   '{{connections_count}}',
   '{{top_skill}}',
+  '{{company_followed}}',
   '{{school}}',
+  '{{university_name}}',
+  '{{profile_type}}',
   '{{years_in_company}}',
   '{{years_in_role}}',
   '{{mutual_connections}}',
   '{{summary}}',
+];
+
+const GUARANTEED_LINKEDIN_VARIABLE_CHIPS = [
+  { label: '+ First Name', token: '{{first_name}}' },
+  { label: '+ Last Name', token: '{{last_name}}' },
+  { label: '+ Location', token: '{{location}}' },
 ];
 
 export { flattenTreeToDAG } from './sequenceGraph';
@@ -340,11 +351,139 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
     }
   };
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewLeadId, setPreviewLeadId] = useState('');
+  const [previewEvaluateAi, setPreviewEvaluateAi] = useState(false);
   const [showVariablePicker, setShowVariablePicker] = useState(false);
   const [showCreatePrompt, setShowCreatePrompt] = useState(false);
   const [newPromptName, setNewPromptName] = useState('');
   const [newPromptText, setNewPromptText] = useState('');
   const [promptSearch, setPromptSearch] = useState('');
+  const [inspectedPromptToken, setInspectedPromptToken] = useState(null);
+  const [isSpeakingPreview, setIsSpeakingPreview] = useState(false);
+  const [voicesList, setVoicesList] = useState([]);
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const mediaRecorderRef = useRef(null);
+  const recordingChunksRef = useRef([]);
+  const recordingTimerRef = useRef(null);
+  const voiceFileInputRef = useRef(null);
+
+  useEffect(() => {
+    if (templateMode) return;
+    let active = true;
+    const token = localStorage.getItem('token');
+    fetch('/api/v1/outreach/voice', {
+      credentials: 'include',
+      headers: { Authorization: token ? `Bearer ${token}` : '' },
+    })
+      .then((res) => (res && res.ok ? res.json() : null))
+      .then((data) => {
+        if (active && data && Array.isArray(data.voices)) {
+          setVoicesList(data.voices);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        try { mediaRecorderRef.current.stop(); } catch (_) {}
+      }
+    };
+  }, [templateMode]);
+
+  const handleStartRecordingVoice = async () => {
+    if (!selectedStep || selectedStep.type !== 'voice_note') return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined') {
+      setToastMessage('Microphone recording is not supported in this browser. Use Upload MP3 instead.');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recordingChunksRef.current = [];
+      const recorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      recorder.ondataavailable = (evt) => {
+        if (evt.data && evt.data.size > 0) recordingChunksRef.current.push(evt.data);
+      };
+      recorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+        setIsRecordingVoice(false);
+        const blob = new Blob(recordingChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+          setTree((prev) =>
+            updateNode(prev, selectedStep.id, {
+              config: {
+                ...selectedStep.config,
+                voice_mode: 'recorded',
+                recorded_audio_data_url: dataUrl,
+                recorded_audio_name: `voice-note-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.webm`,
+                script: selectedStep.config?.script || 'Hey {{first_name}}, recorded a quick voice note for you!',
+              },
+              isActionRequired: false,
+              subtitle: 'Recorded voice note ready',
+            })
+          );
+          setToastMessage('Voice note recorded and attached to this step.');
+        };
+        reader.readAsDataURL(blob);
+      };
+      setRecordingSeconds(0);
+      setIsRecordingVoice(true);
+      recorder.start();
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingSeconds((s) => {
+          if (s + 1 >= 60) {
+            try { recorder.stop(); } catch (_) {}
+            return 60;
+          }
+          return s + 1;
+        });
+      }, 1000);
+    } catch (_) {
+      setToastMessage('Microphone access denied. Check browser permissions or upload an audio file.');
+    }
+  };
+
+  const handleStopRecordingVoice = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      try { mediaRecorderRef.current.stop(); } catch (_) {}
+    }
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    setIsRecordingVoice(false);
+  };
+
+  const handleUploadVoiceFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedStep) return;
+    if (file.size > 10 * 1024 * 1024) {
+      setToastMessage('Audio file exceeds the 10 MB limit.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+      setTree((prev) =>
+        updateNode(prev, selectedStep.id, {
+          config: {
+            ...selectedStep.config,
+            voice_mode: 'uploaded',
+            recorded_audio_data_url: dataUrl,
+            recorded_audio_name: file.name,
+            script: selectedStep.config?.script || `Voice note (${file.name})`,
+          },
+          isActionRequired: false,
+          subtitle: `Audio: ${file.name}`,
+        })
+      );
+      setToastMessage(`Uploaded "${file.name}" for this voice note step.`);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
 
   const fetchPrompts = async () => {
     setPromptsLoading(true);
@@ -385,6 +524,42 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
     setPromptDrawerOpen(false);
   };
 
+  const insertPromptIntoStep = (prompt) => {
+    if (!selectedStep || !prompt) return;
+    const tokenStr = `✨ [${prompt.name}]`;
+    insertVariable(tokenStr);
+    setPromptDrawerOpen(false);
+    setToastMessage(`Inserted AI prompt "${prompt.name}". Click Preview to evaluate against real leads.`);
+  };
+
+  const applyEvaluatedPreviewToStep = (evaluatedCopy) => {
+    if (!selectedStep || !evaluatedCopy) return;
+    const text = evaluatedCopy.trim();
+    if (!text) return;
+    setTree((prev) =>
+      updateNode(prev, selectedStep.id, {
+        config: {
+          ...selectedStep.config,
+          ...(selectedStep.type === 'voice_note'
+            ? { script: text }
+            : selectedStep.type === 'connection_request'
+            ? { note: text.slice(0, 300) }
+            : selectedStep.type === 'inmail'
+            ? { body: text, message: text }
+            : selectedStep.type === 'comment_last_post'
+            ? { comment: text, comment_template: text }
+            : selectedStep.type === 'reply_to_comment'
+            ? { reply_text: text }
+            : { body: text }),
+        },
+        isActionRequired: false,
+        subtitle: text.slice(0, 36) + (text.length > 36 ? '...' : ''),
+      })
+    );
+    setPreviewModalOpen(false);
+    setToastMessage('Personalized AI copy applied to this step.');
+  };
+
   const handleCreatePrompt = async () => {
     if (templateMode) return;
     if (!newPromptName.trim() || !newPromptText.trim()) return;
@@ -418,7 +593,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
     }
   };
 
-  const handleOpenPreview = async (step) => {
+  const handleOpenPreview = async (step, overrideLeadId = undefined, overrideEvalAi = undefined) => {
     if (templateMode || !step) return;
     const template =
       step.config?.script ||
@@ -426,11 +601,15 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
       step.config?.message ||
       step.config?.comment ||
       step.config?.comment_template ||
+      step.config?.reply_text ||
       step.config?.note ||
       '';
+    const hasAiPrompt = template.includes('✨ [');
+    const evalAi = overrideEvalAi !== undefined ? overrideEvalAi : (hasAiPrompt ? true : previewEvaluateAi);
+    const targetLeadId = overrideLeadId !== undefined ? overrideLeadId : previewLeadId;
+    setPreviewEvaluateAi(evalAi);
     setPreviewModalOpen(true);
     setPreviewLoading(true);
-    setPreviewData(null);
     try {
       const token = localStorage.getItem('token');
       const res = await fetch('/api/v1/outreach/prompts/preview', {
@@ -440,11 +619,21 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
         },
-        body: JSON.stringify({ template }),
+        body: JSON.stringify({
+          template,
+          alternative_message: step?.config?.alternative_message || step?.config?.fallback || undefined,
+          subject: step?.config?.subject || undefined,
+          campaign_id: campaignId && campaignId !== 'new' ? campaignId : undefined,
+          lead_id: targetLeadId || undefined,
+          evaluate_ai: evalAi,
+        }),
       });
       if (res.ok) {
         const data = await res.json();
         setPreviewData(data);
+        if (data.selected_lead_id) {
+          setPreviewLeadId(data.selected_lead_id);
+        }
       } else {
         const error = await res.json().catch(() => ({}));
         setPreviewData({ error: error.detail || 'Preview could not be generated.' });
@@ -911,6 +1100,10 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
         follow: {
           skip_if_following: true,
         },
+        add_tag: {
+          tag_name: 'Hot lead',
+          auto_tag: 'Hot lead',
+        },
       };
       newStep = {
         id: newId,
@@ -1097,6 +1290,15 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
           config: { ...selectedStep.config, note: curr ? `${curr} ${variable}` : variable },
         })
       );
+    } else if (selectedStep.type === 'reply_to_comment') {
+      const curr = selectedStep.config?.reply_text || '';
+      setTree((prev) =>
+        updateNode(prev, selectedStep.id, {
+          config: { ...selectedStep.config, reply_text: curr ? `${curr} ${variable}` : variable },
+          isActionRequired: false,
+          subtitle: 'Reply copy ready',
+        })
+      );
     }
   };
 
@@ -1108,55 +1310,140 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
     return { icon: Eye, color: 'text-indigo-600 bg-indigo-50' };
   };
 
-  const renderEditorToolbar = () => (
-    <div className="flex flex-col gap-2 mb-2">
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
-        {!templateMode && <button
-          type="button"
-          onClick={openPromptLibrary}
-          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-semibold border border-purple-200 shadow-2xs transition-colors shrink-0"
-        >
-          <Sparkles className="w-3.5 h-3.5 text-purple-600" />
-          Prompt guidance
-        </button>}
-        <button
-          type="button"
-          onClick={() => setShowVariablePicker(!showVariablePicker)}
-          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-gray-50 hover:bg-gray-100 text-gray-700 text-xs font-semibold border border-gray-200 transition-colors shrink-0"
-        >
-          + Contact Variables
-        </button>
-        {!templateMode && <button
-          type="button"
-          onClick={() => handleOpenPreview(selectedStep)}
-          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold border border-indigo-200 shadow-2xs transition-colors ml-auto shrink-0"
-        >
-          <Eye className="w-3.5 h-3.5" />
-          Preview
-        </button>}
-      </div>
+  const renderEditorToolbar = () => {
+    const activeText =
+      selectedStep?.config?.script ||
+      selectedStep?.config?.body ||
+      selectedStep?.config?.message ||
+      selectedStep?.config?.comment ||
+      selectedStep?.config?.comment_template ||
+      selectedStep?.config?.reply_text ||
+      selectedStep?.config?.note ||
+      '';
+    const detectedPromptNames = [];
+    const tokenRegex = /✨\s*\[([^\]]+)\]/g;
+    let m;
+    while ((m = tokenRegex.exec(activeText)) !== null) {
+      const pName = m[1].trim();
+      if (pName && !detectedPromptNames.includes(pName)) {
+        detectedPromptNames.push(pName);
+      }
+    }
 
-      {showVariablePicker && (
-        <div className="p-2.5 bg-gray-50/90 rounded-xl border border-gray-200 animate-in fade-in duration-150">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1.5">
-            Click variable to insert
-          </span>
-          <div className="flex flex-wrap gap-1.5">
-            {VARIABLE_PILLS.map((v) => (
-              <button
-                key={v}
-                type="button"
-                onClick={() => insertVariable(v)}
-                className="px-2 py-0.5 rounded-lg border border-indigo-100 bg-white hover:bg-indigo-50 text-indigo-700 text-[11px] font-mono transition-colors shadow-2xs"
-              >
-                {v}
-              </button>
-            ))}
-          </div>
+    return (
+      <div className="flex flex-col gap-2 mb-2">
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+          {!templateMode && <button
+            type="button"
+            onClick={openPromptLibrary}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-semibold border border-purple-200 shadow-2xs transition-colors shrink-0"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+            Prompt guidance
+          </button>}
+          <button
+            type="button"
+            onClick={() => setShowVariablePicker(!showVariablePicker)}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-gray-50 hover:bg-gray-100 text-gray-700 text-xs font-semibold border border-gray-200 transition-colors shrink-0"
+          >
+            + Contact Variables
+          </button>
+          {!templateMode && <button
+            type="button"
+            onClick={() => handleOpenPreview(selectedStep)}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold border border-indigo-200 shadow-2xs transition-colors ml-auto shrink-0"
+          >
+            <Eye className="w-3.5 h-3.5" />
+            Preview
+          </button>}
         </div>
-      )}
-    </div>
-  );
+
+        {detectedPromptNames.length > 0 && !templateMode && (
+          <div className="p-2.5 rounded-xl bg-purple-50/70 border border-purple-200 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-purple-700 flex items-center gap-1">
+                <Sparkles className="w-3 h-3" /> Active AI Prompts (Click to inspect)
+              </span>
+              {inspectedPromptToken && (
+                <button
+                  type="button"
+                  onClick={() => setInspectedPromptToken(null)}
+                  className="text-[10px] font-semibold text-purple-600 hover:underline"
+                >
+                  Hide details
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {detectedPromptNames.map((pName) => (
+                <button
+                  key={pName}
+                  type="button"
+                  onClick={() => {
+                    if (!promptsList.length) fetchPrompts();
+                    setInspectedPromptToken(inspectedPromptToken === pName ? null : pName);
+                  }}
+                  onDoubleClick={() => {
+                    if (!promptsList.length) fetchPrompts();
+                    setInspectedPromptToken(pName);
+                  }}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold border transition-colors ${
+                    inspectedPromptToken === pName
+                      ? 'bg-purple-600 text-white border-purple-600'
+                      : 'bg-white text-purple-800 border-purple-200 hover:bg-purple-100'
+                  }`}
+                >
+                  ✨ [{pName}]
+                </button>
+              ))}
+            </div>
+            {inspectedPromptToken && detectedPromptNames.includes(inspectedPromptToken) && (() => {
+              const matchedPrompt = promptsList.find((p) => p.name.toLowerCase() === inspectedPromptToken.toLowerCase());
+              return (
+                <div className="p-2.5 rounded-lg bg-white border border-purple-200 text-xs space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-gray-900">{inspectedPromptToken}</span>
+                    <span className="text-[10px] text-purple-700 font-semibold">AI Personalization Prompt</span>
+                  </div>
+                  <p className="text-[11px] text-gray-600 leading-relaxed">
+                    {matchedPrompt?.prompt_text || `Synthesizes a personalized snippet for "${inspectedPromptToken}" using the prospect's LinkedIn profile context.`}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-1 pt-1 border-t border-gray-100">
+                    <span className="text-[10px] font-semibold text-gray-400 mr-1">Reads LinkedIn data:</span>
+                    {['Headline', 'Biography / Summary', 'Company Overview', 'Experience & Skills'].map((src) => (
+                      <span key={src} className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 text-[9px] font-semibold border border-indigo-100">
+                        {src}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+        {showVariablePicker && (
+          <div className="p-2.5 bg-gray-50/90 rounded-xl border border-gray-200 animate-in fade-in duration-150">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1.5">
+              Click variable to insert
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {VARIABLE_PILLS.map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => insertVariable(v)}
+                  className="px-2 py-0.5 rounded-lg border border-indigo-100 bg-white hover:bg-indigo-50 text-indigo-700 text-[11px] font-mono transition-colors shadow-2xs"
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   // Per-action condition rules were only stored in the builder and never
   // enforced by the executor. Branch nodes provide the supported conditions.
@@ -1841,20 +2128,123 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
             {/* VOICE NOTE CONFIGURATION */}
             {selectedStep.type === 'voice_note' && (
               <div className="space-y-4 pt-2 border-t border-gray-100">
-                <div className="flex items-center gap-2">
-                  <span className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-indigo-50 text-indigo-800">
+                <input
+                  ref={voiceFileInputRef}
+                  type="file"
+                  accept="audio/*,.mp3,.wav,.m4a,.webm"
+                  onChange={handleUploadVoiceFile}
+                  className="hidden"
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setTree((prev) =>
+                        updateNode(prev, selectedStep.id, {
+                          config: { ...selectedStep.config, voice_mode: 'script' },
+                        })
+                      )
+                    }
+                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors ${
+                      (selectedStep.config?.voice_mode || 'script') === 'script'
+                        ? 'bg-indigo-50 text-indigo-800 border border-indigo-200'
+                        : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
                     Voice script
-                  </span>
-                  <button type="button" disabled title="Recording audio in the sequence editor is not available."
-                    className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-gray-50 border border-gray-200 text-gray-400 cursor-not-allowed">
-                    Record audio
                   </button>
-                  <button type="button" disabled title="Audio uploads in the sequence editor are not available."
-                    className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-gray-50 border border-gray-200 text-gray-400 cursor-not-allowed">
+                  {isRecordingVoice ? (
+                    <button
+                      type="button"
+                      onClick={handleStopRecordingVoice}
+                      className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white flex items-center gap-1.5 shadow-2xs"
+                    >
+                      <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                      Stop recording ({recordingSeconds}s)
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleStartRecordingVoice}
+                      className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white hover:bg-rose-50 border border-gray-200 hover:border-rose-200 text-gray-700 hover:text-rose-700 flex items-center gap-1 transition-colors"
+                    >
+                      <Mic className="w-3.5 h-3.5 text-rose-500" />
+                      Record audio
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => voiceFileInputRef.current?.click()}
+                    className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white hover:bg-indigo-50 border border-gray-200 hover:border-indigo-200 text-gray-700 hover:text-indigo-700 transition-colors"
+                  >
                     Upload MP3
                   </button>
                 </div>
-                <p className="text-xs text-gray-600">Recording and uploads are unavailable here. A script alone does not create sendable audio; voice delivery needs a prepared and approved audio artifact.</p>
+
+                {/* Audio Player Preview when recorded or uploaded */}
+                {selectedStep.config?.recorded_audio_data_url && (
+                  <div className="p-3 rounded-xl bg-rose-50/60 border border-rose-200 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-rose-900 truncate">
+                        {selectedStep.config.recorded_audio_name || 'Attached Voice Recording'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setTree((prev) =>
+                            updateNode(prev, selectedStep.id, {
+                              config: {
+                                ...selectedStep.config,
+                                voice_mode: 'script',
+                                recorded_audio_data_url: undefined,
+                                recorded_audio_name: undefined,
+                              },
+                            })
+                          )
+                        }
+                        className="text-[10px] font-semibold text-rose-600 hover:underline"
+                      >
+                        Remove audio
+                      </button>
+                    </div>
+                    <audio
+                      controls
+                      src={selectedStep.config.recorded_audio_data_url}
+                      className="w-full h-8"
+                    />
+                  </div>
+                )}
+
+                {/* Cloned Voice Profile Selector */}
+                {voicesList.length > 0 && (
+                  <div>
+                    <label className="block text-xs font-bold text-gray-900 mb-1">
+                      AI Voice Profile
+                    </label>
+                    <select
+                      value={selectedStep.config?.voice_id || ''}
+                      onChange={(e) =>
+                        setTree((prev) =>
+                          updateNode(prev, selectedStep.id, {
+                            config: { ...selectedStep.config, voice_id: e.target.value || undefined },
+                          })
+                        )
+                      }
+                      className="w-full rounded-xl border border-gray-200 px-3 py-2 text-xs bg-white text-gray-800 focus:border-indigo-600"
+                    >
+                      <option value="">Use sender&apos;s assigned voice profile</option>
+                      {voicesList.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.name} ({v.status || 'ready'})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <p className="text-xs text-gray-600">
+                  Record directly, upload an MP3/WAV, or write a personalized voice script for your cloned voice profile. Live voice delivery uses the prepared and approved audio artifact.
+                </p>
 
                 <div>
                   {renderEditorToolbar()}
@@ -1872,7 +2262,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
                       setTree((prev) =>
                         updateNode(prev, selectedStep.id, {
                           config: { ...selectedStep.config, script: e.target.value },
-                          isActionRequired: e.target.value.trim().length === 0,
+                          isActionRequired: e.target.value.trim().length === 0 && !selectedStep.config?.recorded_audio_data_url,
                           subtitle: e.target.value.trim().length > 0 ? 'AI voice note ready' : 'Action required',
                         })
                       )
@@ -1887,10 +2277,9 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
 
                 <div>
                   <label className="block text-xs font-bold text-gray-900 mb-1">
-                    Fallback text (not applied by the current voice runner)
+                    Fallback text (if voice note cannot be delivered)
                   </label>
                   <textarea
-                    disabled
                     rows={2}
                     maxLength={490}
                     value={selectedStep.config?.fallback || ''}
@@ -1901,7 +2290,7 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
                         })
                       )
                     }
-                    placeholder="Voice fallback is unavailable; review missing variables before preparing audio."
+                    placeholder="Optional text fallback when voice note is unavailable."
                     className="w-full rounded-xl border border-gray-200 p-2.5 text-xs focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 resize-none"
                   />
                 </div>
@@ -1913,7 +2302,10 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
             {selectedStep.type === 'inmail' && (
               <div className="space-y-4 pt-2 border-t border-gray-100">
                 <div>
-                  <label className="block text-xs font-bold text-gray-900 mb-1">Subject</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-gray-900">InMail Subject Line</label>
+                    <span className="text-[10px] font-semibold text-indigo-600">Supports Variables</span>
+                  </div>
                   <input
                     type="text"
                     value={selectedStep.config?.subject || ''}
@@ -1924,9 +2316,35 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
                         })
                       )
                     }
-                    placeholder="Subject line..."
+                    placeholder="e.g. Quick question for {{first_name}} at {{company_name}}"
                     className="w-full rounded-xl border border-gray-200 px-3 py-2 text-xs focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
                   />
+                  <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                    {[
+                      { label: '+ First Name', token: '{{first_name}}' },
+                      { label: '+ Company', token: '{{company_name}}' },
+                      { label: '+ Job Title', token: '{{job_title}}' },
+                      { label: '+ University', token: '{{university_name}}' },
+                      { label: '+ Profile Type', token: '{{profile_type}}' },
+                    ].map((chip) => (
+                      <button
+                        key={chip.token}
+                        type="button"
+                        onClick={() => {
+                          const currSubj = selectedStep.config?.subject || '';
+                          const nextSubj = currSubj ? `${currSubj} ${chip.token}` : chip.token;
+                          setTree((prev) =>
+                            updateNode(prev, selectedStep.id, {
+                              config: { ...selectedStep.config, subject: nextSubj },
+                            })
+                          );
+                        }}
+                        className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 cursor-pointer"
+                      >
+                        {chip.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div>
@@ -1955,22 +2373,54 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-gray-900 mb-1">
-                    Fallback if a variable is missing
-                  </label>
+                <div className="p-3 rounded-xl bg-amber-50/50 border border-amber-200/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-gray-900">
+                      Alternative Message (If variable is missing)
+                    </label>
+                    <span className="text-[10px] font-semibold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-full">
+                      Guaranteed delivery
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-gray-500 leading-relaxed">
+                    Sent automatically if an optional profile variable (e.g. Top Skill, Company Followed, University) is missing on the lead&apos;s LinkedIn profile. Uses only mandatory LinkedIn fields:
+                  </p>
+                  <div className="flex flex-wrap items-center gap-1">
+                    {GUARANTEED_LINKEDIN_VARIABLE_CHIPS.map((chip) => (
+                      <button
+                        key={chip.token}
+                        type="button"
+                        onClick={() => {
+                          const currAlt = selectedStep.config?.alternative_message ?? selectedStep.config?.fallback ?? '';
+                          const nextAlt = currAlt ? `${currAlt} ${chip.token}` : chip.token;
+                          setTree((prev) =>
+                            updateNode(prev, selectedStep.id, {
+                              config: { ...selectedStep.config, alternative_message: nextAlt, fallback: nextAlt },
+                            })
+                          );
+                        }}
+                        className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-white text-amber-900 border border-amber-300 hover:bg-amber-100 cursor-pointer"
+                      >
+                        {chip.label}
+                      </button>
+                    ))}
+                  </div>
                   <textarea
                     rows={2}
-                    value={selectedStep.config?.fallback || ''}
+                    value={selectedStep.config?.alternative_message ?? selectedStep.config?.fallback ?? ''}
                     onChange={(e) =>
                       setTree((prev) =>
                         updateNode(prev, selectedStep.id, {
-                          config: { ...selectedStep.config, fallback: e.target.value },
+                          config: {
+                            ...selectedStep.config,
+                            alternative_message: e.target.value,
+                            fallback: e.target.value,
+                          },
                         })
                       )
                     }
-                    placeholder="A version with no variables, always safe to send"
-                    className="w-full rounded-xl border border-gray-200 p-2.5 text-xs focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 resize-none"
+                    placeholder="Hi {{first_name}}, wanted to connect with fellow professionals in {{location}}..."
+                    className="w-full rounded-xl border border-amber-200 bg-white p-2.5 text-xs focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 resize-none"
                   />
                 </div>
                 {renderConditionRuleSelector()}
@@ -2081,6 +2531,57 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
                     className="w-full rounded-xl border border-gray-200 p-3 text-xs focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 resize-none font-sans"
                   />
                 </div>
+                <div className="p-3 rounded-xl bg-amber-50/50 border border-amber-200/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-gray-900">
+                      Alternative Message (If variable is missing)
+                    </label>
+                    <span className="text-[10px] font-semibold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-full">
+                      Guaranteed delivery
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-gray-500 leading-relaxed">
+                    If a variable in your primary message (such as <code className="text-[10px] bg-white px-1 rounded border">{'{{top_skill}}'}</code> or <code className="text-[10px] bg-white px-1 rounded border">{'{{company_followed}}'}</code>) is missing on the lead&apos;s profile, this alternative message is sent instead using mandatory LinkedIn variables:
+                  </p>
+                  <div className="flex flex-wrap items-center gap-1">
+                    {GUARANTEED_LINKEDIN_VARIABLE_CHIPS.map((chip) => (
+                      <button
+                        key={chip.token}
+                        type="button"
+                        onClick={() => {
+                          const currAlt = selectedStep.config?.alternative_message ?? selectedStep.config?.fallback ?? '';
+                          const nextAlt = currAlt ? `${currAlt} ${chip.token}` : chip.token;
+                          setTree((prev) =>
+                            updateNode(prev, selectedStep.id, {
+                              config: { ...selectedStep.config, alternative_message: nextAlt, fallback: nextAlt },
+                            })
+                          );
+                        }}
+                        className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-white text-amber-900 border border-amber-300 hover:bg-amber-100 cursor-pointer"
+                      >
+                        {chip.label}
+                      </button>
+                    ))}
+                  </div>
+                  <textarea
+                    rows={3}
+                    value={selectedStep.config?.alternative_message ?? selectedStep.config?.fallback ?? ''}
+                    onChange={(e) =>
+                      setTree((prev) =>
+                        updateNode(prev, selectedStep.id, {
+                          config: {
+                            ...selectedStep.config,
+                            alternative_message: e.target.value,
+                            fallback: e.target.value,
+                          },
+                        })
+                      )
+                    }
+                    placeholder="Hi {{first_name}}, great connecting with you in {{location}}! How are things going?"
+                    className="w-full rounded-xl border border-amber-200 bg-white p-2.5 text-xs focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 resize-none"
+                  />
+                </div>
+
                 <div className="pt-2 border-t border-gray-100 space-y-2">
                   <label className="block text-xs font-bold text-gray-900">File Attachment (Optional)</label>
                   <input
@@ -2199,6 +2700,180 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
                     className="w-full rounded-xl border border-gray-200 p-3 text-xs focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 resize-none font-sans"
                   />
                 </div>
+
+                <div className="p-3 rounded-xl bg-amber-50/50 border border-amber-200/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-gray-900">
+                      Alternative Note (If variable is missing)
+                    </label>
+                    <span className="text-[10px] font-semibold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-full">
+                      {(selectedStep.config?.alternative_message || selectedStep.config?.fallback || '').length}/300
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-gray-500 leading-relaxed">
+                    Backup invite note sent if a variable in your primary note is missing on the lead&apos;s LinkedIn profile:
+                  </p>
+                  <div className="flex flex-wrap items-center gap-1">
+                    {GUARANTEED_LINKEDIN_VARIABLE_CHIPS.map((chip) => (
+                      <button
+                        key={chip.token}
+                        type="button"
+                        onClick={() => {
+                          const currAlt = selectedStep.config?.alternative_message ?? selectedStep.config?.fallback ?? '';
+                          const nextAlt = (currAlt ? `${currAlt} ${chip.token}` : chip.token).slice(0, 300);
+                          setTree((prev) =>
+                            updateNode(prev, selectedStep.id, {
+                              config: { ...selectedStep.config, alternative_message: nextAlt, fallback: nextAlt },
+                            })
+                          );
+                        }}
+                        className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-white text-amber-900 border border-amber-300 hover:bg-amber-100 cursor-pointer"
+                      >
+                        {chip.label}
+                      </button>
+                    ))}
+                  </div>
+                  <textarea
+                    rows={2}
+                    maxLength={300}
+                    value={selectedStep.config?.alternative_message ?? selectedStep.config?.fallback ?? ''}
+                    onChange={(e) =>
+                      setTree((prev) =>
+                        updateNode(prev, selectedStep.id, {
+                          config: {
+                            ...selectedStep.config,
+                            alternative_message: e.target.value,
+                            fallback: e.target.value,
+                          },
+                        })
+                      )
+                    }
+                    placeholder="Hi {{first_name}}, would love to connect with fellow leaders in {{location}}!"
+                    className="w-full rounded-xl border border-amber-200 bg-white p-2.5 text-xs focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 resize-none"
+                  />
+                </div>
+
+                {/* Unaccepted Invite Warmup Path Helper (Dripify Sequence Parity) */}
+                {selectedStep.branches?.left && (
+                  <div className="p-3 bg-indigo-50/60 border border-indigo-100 rounded-xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-indigo-950">If Not Accepted Warmup Path</span>
+                      <span className="text-[10px] font-semibold text-indigo-700 bg-white px-2 py-0.5 rounded-full border border-indigo-200">
+                        {(selectedStep.branches.left.steps || []).length} steps
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-indigo-900/80 leading-relaxed">
+                      Automatically warm up prospects who haven&apos;t accepted yet (Wait 1d → View Profile → Wait 3d → Like Post → Wait 5d → Withdraw Invite).
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const warmupSteps = [
+                          {
+                            id: makeStepId(),
+                            type: 'visit_profile',
+                            title: 'Visit profile',
+                            subtitle: 'Visit lead profile on LinkedIn',
+                            delay_hours: 24,
+                            config: {},
+                          },
+                          {
+                            id: makeStepId(),
+                            type: 'like_last_post',
+                            title: 'Like a post',
+                            subtitle: 'Like most recent post',
+                            delay_hours: 72,
+                            config: { post_index: 0 },
+                          },
+                          {
+                            id: makeStepId(),
+                            type: 'withdraw_invite',
+                            title: 'Withdraw invite',
+                            subtitle: 'Withdraw unaccepted invite',
+                            delay_hours: 120,
+                            config: {},
+                          },
+                        ];
+                        setTree((prev) =>
+                          updateNode(prev, selectedStep.id, {
+                            branches: {
+                              ...selectedStep.branches,
+                              left: {
+                                ...selectedStep.branches.left,
+                                steps: warmupSteps,
+                              },
+                            },
+                          })
+                        );
+                        setToastMessage('Added non-accepted warmup path (Visit → Like → Withdraw).');
+                      }}
+                      className="w-full py-1.5 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
+                    >
+                      + Auto-Fill Unaccepted Warmup (Visit → Like → Withdraw)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const acceptedSteps = [
+                          {
+                            id: makeStepId(),
+                            type: 'endorse_skill',
+                            title: 'Endorse skill',
+                            subtitle: 'Endorse top skill',
+                            delay_days: 0,
+                            delay_hours: 3,
+                            config: { endorsement_mode: 'any_skill', max_skills: 1 },
+                          },
+                          {
+                            id: makeStepId(),
+                            type: 'like_last_post',
+                            title: 'Like a post',
+                            subtitle: 'Like recent post',
+                            delay_days: 1,
+                            config: { count: 1 },
+                          },
+                          {
+                            id: makeStepId(),
+                            type: 'send_message',
+                            title: 'Send message',
+                            subtitle: 'Welcome message ready',
+                            delay_days: 0,
+                            delay_hours: 6,
+                            config: {
+                              body: 'Thanks for connecting, {{first_name}}! Noticed your work as {{job_title}} at {{company_name}} — how is your team approaching outbound growth this quarter?',
+                            },
+                          },
+                          {
+                            id: makeStepId(),
+                            type: 'send_message',
+                            title: 'Send message',
+                            subtitle: 'Follow-up message ready',
+                            delay_days: 4,
+                            config: {
+                              body: 'Hi {{first_name}}, wanted to quickly bump this in case it got buried. Open to a brief chat next week?',
+                            },
+                          },
+                        ];
+                        setTree((prev) =>
+                          updateNode(prev, selectedStep.id, {
+                            branches: {
+                              ...selectedStep.branches,
+                              right: {
+                                ...selectedStep.branches.right,
+                                steps: acceptedSteps,
+                              },
+                            },
+                          })
+                        );
+                        setToastMessage('Added accepted post-connect nurture path (Endorse → Like → Welcome Msg → Follow-Up).');
+                      }}
+                      className="w-full py-1.5 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
+                    >
+                      + Auto-Fill Accepted Post-Connect Nurture (Endorse → Like → Msg)
+                    </button>
+                  </div>
+                )}
+
                 {renderConditionRuleSelector()}
               </div>
             )}
@@ -2507,6 +3182,118 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
                 </div>
               </div>
             )}
+
+            {/* ADD TAG CONFIGURATION */}
+            {selectedStep.type === 'add_tag' && (
+              <div className="space-y-4 pt-2 border-t border-gray-100">
+                <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl text-xs text-emerald-900 leading-relaxed">
+                  <strong>CRM Tag Action:</strong> Applies a custom or preset tag to the lead in your Unravler CRM &amp; Inbox as soon as they reach this step in the sequence.
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-900 mb-1">
+                    Tag Name to Apply
+                  </label>
+                  <input
+                    type="text"
+                    value={selectedStep.config?.tag_name ?? selectedStep.config?.auto_tag ?? ''}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setTree((prev) =>
+                        updateNode(prev, selectedStep.id, {
+                          config: { ...selectedStep.config, tag_name: val, auto_tag: val },
+                          isActionRequired: val.trim().length === 0,
+                          subtitle: val.trim().length > 0 ? `Tag: ${val.trim()}` : 'Action required',
+                        })
+                      );
+                    }}
+                    placeholder="e.g. Hot lead, Engaged, AppSumo, ClientAmp..."
+                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-800 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600"
+                  />
+                  <div className="flex flex-wrap gap-1.5 pt-2">
+                    {['Hot lead', 'Interested', 'Wants to speak later', 'Follow up', 'High Priority'].map((presetTag) => {
+                      const currentTag = selectedStep.config?.tag_name ?? selectedStep.config?.auto_tag ?? '';
+                      return (
+                        <button
+                          key={presetTag}
+                          type="button"
+                          onClick={() =>
+                            setTree((prev) =>
+                              updateNode(prev, selectedStep.id, {
+                                config: {
+                                  ...selectedStep.config,
+                                  tag_name: presetTag,
+                                  auto_tag: presetTag,
+                                },
+                                isActionRequired: false,
+                                subtitle: `Tag: ${presetTag}`,
+                              })
+                            )
+                          }
+                          className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold border transition-colors ${
+                            currentTag === presetTag
+                              ? 'bg-emerald-600 text-white border-emerald-600'
+                              : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                          }`}
+                        >
+                          + {presetTag}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Sequence Auto-Tagging (Prosp Parity: Tag leads from specific sequences automatically) */}
+            {!['END', 'IF_CONNECTED', 'IF_OPENED_MESSAGE', 'add_tag'].includes(selectedStep.type) && (
+              <div className="space-y-2 pt-2 border-t border-gray-100">
+                <label className="block text-xs font-bold text-gray-800">
+                  Auto-Tag Lead on Step Completion <span className="text-gray-400 font-normal">(Optional)</span>
+                </label>
+                <p className="text-[11px] text-gray-500">
+                  Automatically apply a CRM &amp; Inbox tag to the prospect when this sequence step executes.
+                </p>
+                <input
+                  type="text"
+                  value={selectedStep.config?.auto_tag || ''}
+                  onChange={(e) =>
+                    setTree((prev) =>
+                      updateNode(prev, selectedStep.id, {
+                        config: { ...selectedStep.config, auto_tag: e.target.value },
+                      })
+                    )
+                  }
+                  placeholder="e.g. Hot lead, Sequence A, Follow up..."
+                  className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-800 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600"
+                />
+                <div className="flex flex-wrap gap-1.5 pt-0.5">
+                  {['Hot lead', 'Interested', 'Wants to speak later', 'Follow up'].map((presetTag) => (
+                    <button
+                      key={presetTag}
+                      type="button"
+                      onClick={() =>
+                        setTree((prev) =>
+                          updateNode(prev, selectedStep.id, {
+                            config: {
+                              ...selectedStep.config,
+                              auto_tag: selectedStep.config?.auto_tag === presetTag ? '' : presetTag,
+                            },
+                          })
+                        )
+                      }
+                      className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold border transition-colors ${
+                        selectedStep.config?.auto_tag === presetTag
+                          ? 'bg-indigo-600 text-white border-indigo-600'
+                          : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                      }`}
+                    >
+                      + {presetTag}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Drawer Footer Actions */}
@@ -2807,14 +3594,24 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
 
                     <div className="flex items-center justify-between pt-1">
                       <span className="text-[10px] text-gray-400">By {prompt.author_name || 'Unravler'}</span>
-                      <button
-                        type="button"
-                        onClick={() => copyPromptGuidance(prompt.prompt_text)}
-                        className="inline-flex items-center gap-1 px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-lg shadow-2xs transition-colors"
-                      >
-                        <Sparkles className="w-3 h-3" />
-                        Copy guidance
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => copyPromptGuidance(prompt.prompt_text)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold text-[11px] rounded-lg transition-colors"
+                        >
+                          <Copy className="w-3 h-3" />
+                          Copy
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => insertPromptIntoStep(prompt)}
+                          className="inline-flex items-center gap-1 px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-lg shadow-2xs transition-colors"
+                        >
+                          <Sparkles className="w-3 h-3" />
+                          Insert prompt
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -2837,7 +3634,11 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
                 </div>
                 <div>
                   <h3 className="font-bold text-gray-900 text-sm">Message Personalization Preview</h3>
-                  <p className="text-[11px] text-gray-400">Illustrative rendering with sample lead fields</p>
+                  <p className="text-[11px] text-gray-400">
+                    {previewData?.is_illustrative_preview
+                      ? 'Illustrative rendering with sample lead fields'
+                      : 'Live rendering with enrolled workspace lead profile'}
+                  </p>
                 </div>
               </div>
               <button
@@ -2850,10 +3651,32 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
 
             {/* Modal Content */}
             <div className="p-6 space-y-4">
+              {/* Lead Switcher & AI Evaluation Toggle */}
+              {Array.isArray(previewData?.available_leads) && previewData.available_leads.length > 0 && (
+                <div className="flex items-center justify-between gap-2 pb-2 border-b border-gray-100">
+                  <label className="text-[11px] font-bold text-gray-600 shrink-0">Preview for lead:</label>
+                  <select
+                    value={previewLeadId || previewData.selected_lead_id || ''}
+                    onChange={(e) => {
+                      const nextId = e.target.value;
+                      setPreviewLeadId(nextId);
+                      handleOpenPreview(selectedStep, nextId, previewEvaluateAi);
+                    }}
+                    className="flex-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs bg-white text-gray-900 font-medium focus:border-indigo-600"
+                  >
+                    {previewData.available_leads.map((ld) => (
+                      <option key={ld.id} value={ld.id}>
+                        {ld.first_name} {ld.last_name} {ld.company_name ? `— ${ld.company_name}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               {previewLoading ? (
                 <div className="flex flex-col items-center justify-center py-12 text-gray-400">
                   <RefreshCw className="h-6 w-6 animate-spin text-indigo-600 mb-2" />
-                  <span className="text-xs">Rendering sample fields...</span>
+                  <span className="text-xs">Rendering personalized preview...</span>
                 </div>
               ) : previewData?.error ? (
                 <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
@@ -2879,20 +3702,103 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
                         <p className="text-[10px] text-gray-400">{previewData.lead_preview?.location}</p>
                       </div>
                     </div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                      Sample Lead
+                    <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                      previewData.is_illustrative_preview
+                        ? 'text-amber-700 bg-amber-50 border-amber-200'
+                        : 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                    }`}>
+                      {previewData.is_illustrative_preview ? 'Sample Lead' : 'Real Lead'}
                     </span>
                   </div>
 
                   {/* Evaluated Rendered Message */}
                   <div>
-                    <label className="text-[11px] font-bold uppercase tracking-wider text-gray-400 block mb-1.5">
-                      Preview output (not generated send copy)
-                    </label>
-                    <div className="p-4 rounded-xl bg-white border border-indigo-200 shadow-xs text-xs text-gray-800 leading-relaxed font-sans whitespace-pre-wrap">
-                      {previewData.evaluated_text || 'No copy written for this step yet.'}
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-[11px] font-bold uppercase tracking-wider text-gray-400">
+                        {previewEvaluateAi ? 'Personalized AI Output' : 'Preview output'}
+                      </label>
+                      {previewData.has_ai_tokens && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const nextEval = !previewEvaluateAi;
+                            setPreviewEvaluateAi(nextEval);
+                            handleOpenPreview(selectedStep, previewLeadId || previewData.selected_lead_id, nextEval);
+                          }}
+                          className="text-[11px] font-semibold text-purple-700 hover:text-purple-900 flex items-center gap-1"
+                        >
+                          <Sparkles className="w-3 h-3" />
+                          {previewEvaluateAi ? 'Show raw placeholder' : 'Generate AI personalization'}
+                        </button>
+                      )}
+                    </div>
+                    <div className="p-4 rounded-xl bg-white border border-indigo-200 shadow-xs text-xs text-gray-800 leading-relaxed font-sans whitespace-pre-wrap space-y-2">
+                      {previewData.evaluated_subject && (
+                        <div className="pb-2 border-b border-indigo-100 text-xs">
+                          <span className="font-bold text-indigo-700 uppercase tracking-wider text-[10px] mr-1.5">Subject:</span>
+                          <span className="font-semibold text-gray-900">{previewData.evaluated_subject}</span>
+                        </div>
+                      )}
+                      <div>{previewData.evaluated_text || 'No copy written for this step yet.'}</div>
                     </div>
                   </div>
+
+                  {/* Voice Note Spoken Audio Preview inside Sequence Builder Preview Modal */}
+                  {selectedStep?.type === 'voice_note' && (
+                    <div className="p-3.5 rounded-xl bg-rose-50/70 border border-rose-200 space-y-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <div className="p-1.5 rounded-lg bg-rose-600 text-white">
+                            <Mic className="w-3.5 h-3.5" />
+                          </div>
+                          <div>
+                            <h5 className="text-xs font-bold text-rose-950">Spoken Voice Note Preview</h5>
+                            <p className="text-[10px] text-rose-700">
+                              {selectedStep.config?.recorded_audio_data_url
+                                ? 'Playing attached custom audio recording'
+                                : 'Listen to how this personalized script sounds for the selected prospect'}
+                            </p>
+                          </div>
+                        </div>
+                        {!selectedStep.config?.recorded_audio_data_url && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const textToSpeak = previewData.evaluated_text || previewData.ai_generated_text || '';
+                              if (!textToSpeak) return;
+                              if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+                                if (isSpeakingPreview) {
+                                  window.speechSynthesis.cancel();
+                                  setIsSpeakingPreview(false);
+                                  return;
+                                }
+                                window.speechSynthesis.cancel();
+                                const utterance = new SpeechSynthesisUtterance(textToSpeak);
+                                utterance.rate = 1.0;
+                                utterance.onend = () => setIsSpeakingPreview(false);
+                                utterance.onerror = () => setIsSpeakingPreview(false);
+                                setIsSpeakingPreview(true);
+                                window.speechSynthesis.speak(utterance);
+                              } else {
+                                setToastMessage('Browser speech synthesis unavailable in this environment.');
+                              }
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-2xs transition-colors"
+                          >
+                            <Play className="w-3.5 h-3.5" />
+                            {isSpeakingPreview ? 'Stop Voice Preview' : 'Listen to Voice Preview'}
+                          </button>
+                        )}
+                      </div>
+                      {selectedStep.config?.recorded_audio_data_url && (
+                        <audio
+                          controls
+                          src={selectedStep.config.recorded_audio_data_url}
+                          className="w-full h-8"
+                        />
+                      )}
+                    </div>
+                  )}
 
                   <div className="p-3 bg-purple-50/60 border border-purple-100 rounded-xl text-[11px] text-purple-900 flex items-start gap-2">
                     <Sparkles className="w-4 h-4 text-purple-600 shrink-0 mt-0.5" />
@@ -2903,7 +3809,17 @@ export default function SequenceCanvas({ campaignId, onSave, onRegisterSave, tem
             </div>
 
             {/* Modal Footer */}
-            <div className="px-6 py-3.5 border-t border-gray-100 bg-gray-50 flex justify-end">
+            <div className="px-6 py-3.5 border-t border-gray-100 bg-gray-50 flex items-center justify-between gap-2">
+              {previewData?.has_ai_tokens && (previewData?.ai_generated_text || previewData?.evaluated_text) ? (
+                <button
+                  type="button"
+                  onClick={() => applyEvaluatedPreviewToStep(previewData.ai_generated_text || previewData.evaluated_text)}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors flex items-center gap-1.5"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Apply AI Copy to Step
+                </button>
+              ) : <div />}
               <button
                 type="button"
                 onClick={() => setPreviewModalOpen(false)}

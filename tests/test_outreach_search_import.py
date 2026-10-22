@@ -605,3 +605,47 @@ async def test_cancel_import_job(mock_db):
     job = await mock_db.outreach_import_jobs.find_one({"id": job_id})
     assert job["status"] == "stopped"
     assert job["stop_reason"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_recruiter_and_connections_search_import_caps_and_list_name(mock_db):
+    """Recruiter uses 25/page & 1,000 cap (requires Recruiter seat); My Network uses 10/page & 1,000 cap; list_name is stored."""
+    # Sales Nav sender without 'recruiter' seat is rejected for Recruiter URL
+    req_rejected = ImportSearchRequest(
+        campaign_id="camp-1",
+        search_url="https://www.linkedin.com/talent/hire/999/discover/recruiterSearch",
+        search_type="recruiter",
+        sender_account_id="sender-1",
+        max_leads=1500,
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        await import_search_url(
+            req=req_rejected,
+            current_user={"user_id": "u-1", "workspace_id": "ws-1"},
+            db=mock_db,
+        )
+    assert exc_info.value.status_code == 400
+    assert "Recruiter" in exc_info.value.detail
+
+    # Upgrade sender-1 to Recruiter seat and start Recruiter import with list_name
+    await mock_db.outreach_accounts.update_one(
+        {"id": "sender-1"},
+        {"$set": {"premium_product": "recruiter"}},
+    )
+    with patch("celery_workers.tasks.outreach.crawl_page.delay"):
+        job_res = await import_search_url(
+            req=ImportSearchRequest(
+                campaign_id="camp-1",
+                search_url="https://www.linkedin.com/talent/hire/999/manage/all/pipeline",
+                search_type="recruiter",
+                sender_account_id="sender-1",
+                max_leads=1500,
+                list_name="Java Engineers LA (Grad 1990-2000)",
+            ),
+            current_user={"user_id": "u-1", "workspace_id": "ws-1"},
+            db=mock_db,
+        )
+    assert job_res["search_type"] == "recruiter"
+    assert job_res["page_size"] == 25
+    assert job_res["target_count"] == 1000
+    assert job_res["list_name"] == "Java Engineers LA (Grad 1990-2000)"

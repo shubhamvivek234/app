@@ -3,6 +3,8 @@
 Context digests bind current requests, not historical identity ownership or
 execution permission. Pending locks without a provable job remain support holds.
 """
+import logging
+logger = logging.getLogger(__name__)
 import asyncio
 from datetime import datetime, timedelta, timezone
 

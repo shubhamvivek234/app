@@ -1,4 +1,6 @@
 """Stop-first, bounded campaign deletion; restoration never grants execution."""
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 import uuid
 from typing import Any

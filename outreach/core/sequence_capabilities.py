@@ -4,6 +4,8 @@ Code support is deliberately separate from operator-enabled live execution.
 This catalog is sender-independent so the editor can render before a sender is
 selected; launch and workers must still verify entitlement and sender health.
 """
+import logging
+logger = logging.getLogger(__name__)
 import os
 
 from outreach.models import SequenceNodeType
@@ -50,7 +52,7 @@ def sequence_capabilities() -> list[dict[str, object]]:
     for node_type in SequenceNodeType:
         type_name = node_type.value
         email = type_name in _EMAIL_SUPPORTED
-        data = type_name == SequenceNodeType.HAS_DATA_IN_COLUMN.value
+        data = type_name in {SequenceNodeType.HAS_DATA_IN_COLUMN.value, SequenceNodeType.ADD_TAG.value}
         extended_linkedin = type_name in _EXTENDED_LINKEDIN_STEPS and _enabled("OUTREACH_EXTENDED_SEQUENCE_ACTIONS_ENABLED")
         supported = type_name in _LINKEDIN_SUPPORTED or extended_linkedin or email or data
         feature_enabled = True

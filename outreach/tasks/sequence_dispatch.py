@@ -69,7 +69,8 @@ async def prepare_due(db: AsyncIOMotorDatabase, *, limit: int = 50, now: datetim
             continue
         try:
             validate_pinned_sequence(sequence)
-        except DAGValidationError:
+        except DAGValidationError as exc:
+            logger.warning("Skipping due sequence preparation for invalid pinned sequence campaign=%s workspace=%s (%s)", cid, ws, type(exc).__name__)
             continue
         query = {"workspace_id": ws, "campaign_id": cid, "execution_state": {"$in": ["queued", "waiting_delay", "replied"]}, "$and": [
             {"$or": [{"next_action_due_at": None}, {"next_action_due_at": {"$lte": now}}]},

@@ -1,4 +1,6 @@
 """One bounded metadata GET, no retries, redirects, samples or verification POST."""
+import logging
+logger = logging.getLogger(__name__)
 import json
 import httpx
 from outreach.core.voice_key_custody import PreparedKey

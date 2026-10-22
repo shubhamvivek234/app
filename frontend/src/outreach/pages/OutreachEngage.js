@@ -24,6 +24,7 @@ import {
   Pencil,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { outreachLogger } from '../utils/logger';
 import './OutreachEngageReport.css';
 
 const authHeaders = (json = false) => ({
@@ -182,7 +183,9 @@ export default function OutreachEngage() {
         credentials: 'include', headers: authHeaders(),
       });
       if (res.ok) setStats(await res.json());
-    } catch (_) { /* Feed remains usable without summary stats. */ }
+    } catch (err) {
+      outreachLogger.debug('engage.list_stats_unavailable', { listId, error: err });
+    }
   }, []);
 
   const fetchListDetail = useCallback(async (listId) => {
@@ -251,7 +254,9 @@ export default function OutreachEngage() {
           setSelectedStyleId(data.find((style) => style.is_default)?.id || '');
         }
         if (campaignRes.ok) setCampaigns(await campaignRes.json());
-      } catch (_) { /* Account and style actions surface their own errors. */ }
+      } catch (err) {
+        outreachLogger.debug('engage.options_load_failed', { error: err });
+      }
     };
     loadOptions();
   }, []);
@@ -300,7 +305,9 @@ export default function OutreachEngage() {
         }
         if (['queued', 'running'].includes(enrichmentStatus) &&
           updated.enrichment_status === 'complete') fetchStats(listId);
-      } catch (_) { /* Retry on next poll. */ }
+      } catch (err) {
+        outreachLogger.debug('engage.poll_list_status_failed', { listId, error: err });
+      }
     }, 3000);
     return () => window.clearInterval(timer);
   }, [activeListId, fetchStatus, enrichmentStatus, fetchListDetail, fetchLists, fetchPosts, fetchStats, statusFilter]);

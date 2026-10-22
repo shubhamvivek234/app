@@ -5,6 +5,8 @@ Receipts prove this application's recorded creation, not current existence,
 provider outcomes, content approval or permission to execute a sequence.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from copy import deepcopy
 from datetime import datetime, timezone

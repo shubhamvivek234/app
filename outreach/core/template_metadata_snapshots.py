@@ -4,6 +4,8 @@ This source entry point has no HTTP/UI or mutation-path integration. Capturing
 requires still-current original proof and writes authority counters plus one
 immutable encrypted allowlist row. Existing templates remain plaintext.
 """
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 import json
 from typing import Any

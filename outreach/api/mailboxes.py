@@ -1,6 +1,7 @@
 """Workspace-scoped, secret-free mailbox connection and email-discovery settings."""
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timezone
 from urllib.parse import urlencode, urlparse
@@ -19,6 +20,7 @@ from outreach.core.mailbox_connection import (
 )
 
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/mailboxes", tags=["Outreach Email Mailboxes"])
 
 

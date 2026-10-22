@@ -4,6 +4,8 @@ An absent job alone proves nothing. Protocol-one locks capture the base account
 and exact resource ownership before the attempted insert. Older ambiguous locks
 and any verification/installation evidence remain held for separate review.
 """
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase

@@ -1,4 +1,6 @@
 """Explicit mailbox/finder policies using shared sender ownership and receipts."""
+import logging
+logger = logging.getLogger(__name__)
 import os
 from copy import deepcopy
 from datetime import datetime, timezone

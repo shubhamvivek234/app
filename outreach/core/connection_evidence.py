@@ -1,5 +1,7 @@
 """Bounded recorded person-membership evidence, never invitation causality."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import re
 from typing import Any

@@ -4,6 +4,8 @@ No template/checkpoint content, indexes, grants or restore state is written.
 Pages validate the complete bounded recorded lineage in one snapshot; cursors
 are unsigned context locators, not capabilities or evidence outside the backup.
 """
+import logging
+logger = logging.getLogger(__name__)
 import base64
 from datetime import timezone
 import hashlib

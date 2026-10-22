@@ -4,6 +4,8 @@ Publishing/re-running a worker is safe; only an unsubmitted current owner can
 cross the durable submission boundary. Expiry never authorizes re-submission.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import uuid
 from datetime import datetime, timedelta, timezone

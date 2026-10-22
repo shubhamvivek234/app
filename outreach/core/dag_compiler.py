@@ -2,6 +2,8 @@
 Phase 4: DAG Sequence Compiler & Graph Topology Validator.
 Validates sequence graphs, detects cycles/orphans, and compiles React Flow JSON into an execution tree.
 """
+import logging
+logger = logging.getLogger(__name__)
 import re
 from typing import Any
 from outreach.models import SequenceNodeType
@@ -11,6 +13,123 @@ from outreach.core.sequence_contract import DAGValidationError, graph_envelope, 
 _TEMPLATE_TAG_RE = re.compile(
     r"\{\{\s*([A-Za-z_][A-Za-z0-9_]{0,99})(?:\s*\|\s*(?:\"([^\"{}]{0,200})\"|'([^'{}]{0,200})'|([^|{}]{1,200}?)))?\s*\}\}"
 )
+
+GUARANTEED_LINKEDIN_VARIABLES = ("first_name", "last_name", "location")
+
+
+def find_missing_profile_variables(template_str: str, lead: dict[str, Any]) -> list[str]:
+    """
+    Returns variable names referenced in `template_str` (without an inline `| "fallback"`)
+    that are missing or empty on `lead`.
+    """
+    if not isinstance(template_str, str) or not template_str.strip():
+        return []
+    custom_variables = lead.get("custom_variables") if isinstance(lead.get("custom_variables"), dict) else {}
+
+    def _has_val(*keys: str) -> bool:
+        for k in keys:
+            v = lead.get(k)
+            if v is not None and str(v).strip():
+                return True
+            cv = custom_variables.get(k)
+            if cv is not None and str(cv).strip():
+                return True
+        return False
+
+    alias_map: dict[str, tuple[str, ...]] = {
+        "first_name": ("first_name",),
+        "last_name": ("last_name",),
+        "full_name": ("full_name", "first_name", "last_name"),
+        "headline": ("headline",),
+        "company_name": ("company_name", "company"),
+        "company": ("company_name", "company"),
+        "job_title": ("job_title", "position"),
+        "position": ("job_title", "position"),
+        "industry": ("industry",),
+        "location_raw": ("location_raw", "location"),
+        "location": ("location_raw", "location"),
+        "country": ("country", "country_code"),
+        "connections_count": ("connections_count", "number_of_connections", "connections"),
+        "number_of_connections": ("connections_count", "number_of_connections", "connections"),
+        "top_skill": ("top_skill", "skills"),
+        "company_followed": ("company_followed", "followed_company"),
+        "company_location": ("company_location", "hq_location"),
+        "summary": ("summary", "about", "bio"),
+        "school": ("university_name", "school", "education", "university"),
+        "university_name": ("university_name", "school", "education", "university"),
+        "university": ("university_name", "school", "education", "university"),
+        "profile_type": ("profile_type", "is_open_profile", "is_premium"),
+        "years_in_company": ("years_in_company", "company_tenure"),
+        "years_in_role": ("years_in_role", "role_tenure"),
+        "mutual_connections": ("mutual_connections", "shared_connections"),
+    }
+
+    missing: list[str] = []
+    for match in _TEMPLATE_TAG_RE.finditer(template_str):
+        var_name = match.group(1)
+        inline_fallback = next(
+            (g.strip() if idx == 4 and g is not None else g for idx, g in enumerate(match.groups()[1:], start=2) if g is not None),
+            None,
+        )
+        if inline_fallback is not None and str(inline_fallback).strip():
+            continue
+        keys = alias_map.get(var_name, (var_name,))
+        if var_name == "profile_type":
+            if lead.get("is_open_profile") is True or lead.get("is_premium") is True or _has_val("profile_type"):
+                continue
+        elif _has_val(*keys):
+            continue
+        if var_name not in missing:
+            missing.append(var_name)
+    return missing
+
+
+def resolve_step_message_with_alternative(
+    primary_template: str,
+    alternative_template: str | None,
+    lead: dict[str, Any],
+    *,
+    strict_missing_check: bool = False,
+) -> dict[str, Any]:
+    """
+    Resolves a sequence step message with Dripify-style Alternative Message fallback:
+    - Checks if any profile variable in `primary_template` (without an inline fallback) is missing on `lead`.
+    - If missing and `alternative_template` is provided, renders `alternative_template` and sets `used_alternative=True`.
+    - If missing and no `alternative_template` is provided, returns `missing_variables` so callers can either
+      fail with `missing_profile_variable` (when `strict_missing_check=True` or optional variables are missing)
+      or use default interpolation.
+    """
+    primary_str = primary_template if isinstance(primary_template, str) else ""
+    alt_str = (alternative_template or "").strip() if isinstance(alternative_template, str) else ""
+    missing_primary = find_missing_profile_variables(primary_str, lead)
+
+    if missing_primary and alt_str:
+        missing_alt = find_missing_profile_variables(alt_str, lead)
+        rendered_alt = interpolate_template(alt_str, lead)
+        return {
+            "text": rendered_alt,
+            "used_alternative": True,
+            "missing_variables": missing_primary,
+            "missing_alternative_variables": missing_alt,
+            "failed_missing_variable": bool(strict_missing_check and missing_alt),
+        }
+
+    # Check if any non-default variable (not first_name/company_name which have legacy defaults unless strict) is missing
+    non_legacy_missing = [v for v in missing_primary if v not in ("first_name", "company_name", "company", "profile_type")]
+    rendered_primary = interpolate_template(primary_str, lead) if primary_str else ""
+    has_unreplaced_tokens = "{{" in rendered_primary or "}}" in rendered_primary
+    failed = bool(
+        has_unreplaced_tokens
+        or (strict_missing_check and missing_primary)
+        or (non_legacy_missing and not alt_str)
+    )
+    return {
+        "text": rendered_primary,
+        "used_alternative": False,
+        "missing_variables": missing_primary,
+        "missing_alternative_variables": [],
+        "failed_missing_variable": failed,
+    }
 
 
 def interpolate_template(template_str: str, lead: dict[str, Any]) -> str:
@@ -35,6 +154,14 @@ def interpolate_template(template_str: str, lead: dict[str, Any]) -> str:
 
     location_val = lead.get("location_raw") or lead.get("location") or custom_variables.get("location") or ""
     connections_val = _str_field("connections_count", "number_of_connections", "connections")
+    school_val = _str_field("university_name", "school", "education", "university")
+    profile_type_val = (
+        "Open Profile"
+        if lead.get("is_open_profile") is True
+        else "Premium"
+        if lead.get("is_premium") is True
+        else (_str_field("profile_type") or "Standard")
+    )
     built_in_variables = {
         "first_name": first_name,
         "last_name": last_name,
@@ -51,9 +178,13 @@ def interpolate_template(template_str: str, lead: dict[str, Any]) -> str:
         "connections_count": connections_val,
         "number_of_connections": connections_val,
         "top_skill": _str_field("top_skill", "skills"),
+        "company_followed": _str_field("company_followed", "followed_company"),
         "company_location": _str_field("company_location", "hq_location"),
         "summary": _str_field("summary", "about", "bio"),
-        "school": _str_field("school", "education", "university"),
+        "school": school_val,
+        "university_name": school_val,
+        "university": school_val,
+        "profile_type": profile_type_val,
         "years_in_company": _str_field("years_in_company", "company_tenure"),
         "years_in_role": _str_field("years_in_role", "role_tenure"),
         "mutual_connections": _str_field("mutual_connections", "shared_connections"),

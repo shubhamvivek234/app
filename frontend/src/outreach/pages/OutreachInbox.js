@@ -55,6 +55,7 @@ import {
   ChevronDown,
   ChevronUp,
   Mail,
+  MailOpen,
   Send,
   RefreshCw,
   Sparkles,
@@ -70,6 +71,12 @@ import {
   Calendar,
   FileText,
   X,
+  Play,
+  Pause,
+  Smile,
+  Paperclip,
+  Building,
+  MapPin,
 } from 'lucide-react';
 
 export default function OutreachInbox() {
@@ -132,11 +139,25 @@ export default function OutreachInbox() {
   const [tagsOpen, setTagsOpen] = useState(false);
   const [tagsList, setTagsList] = useState([]);
   const [tagFilter, setTagFilter] = useState('');
+  const [tagMatch, setTagMatch] = useState('all');
+  const [seedingTags, setSeedingTags] = useState(false);
+  const [togglingSequence, setTogglingSequence] = useState(false);
   const [inboxView, setInboxView] = useState('inbox');
   const [updatingTags, setUpdatingTags] = useState(false);
   const [newTagName, setNewTagName] = useState('');
   const [newTagColor, setNewTagColor] = useState('#3b82f6');
   const [showCreateTag, setShowCreateTag] = useState(false);
+
+  // Dripify Video #14 Smart Inbox parity: Unread filter, Emoji/Attachment composer, & Right Lead Sidebar
+  const [unreadOnly, setUnreadOnly] = useState(false);
+  const [markingUnread, setMarkingUnread] = useState(false);
+  const [leadSidebarOpen, setLeadSidebarOpen] = useState(false);
+  const [leadNoteInput, setLeadNoteInput] = useState('');
+  const [savingLeadNote, setSavingLeadNote] = useState(false);
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
+  const [attachmentFormOpen, setAttachmentFormOpen] = useState(false);
+  const [attachmentUrl, setAttachmentUrl] = useState('');
+  const [attachmentName, setAttachmentName] = useState('');
 
   const messagesEndRef = useRef(null);
   const threadsRequestId = useRef(0);
@@ -177,7 +198,15 @@ export default function OutreachInbox() {
       if (searchQuery.trim()) {
         url += `&search=${encodeURIComponent(searchQuery.trim())}`;
       }
-      if (tagFilter) url += `&tag_ids=${encodeURIComponent(tagFilter)}`;
+      if (tagFilter) {
+        url += `&tag_ids=${encodeURIComponent(tagFilter)}`;
+        if (tagFilter.includes(',') && tagMatch === 'any') {
+          url += '&tag_match=any';
+        }
+      }
+      if (unreadOnly) {
+        url += '&unread_only=true';
+      }
       const res = await inboxFetch(url, {
         headers: { Authorization: token ? `Bearer ${token}` : '' },
       });
@@ -506,12 +535,138 @@ export default function OutreachInbox() {
     }
   };
 
+  const handleSeedDefaultTags = async () => {
+    if (seedingTags) return;
+    setSeedingTags(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await inboxFetch('/api/v1/outreach/inbox/tags/seed-defaults', {
+        method: 'POST',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (res.ok) {
+        const seeded = await res.json();
+        setTagsList(seeded || []);
+        toast.success('Default sales tags loaded');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'Failed to load default tags');
+      }
+    } catch (err) {
+      console.error('Failed to seed default tags:', err);
+      toast.error('Failed to load default tags');
+    } finally {
+      setSeedingTags(false);
+    }
+  };
+
+  const handleToggleLeadSequence = async () => {
+    if (!selectedThread?.lead_id || togglingSequence) return;
+    const isPaused = selectedThread.lead_execution_state === 'paused' || selectedThread.lead_execution_state === 'replied' || Boolean(selectedThread.lead_pause_reason);
+    const endpoint = isPaused ? 'resume-sequence' : 'pause-sequence';
+    setTogglingSequence(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await inboxFetch(`/api/v1/outreach/inbox/${selectedThread.id}/${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: isPaused ? undefined : JSON.stringify({ reason: 'Paused from Inbox conversation' }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const nextState = data.lead_execution_state || (isPaused ? 'queued' : 'paused');
+        const nextReason = data.lead_pause_reason !== undefined ? data.lead_pause_reason : (isPaused ? null : 'Paused from Inbox conversation');
+        setSelectedThread((prev) => prev && prev.id === selectedThread.id ? {
+          ...prev,
+          lead_execution_state: nextState,
+          lead_pause_reason: nextReason,
+        } : prev);
+        setThreads((prev) => prev.map((t) => t.id === selectedThread.id ? {
+          ...t,
+          lead_execution_state: nextState,
+          lead_pause_reason: nextReason,
+        } : t));
+        toast.success(isPaused ? 'Lead sequence resumed — touches will continue where they left off' : 'Lead sequence paused');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || `Failed to ${isPaused ? 'resume' : 'pause'} sequence`);
+      }
+    } catch (err) {
+      console.error('Failed to toggle lead sequence:', err);
+      toast.error('Failed to update lead sequence status');
+    } finally {
+      setTogglingSequence(false);
+    }
+  };
+
+  const handleMarkAsUnread = async () => {
+    if (!selectedThread || markingUnread) return;
+    setMarkingUnread(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await inboxFetch(`/api/v1/outreach/inbox/${selectedThread.id}/mark-unread`, {
+        method: 'POST',
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (res.ok) {
+        setSelectedThread((prev) => prev ? { ...prev, unread_count: 1 } : prev);
+        setThreads((prev) => prev.map((t) => t.id === selectedThread.id ? { ...t, unread_count: 1 } : t));
+        toast.success('Conversation marked as unread');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'Could not mark conversation as unread');
+      }
+    } catch (err) {
+      console.error('Failed to mark unread:', err);
+      toast.error('Could not mark conversation as unread');
+    } finally {
+      setMarkingUnread(false);
+    }
+  };
+
+  const handleAddLeadNoteFromInbox = async (e) => {
+    if (e) e.preventDefault();
+    if (!selectedThread || !leadNoteInput.trim() || savingLeadNote) return;
+    setSavingLeadNote(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await inboxFetch(`/api/v1/outreach/inbox/${selectedThread.id}/notes`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({ body: leadNoteInput.trim() }),
+      });
+      if (res.ok) {
+        const created = await res.json();
+        setSelectedThread((prev) => prev ? {
+          ...prev,
+          lead_notes: [created, ...(prev.lead_notes || [])],
+        } : prev);
+        setLeadNoteInput('');
+        toast.success('Note saved and synced with Lead Profile');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'Could not save note');
+      }
+    } catch (err) {
+      console.error('Failed to save lead note from inbox:', err);
+      toast.error('Could not save note');
+    } finally {
+      setSavingLeadNote(false);
+    }
+  };
+
 
   useEffect(() => {
     const timer = setTimeout(() => fetchThreads(), searchQuery ? 250 : 0);
     return () => { clearTimeout(timer); threadsRequestId.current += 1; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedAccountId, filterSource, searchQuery, tagFilter, inboxView]);
+  }, [selectedAccountId, filterSource, searchQuery, tagFilter, tagMatch, inboxView, unreadOnly]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -598,21 +753,36 @@ export default function OutreachInbox() {
     setIsSending(true);
     try {
       const token = localStorage.getItem('token');
+      const replyPayload = {
+        body,
+        request_id: submission.requestId,
+        context: {
+          account_id: thread.account_id,
+          conversation_urn: thread.conversation_urn,
+          thread_revision: thread.thread_revision || 0,
+        },
+      };
+      if (attachmentUrl.trim()) {
+        replyPayload.attachment_url = attachmentUrl.trim();
+        if (attachmentName.trim()) {
+          replyPayload.attachment_name = attachmentName.trim();
+        }
+      }
       const res = await inboxFetch(`/api/v1/outreach/inbox/${thread.id}/reply`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: token ? `Bearer ${token}` : '',
         },
-        body: JSON.stringify({ body, request_id: submission.requestId, context: {
-          account_id: thread.account_id, conversation_urn: thread.conversation_urn,
-          thread_revision: thread.thread_revision || 0,
-        } }),
+        body: JSON.stringify(replyPayload),
       });
 
       if (res.ok) {
         const data = await res.json();
         if (data.status !== 'queued' || !data.job_id) throw new Error('Reply was not queued');
+        setAttachmentUrl('');
+        setAttachmentName('');
+        setAttachmentFormOpen(false);
         submission = { ...submission, jobId: data.job_id, phase: 'pending' };
         saveSubmission(key, submission);
         const job = await waitForInboxJob(data.job_id, () => mounted.current);
@@ -794,17 +964,78 @@ export default function OutreachInbox() {
           </div>
 
           {/* Accounts Selector Dropdown Button matching media_1790103710555.png */}
-          <select aria-label="Conversation view" value={inboxView} onChange={(event) => setInboxView(event.target.value)}
-            className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700">
-            <option value="inbox">Inbox</option>
-            <option value="starred">Starred · in inbox</option>
-            <option value="archived">Archived</option>
-            <option value="all">All conversations</option>
-          </select>
-          <select aria-label="Filter conversations by lead tag" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)} className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700">
+          <div className="flex items-center gap-2">
+            <select aria-label="Conversation view" value={inboxView} onChange={(event) => setInboxView(event.target.value)}
+              className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700">
+              <option value="inbox">Inbox</option>
+              <option value="starred">Starred · in inbox</option>
+              <option value="archived">Archived</option>
+              <option value="all">All conversations</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => setUnreadOnly((prev) => !prev)}
+              className={`px-2.5 py-2 rounded-xl border text-[11px] font-semibold transition-all shrink-0 ${
+                unreadOnly
+                  ? 'bg-indigo-50 text-[#5145cd] border-indigo-300 ring-1 ring-[#5145cd]/20'
+                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+              }`}
+              title="Filter unread conversations only"
+            >
+              Unread only
+            </button>
+          </div>
+          <select aria-label="Filter conversations by lead tag" value={tagFilter.includes(',') ? '' : tagFilter} onChange={(event) => setTagFilter(event.target.value)} className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700">
             <option value="">All lead tags</option>
             {tagsList.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
           </select>
+          {tagsList.length > 0 && (
+            <div className="space-y-1.5">
+              <div className="flex flex-wrap items-center gap-1">
+                {tagsList.map((tag) => {
+                  const selectedIds = tagFilter ? tagFilter.split(',').filter(Boolean) : [];
+                  const active = selectedIds.includes(tag.id);
+                  return (
+                    <button
+                      key={`chip:${tag.id}`}
+                      type="button"
+                      onClick={() => {
+                        const next = active ? selectedIds.filter((id) => id !== tag.id) : [...selectedIds, tag.id];
+                        setTagFilter(next.join(','));
+                      }}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border transition-all ${
+                        active ? 'ring-1 ring-[#5145cd] bg-indigo-50 text-[#5145cd] border-indigo-300' : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                      }`}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: tag.color || '#6366f1' }} />
+                      {tag.name}
+                    </button>
+                  );
+                })}
+              </div>
+              {tagFilter.includes(',') && (
+                <div className="flex items-center justify-between text-[10px] text-gray-500 px-1">
+                  <span>Multi-tag match:</span>
+                  <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setTagMatch('all')}
+                      className={`px-2 py-0.5 rounded-md font-semibold ${tagMatch === 'all' ? 'bg-white text-gray-900 shadow-2xs' : 'text-gray-500'}`}
+                    >
+                      Match All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTagMatch('any')}
+                      className={`px-2 py-0.5 rounded-md font-semibold ${tagMatch === 'any' ? 'bg-white text-gray-900 shadow-2xs' : 'text-gray-500'}`}
+                    >
+                      Match Any
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           <div className="relative">
             <button
               type="button"
@@ -1060,6 +1291,37 @@ export default function OutreachInbox() {
 
               {/* Action Tools & Status matching Unravler (unravler_inbox_reminders.jpg) */}
               <div className="flex items-center gap-2">
+                {/* Pause / Resume Automated Sequence Button (Dripify Inbox Parity) */}
+                {selectedThread.lead_id && (
+                  <button
+                    type="button"
+                    onClick={handleToggleLeadSequence}
+                    disabled={togglingSequence}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all shadow-2xs ${
+                      selectedThread.lead_execution_state === 'paused' || selectedThread.lead_execution_state === 'replied' || selectedThread.lead_pause_reason
+                        ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-300'
+                        : 'bg-amber-50/70 hover:bg-amber-100 text-amber-800 border-amber-200'
+                    }`}
+                    title={
+                      selectedThread.lead_execution_state === 'paused' || selectedThread.lead_execution_state === 'replied' || selectedThread.lead_pause_reason
+                        ? `Sequence paused (${selectedThread.lead_pause_reason || 'lead replied'}). Click to unpause and continue where it left off.`
+                        : 'Pause automated campaign sequence touches for this lead'
+                    }
+                  >
+                    {selectedThread.lead_execution_state === 'paused' || selectedThread.lead_execution_state === 'replied' || selectedThread.lead_pause_reason ? (
+                      <>
+                        <Play className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Resume Sequence</span>
+                      </>
+                    ) : (
+                      <>
+                        <Pause className="w-3.5 h-3.5 text-amber-600" />
+                        <span>Pause Sequence</span>
+                      </>
+                    )}
+                  </button>
+                )}
+
                 {/* Reminders Button [S] */}
                 <button
                   type="button"
@@ -1111,6 +1373,33 @@ export default function OutreachInbox() {
                   <option value="objection">Question / Objection</option>
                   <option value="not_interested">Not Interested</option>
                 </select>
+
+                {/* Mark as Unread Button (Dripify Video #14 Parity) */}
+                <button
+                  type="button"
+                  onClick={handleMarkAsUnread}
+                  disabled={markingUnread}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 text-xs font-semibold transition-all shadow-2xs disabled:opacity-50"
+                  title="Mark conversation as unread"
+                >
+                  <MailOpen className="w-3.5 h-3.5 text-gray-400" />
+                  <span>Mark Unread</span>
+                </button>
+
+                {/* Lead Details & Notes Right Sidebar Toggle (Dripify Video #14 Parity) */}
+                <button
+                  type="button"
+                  onClick={() => setLeadSidebarOpen((prev) => !prev)}
+                  className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all shadow-2xs ${
+                    leadSidebarOpen
+                      ? 'bg-indigo-50 text-[#5145cd] border-indigo-300'
+                      : 'bg-white hover:bg-gray-50 text-gray-700 border-gray-200'
+                  }`}
+                  title="Toggle Lead Contact Details & Synced Notes"
+                >
+                  <User className="w-3.5 h-3.5" />
+                  <span>Lead Info</span>
+                </button>
               </div>
             </div>
 
@@ -1209,13 +1498,99 @@ export default function OutreachInbox() {
                 ))}
               </div>
 
+              {/* Emoji Picker Popover (Dripify Video #14 Parity) */}
+              {emojiPickerOpen && (
+                <div className="flex flex-wrap items-center gap-1.5 p-2 rounded-xl border border-gray-200 bg-gray-50 text-sm">
+                  {['👋', '👍', '🙌', '🚀', '💡', '🤝', '🎯', '🔥', '✅', '🙏', '😊', '📅'].map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      onClick={() => {
+                        setReplyText((prev) => `${prev}${emoji}`);
+                        setEmojiPickerOpen(false);
+                      }}
+                      className="p-1 hover:bg-white rounded-lg transition-colors"
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Attachment Input Row (Dripify Video #14 Parity) */}
+              {attachmentFormOpen && (
+                <div className="flex flex-wrap items-center gap-2 p-2.5 rounded-xl border border-indigo-100 bg-indigo-50/40 text-xs">
+                  <Paperclip className="w-3.5 h-3.5 text-[#5145cd] shrink-0" />
+                  <input
+                    type="url"
+                    aria-label="Attachment URL"
+                    placeholder="https://... (Document, Deck, or Image URL)"
+                    value={attachmentUrl}
+                    onChange={(e) => setAttachmentUrl(e.target.value)}
+                    className="flex-1 min-w-[180px] rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs"
+                  />
+                  <input
+                    type="text"
+                    aria-label="Attachment filename"
+                    placeholder="Filename (optional)"
+                    value={attachmentName}
+                    onChange={(e) => setAttachmentName(e.target.value)}
+                    className="w-40 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => { setAttachmentUrl(''); setAttachmentName(''); setAttachmentFormOpen(false); }}
+                    className="text-gray-400 hover:text-gray-700 p-1"
+                    title="Remove attachment"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
               {/* Textarea Composer */}
               <div className="flex items-end gap-2 bg-[#f8f9fa] border border-gray-200 rounded-2xl p-2.5 focus-within:ring-2 focus-within:ring-indigo-500/20 focus-within:border-[#5145cd] focus-within:bg-white transition-all shadow-2xs">
+                <div className="flex items-center gap-1 pb-1">
+                  <button
+                    type="button"
+                    onClick={() => setEmojiPickerOpen((prev) => !prev)}
+                    className="p-1.5 text-gray-400 hover:text-[#5145cd] hover:bg-gray-100 rounded-lg transition-colors"
+                    title="Insert emoji"
+                  >
+                    <Smile className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAttachmentFormOpen((prev) => !prev)}
+                    className={`p-1.5 rounded-lg transition-colors ${
+                      attachmentUrl ? 'text-[#5145cd] bg-indigo-50' : 'text-gray-400 hover:text-[#5145cd] hover:bg-gray-100'
+                    }`}
+                    title="Attach file or link"
+                  >
+                    <Paperclip className="w-4 h-4" />
+                  </button>
+                </div>
                 <textarea
                   rows={2}
                   placeholder={`Reply to ${selectedThread.lead_name}...`}
                   value={replyText}
-                  onChange={(e) => setReplyText(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const match = val.match(/(?:^|\s)\/([a-zA-Z0-9_-]+)\s$/);
+                    if (match && snippetsList.length > 0) {
+                      const shortcutKey = match[1].toLowerCase();
+                      const matchedSnippet = snippetsList.find(
+                        (s) => s.shortcut && s.shortcut.toLowerCase() === shortcutKey
+                      );
+                      if (matchedSnippet) {
+                        const prefix = val.slice(0, val.length - match[0].length);
+                        const leadingSpace = match[0].startsWith(' ') || match[0].startsWith('\n') ? match[0][0] : '';
+                        setReplyText(`${prefix}${leadingSpace}${matchedSnippet.body} `);
+                        return;
+                      }
+                    }
+                    setReplyText(val);
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault();
@@ -1256,6 +1631,102 @@ export default function OutreachInbox() {
           </div>
         )}
       </div>
+
+      {/* Right Column: Lead Contact Details & Synced Notes Sidebar (Dripify Video #14 Parity) */}
+      {selectedThread && leadSidebarOpen && (
+        <div className="w-[310px] border-l border-gray-200 bg-white flex flex-col shrink-0 overflow-y-auto p-4 space-y-5">
+          <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500">Contact Details</h4>
+            <button
+              type="button"
+              onClick={() => setLeadSidebarOpen(false)}
+              className="p-1 text-gray-400 hover:bg-gray-100 rounded-lg"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Profile Summary */}
+          <div className="space-y-2 text-xs">
+            <div className="font-bold text-gray-900 text-sm">{selectedThread.lead_name}</div>
+            {(selectedThread.lead_headline || selectedThread.lead_title) && (
+              <p className="text-gray-600 text-[11px]">{selectedThread.lead_headline || selectedThread.lead_title}</p>
+            )}
+            {selectedThread.lead_company && (
+              <div className="flex items-center gap-1.5 text-gray-600">
+                <Building className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                <span className="truncate">{selectedThread.lead_company}</span>
+              </div>
+            )}
+            {selectedThread.lead_location && (
+              <div className="flex items-center gap-1.5 text-gray-600">
+                <MapPin className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                <span className="truncate">{selectedThread.lead_location}</span>
+              </div>
+            )}
+            {(selectedThread.lead_linkedin_email || selectedThread.lead_email) && (
+              <div className="flex items-center gap-1.5 text-gray-600">
+                <Mail className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                <span className="truncate font-mono text-[11px]">{selectedThread.lead_linkedin_email || selectedThread.lead_email}</span>
+              </div>
+            )}
+            {selectedThread.campaign_name && (
+              <div className="pt-1">
+                <span className="text-[10px] font-bold uppercase text-gray-400 block">Campaign</span>
+                <span className="text-xs font-semibold text-[#5145cd]">{selectedThread.campaign_name}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Synced Lead Notes */}
+          <div className="pt-3 border-t border-gray-100 space-y-3 flex-1 flex flex-col">
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500">Lead Notes</h4>
+              <p className="text-[10px] text-gray-400">Synced with Lead Profile across campaigns</p>
+            </div>
+
+            {selectedThread.lead_id ? (
+              <form onSubmit={handleAddLeadNoteFromInbox} className="space-y-2">
+                <textarea
+                  rows={2}
+                  value={leadNoteInput}
+                  onChange={(e) => setLeadNoteInput(e.target.value)}
+                  placeholder="Write a note about this lead..."
+                  className="w-full rounded-xl border border-gray-200 p-2.5 text-xs text-gray-800 focus:border-[#5145cd] focus:outline-none resize-none"
+                />
+                <button
+                  type="submit"
+                  disabled={savingLeadNote || !leadNoteInput.trim()}
+                  className="w-full py-1.5 bg-[#5145cd] hover:bg-[#4338ca] text-white font-bold text-xs rounded-xl disabled:opacity-50"
+                >
+                  {savingLeadNote ? 'Saving…' : 'Save Note'}
+                </button>
+              </form>
+            ) : (
+              <p className="text-[11px] text-amber-700 bg-amber-50 p-2 rounded-lg border border-amber-200">
+                Link this conversation to a CRM lead to save synced profile notes.
+              </p>
+            )}
+
+            <div className="space-y-2 overflow-y-auto">
+              {(selectedThread.lead_notes || []).map((noteItem) => (
+                <div key={noteItem.id} className="p-2.5 rounded-xl bg-gray-50 border border-gray-200/80 text-xs space-y-1">
+                  <p className="text-gray-800 whitespace-pre-wrap">{noteItem.body || noteItem.note}</p>
+                  <div className="flex items-center justify-between text-[10px] text-gray-400">
+                    <span>{noteItem.author_name || 'Team'}</span>
+                    {noteItem.created_at && (
+                      <span>{new Date(noteItem.created_at).toLocaleDateString()}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {!(selectedThread.lead_notes || []).length && (
+                <p className="text-[11px] text-gray-400 italic">No notes recorded yet.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── REMINDERS MODAL (unravler_inbox_reminders.jpg) ──────────────────── */}
       {remindersOpen && (
@@ -1562,6 +2033,17 @@ export default function OutreachInbox() {
 
             {/* Tag Items */}
             {selectedThread && selectedThread.tags_editable === false && <p className="text-xs text-amber-700">This conversation needs a linked CRM lead before tags can be assigned. Older conversation labels are preserved.</p>}
+            <div className="flex items-center justify-between bg-indigo-50/60 border border-indigo-100 rounded-xl px-3 py-2">
+              <span className="text-[11px] text-gray-600 font-medium">Need standard sales stage tags?</span>
+              <button
+                type="button"
+                onClick={handleSeedDefaultTags}
+                disabled={seedingTags}
+                className="text-[11px] font-bold text-[#5145cd] hover:underline disabled:opacity-50"
+              >
+                {seedingTags ? 'Loading…' : 'Load Default Sales Tags'}
+              </button>
+            </div>
             <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
               {tagsList.map((tag) => {
                 const isChecked = (selectedThread?.tag_ids || []).includes(tag.id);

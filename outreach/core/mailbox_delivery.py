@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from email.policy import SMTP
@@ -15,6 +16,7 @@ from outreach.core.provider_custody import MailboxAccess
 from outreach.core.session_custody import custody_mode
 
 
+logger = logging.getLogger(__name__)
 GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
 GRAPH_SEND_URL = "https://graph.microsoft.com/v1.0/me/sendMail"
 
@@ -153,14 +155,15 @@ async def send_outreach_email(
             raise
         await operations.finish(workspace_id, op_key, {"status": "uncertain", "reason": "Provider request outcome is unknown"})
         return {"status": "uncertain", "reason": "Provider request outcome is unknown"}
-    except Exception:
+    except Exception as exc:
         parent = current_request_parent()
         possible = bool(parent and parent.mutation_attempted)
+        logger.warning("Mailbox delivery failed for workspace=%s possible=%s (%s)", workspace_id, possible, type(exc).__name__)
         result = {"status": "uncertain" if possible else "not_submitted", "reason": "Provider request outcome is unknown" if possible else "mailbox_unavailable"}
         try:
             await operations.finish(workspace_id, op_key, result)
-        except Exception:
-            pass
+        except Exception as fin_exc:
+            logger.debug("Mailbox delivery operation finish skipped (%s)", type(fin_exc).__name__)
         if not possible:
             raise RequestDenied("mailbox_unavailable") from None
         return result

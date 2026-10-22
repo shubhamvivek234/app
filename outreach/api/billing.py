@@ -5,6 +5,7 @@ and records a paid entitlement using the private operations command. Customer
 endpoints can request access or schedule cancellation, never grant access.
 """
 from datetime import datetime, timezone
+import logging
 import re
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -20,6 +21,7 @@ from outreach.core.paid_access import (
 )
 
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/billing", tags=["LinkedIn Outreach Billing"])
 
 
@@ -162,8 +164,10 @@ async def cancel_subscription(
                                        and current.get(field) == entitlement.get(field) for field in fields)
             if not (same_term and entitlement_is_active(current) and current.get('cancel_at_period_end') is True):
                 raise HTTPException(status_code=409, detail='Paid outreach period changed. Reload billing before cancelling.')
-    except PyMongoError:
+    except PyMongoError as exc:
+        logger.warning("Billing cancellation confirmation failed for workspace=%s (%s)", workspace_id, type(exc).__name__)
         raise HTTPException(status_code=503, detail='Could not confirm cancellation. Reload billing before retrying.') from None
+    logger.info("Outreach subscription cancellation scheduled for workspace=%s", workspace_id)
     return {
         "status": "cancellation_scheduled", "paid_through": paid_through.isoformat(),
         "message": "Outreach stays available until the paid period ends. The sender IP remains reserved through its already-paid provider term. Our operator must disable provider auto-renewal separately.",

@@ -1,5 +1,7 @@
 """Private reference/digest-only installed recording storage conversion."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import argparse
 import asyncio

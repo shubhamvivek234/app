@@ -170,3 +170,53 @@ async def test_reply_review_retains_the_candidate_identity_query():
     reply_query = next(call.args[0] for call in db.outreach_leads.find.call_args_list if "$and" in call.args[0])
     assert reply_query["workspace_id"] == "w" and "$or" in reply_query
     assert any("identifiers.normalized_url" in clause or "linkedin_url" in clause for clause in reply_query["$or"])
+
+
+@pytest.mark.asyncio
+async def test_seed_default_sales_tags_and_multi_tag_any_all_filtering():
+    db = Database(
+        outreach_leads=[
+            {"id": "l1", "workspace_id": "w", "first_name": "Ada", "execution_state": "paused", "pause_reason": "Lead replied to outreach"},
+            {"id": "l2", "workspace_id": "w", "first_name": "Grace", "execution_state": "queued"},
+        ],
+        outreach_inbox_threads=[
+            {"id": "t1", "workspace_id": "w", "lead_id": "l1", "last_message_at": "2026-10-21T00:00:00Z"},
+            {"id": "t2", "workspace_id": "w", "lead_id": "l2", "last_message_at": "2026-10-20T00:00:00Z"},
+        ],
+    )
+    seeded = await leads.seed_default_lead_tags(current_user=USER, db=db)
+    assert len(seeded) == 7
+    names = {t["name"] for t in seeded}
+    assert {"Interested", "Very interested", "High priority", "Wrong timing", "Not interested", "Ghosted", "Meeting booked"} == names
+    # Calling seed again is idempotent
+    seeded_again = await inbox.seed_inbox_default_tags(current_user=USER, db=db)
+    assert len(seeded_again) == 7
+
+    by_name = {t["name"]: t["id"] for t in seeded}
+    await tags.assign_tags(db, "w", ["l1"], by_name["Interested"], "add")
+    await tags.assign_tags(db, "w", ["l1"], by_name["High priority"], "add")
+    await tags.assign_tags(db, "w", ["l2"], by_name["Interested"], "add")
+
+    # AND match ("all") with Interested + High priority returns only l1
+    both_tags = f"{by_name['Interested']},{by_name['High priority']}"
+    res_all = await leads.list_leads(tag_ids=both_tags, tag_match="all", skip=0, limit=50, current_user=USER, db=db)
+    assert [row["id"] for row in res_all["leads"]] == ["l1"]
+
+    # OR match ("any") with Interested + High priority returns both l1 and l2
+    res_any = await leads.list_leads(tag_ids=both_tags, tag_match="any", skip=0, limit=50, current_user=USER, db=db)
+    assert {row["id"] for row in res_any["leads"]} == {"l1", "l2"}
+
+    # Inbox threads also support tag_match="any" vs "all" and hydrate lead_execution_state
+    threads_all = await inbox.list_inbox_threads(tag_ids=both_tags, tag_match="all", current_user=USER, db=db)
+    assert [t["id"] for t in threads_all] == ["t1"]
+    assert threads_all[0]["lead_execution_state"] == "paused"
+
+    threads_any = await inbox.list_inbox_threads(tag_ids=both_tags, tag_match="any", current_user=USER, db=db)
+    assert {t["id"] for t in threads_any} == {"t1", "t2"}
+
+    # Resume and Pause sequence directly from Inbox thread
+    resumed = await inbox.resume_thread_lead_sequence("t1", current_user=USER, db=db)
+    assert resumed["lead_execution_state"] == "queued"
+    paused = await inbox.pause_thread_lead_sequence("t1", inbox.InboxPauseSequenceRequest(reason="Manual review"), current_user=USER, db=db)
+    assert paused["lead_execution_state"] == "paused"
+    assert paused["lead_pause_reason"] == "Manual review"

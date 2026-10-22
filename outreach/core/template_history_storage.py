@@ -3,6 +3,8 @@
 No startup or customer request installs indexes. TTL, partial or conflicting
 definitions hold preparation/readiness; this module never drops or repairs one.
 """
+import logging
+logger = logging.getLogger(__name__)
 from typing import Any
 
 from fastapi import HTTPException

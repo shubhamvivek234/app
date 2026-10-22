@@ -5,6 +5,8 @@ actual IAM/egress/remote revocation are outside this protocol. No adoption of a
 new key or unproven profile, voice generation, campaign resume or send grants.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import asyncio
 from datetime import datetime, timedelta

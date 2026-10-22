@@ -1,5 +1,6 @@
 """Consent-bound Voice Studio API: queue work, read status and saved previews."""
 import base64
+import logging
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Request
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
@@ -12,6 +13,8 @@ from outreach.core.voice_policy import MAX_PCM_BYTES
 from outreach.core.dag_compiler import interpolate_template
 from outreach.core.voice_selection import assignment_ids, require_reference
 from outreach.core.workspace_scope import workspace_scope
+
+logger = logging.getLogger(__name__)
 
 class StudioRoute(APIRoute):
     """Cap clone bodies before Starlette buffers the multipart form."""
@@ -80,7 +83,8 @@ async def queued(db, ws, actor, op, request, **kwargs):
         return public_job(await VoiceStudio(db).queue(ws, actor, op, request, **kwargs))
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from None
-    except Exception:
+    except Exception as exc:
+        logger.warning("Voice Studio queue failed for workspace=%s op=%s (%s)", ws, op, type(exc).__name__)
         raise HTTPException(503, 'Voice Studio storage is unavailable; retry this same request') from None
 
 

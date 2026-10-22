@@ -1,5 +1,7 @@
 """Private drained strict-Fernet to scoped storage conversion; no provider calls."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 from copy import deepcopy
 from typing import Any
 import uuid

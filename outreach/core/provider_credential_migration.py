@@ -1,5 +1,7 @@
 """Private drained mailbox/Hunter conversion; no provider calls or execution grant."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 import os
 from typing import Any

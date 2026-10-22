@@ -5,6 +5,8 @@ The byte digest proves integrity, not origin. Global UID tombstones intentionall
 use digest identity rather than a tenant filter, with the exact import session.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from dataclasses import dataclass
 from datetime import datetime, timezone

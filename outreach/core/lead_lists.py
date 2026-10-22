@@ -1,5 +1,7 @@
 """Campaign audience metadata. Membership never creates an enrollment or send path."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from datetime import datetime, timezone
 import re

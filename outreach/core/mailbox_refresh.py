@@ -1,5 +1,7 @@
 """Worker refresh with exact credential capture and durable uncertainty fencing."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 from copy import deepcopy
 from datetime import timedelta, timezone
 import secrets

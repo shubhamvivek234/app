@@ -3,6 +3,8 @@
 The permission/erasure dependency remains authoritative. These are request
 admission observations, not distributed in-flight revocation or replay receipts.
 """
+import logging
+logger = logging.getLogger(__name__)
 from dataclasses import dataclass
 
 from bson import ObjectId

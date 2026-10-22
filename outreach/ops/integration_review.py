@@ -1,5 +1,7 @@
 """Private database-only integration review/migration; no secrets or HTTP arguments."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 import argparse
 import asyncio
 import json

@@ -1,5 +1,6 @@
 """One resolved tenant for outreach permission, erasure and handler admission."""
 from typing import Any
+import logging
 
 from fastapi import Depends, HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -7,6 +8,8 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from api.deps import require_permission
 from db.mongo import get_db
 from outreach.core.erasure import require_open_workspace
+
+logger = logging.getLogger(__name__)
 
 
 def workspace_id(user: dict) -> str:

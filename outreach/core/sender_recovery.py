@@ -1,4 +1,6 @@
 """Recover a proven cooled-down connection without restarting execution."""
+import logging
+logger = logging.getLogger(__name__)
 import asyncio
 from datetime import datetime, timezone
 from typing import Any

@@ -4,6 +4,8 @@ Prepared material belongs to one bounded inventory operation. Key possession
 does not prove ownership of a provider account, proxy or subscription.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from dataclasses import dataclass, field
 import hmac

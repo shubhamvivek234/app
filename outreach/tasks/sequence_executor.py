@@ -15,7 +15,12 @@ from outreach.models import LeadExecutionState, SequenceNodeType
 from outreach.core.rate_limiter import OutboundRateLimiter
 from outreach.core.proxy_manager import JITProxyManager
 from outreach.core.paid_access import get_active_entitlement, sender_is_ready
-from outreach.core.dag_compiler import contains_ai_prompt_token, interpolate_template, select_step_variant
+from outreach.core.dag_compiler import (
+    contains_ai_prompt_token,
+    interpolate_template,
+    select_step_variant,
+    resolve_step_message_with_alternative,
+)
 from outreach.core.safety_shield import SafetyShield
 from outreach.core.sequence_capabilities import sequence_capability_map
 from outreach.core.authorization import authorization_snapshot, canonical_hash, dispatch_block_reason
@@ -88,6 +93,11 @@ async def _preflight_dispatch(db, lead: dict, expected: dict, node_type: str, *,
             withdrawn_dt = _utc(current_lead.get('withdrawn_at'))
             if withdrawn_dt and (datetime.now(timezone.utc) - withdrawn_dt) < timedelta(days=21):
                 return 'reconnect_cooldown_21_days'
+        if node_type == 'connection_request' and account.get('weekly_invite_limit_reached') is True:
+            from outreach.core.paid_access import _utc
+            reset_dt = _utc(account.get('weekly_invite_reset_at'))
+            if reset_dt is None or reset_dt > datetime.now(timezone.utc):
+                return 'weekly_invite_limit_reached'
         for text in content_templates({"id": current_lead.get('current_node_id'), **current_node}, lead=current_lead).values():
             rendered = interpolate_template(text, current_lead)
             if '{{' in rendered or '}}' in rendered:
@@ -421,6 +431,7 @@ class SequenceExecutor:
         try:
             return await SequenceExecutor._execute_lead_step(lead_id, db, workspace_id=workspace_id)
         except RequestDenied as exc:
+            logger.info("Lead step execution deferred lead_id=%s workspace_id=%s reason=%s", lead_id, workspace_id, exc.reason)
             return {"status": "request_deferred", "reason": exc.reason, "retry_after": exc.retry_after, "not_submitted": True}
 
     @staticmethod
@@ -488,7 +499,8 @@ class SequenceExecutor:
         compiled = sequence["compiled_dag"]
         try:
             checked_compiled(compiled)
-        except DAGValidationError:
+        except DAGValidationError as exc:
+            logger.warning("Compiled DAG validation failed for lead_id=%s workspace_id=%s (%s)", lead_id, workspace_id, type(exc).__name__)
             return {"status": "sequence_review_required", "not_submitted": True,
                     "reason": "Review the saved execution graph before starting new work."}
         nodes_lookup = compiled.get("nodes", {})
@@ -517,7 +529,8 @@ class SequenceExecutor:
         try:
             validate_pinned_sequence(sequence)
             wait_started = waiting_start(lead, node_type, datetime.now(timezone.utc))
-        except DAGValidationError:
+        except DAGValidationError as exc:
+            logger.warning("Pinned sequence validation failed for lead_id=%s workspace_id=%s (%s)", lead_id, workspace_id, type(exc).__name__)
             return {"status": "sequence_review_required", "not_submitted": True,
                     "reason": "Review and save a valid sequence revision before starting new work."}
         if contains_ai_prompt_token(node.get("config", {})):
@@ -529,6 +542,57 @@ class SequenceExecutor:
                 })
             return {"status": "action_failed", "action": node_type, "reason": reason}
 
+        # Pre-dispatch Dripify LinkedIn delivery & variable safety checks (Video #13 & #15):
+        # 1. Alternative message resolution & missing profile variable check
+        # 2. Connection request note > 300 characters check
+        _, precheck_config = select_step_variant({"id": curr_node_id, **node}, lead)
+        if node_type in (SequenceNodeType.CONNECTION_REQUEST, SequenceNodeType.SEND_MESSAGE, SequenceNodeType.INMAIL):
+            alt_template = precheck_config.get("alternative_message") or precheck_config.get("fallback") or ""
+            if node_type == SequenceNodeType.CONNECTION_REQUEST:
+                primary_tpl = precheck_config.get("note", "")
+            elif node_type == SequenceNodeType.INMAIL:
+                primary_tpl = precheck_config.get("body") or precheck_config.get("message") or "Hi {{first_name}}"
+            else:
+                primary_tpl = precheck_config.get("body", "Hi {{first_name}}")
+            strict_vars = bool(precheck_config.get("require_all_variables"))
+            resolved_msg = resolve_step_message_with_alternative(
+                primary_tpl,
+                alt_template,
+                lead,
+                strict_missing_check=strict_vars,
+            ) if primary_tpl else {"text": "", "used_alternative": False, "missing_variables": [], "failed_missing_variable": False}
+            if resolved_msg.get("failed_missing_variable"):
+                missing_list = ", ".join(resolved_msg.get("missing_variables") or [])
+                reason = f"Missing profile variable ({missing_list}) on lead profile and no alternative message set."
+                await _advance_lead(db, lead, {
+                    "execution_state": LeadExecutionState.FAILED,
+                    "failure_code": "missing_profile_variable",
+                    "failure_reason": reason[:180],
+                    "next_action_due_at": None,
+                    "updated_at": datetime.now(timezone.utc),
+                })
+                return {
+                    "status": "action_failed",
+                    "action": node_type,
+                    "failure_code": "missing_profile_variable",
+                    "reason": reason[:180],
+                }
+            if node_type == SequenceNodeType.CONNECTION_REQUEST and len(resolved_msg.get("text") or "") > 300:
+                reason = f"Connection request note exceeds LinkedIn's 300-character limit ({len(resolved_msg['text'])} chars)."
+                await _advance_lead(db, lead, {
+                    "execution_state": LeadExecutionState.FAILED,
+                    "failure_code": "note_exceeds_300_chars",
+                    "failure_reason": reason[:180],
+                    "next_action_due_at": None,
+                    "updated_at": datetime.now(timezone.utc),
+                })
+                return {
+                    "status": "action_failed",
+                    "action": node_type,
+                    "failure_code": "note_exceeds_300_chars",
+                    "reason": reason[:180],
+                }
+
         from outreach.tasks.connection_recheck import recheck_connection
         connection_result = await recheck_connection(db, lead, campaign, sequence, account, node_type)
         if connection_result is not None:
@@ -537,6 +601,33 @@ class SequenceExecutor:
         if node_type in (SequenceNodeType.HAS_DATA_IN_COLUMN, SequenceNodeType.IF_EMAIL_AVAILABLE):
             from outreach.core.sequence_conditions import decide
             return await decide(db, lead)
+
+        if node_type == SequenceNodeType.ADD_TAG:
+            _, effective_config = select_step_variant({"id": curr_node_id, **node}, lead)
+            tag_val = str(effective_config.get("tag_name") or effective_config.get("auto_tag") or "").strip()
+            existing_tags = list(lead.get("tags") or [])
+            if tag_val and tag_val not in existing_tags:
+                existing_tags.append(tag_val)
+            now_done = datetime.now(timezone.utc)
+            next_node_id = node.get("next_default")
+            transition = successor_fields(compiled, next_node_id, now_done)
+            next_due = transition["next_action_due_at"]
+            tag_updates: dict[str, Any] = {
+                **transition,
+                "tags": existing_tags,
+                "last_action_taken": SequenceNodeType.ADD_TAG,
+                "last_action_at": now_done,
+                "updated_at": now_done,
+            }
+            if not await _advance_lead(db, lead, tag_updates):
+                return {"status": "lead_changed", "action": SequenceNodeType.ADD_TAG}
+            return {
+                "status": "success",
+                "action": SequenceNodeType.ADD_TAG,
+                "tag_applied": tag_val,
+                "next_node_id": next_node_id,
+                "next_action_due_at": next_due.isoformat() if next_due else None,
+            }
 
         # Email-only sequences must not require (or decrypt) LinkedIn cookies.
         voyager = None
@@ -737,7 +828,9 @@ class SequenceExecutor:
         elif node_type == SequenceNodeType.CONNECTION_REQUEST:
             if action_result is None:
                 note_template = effective_config.get("note", "")
-                custom_note = interpolate_template(note_template, lead) if note_template else ""
+                alt_template = effective_config.get("alternative_message") or effective_config.get("fallback") or ""
+                resolved_note = resolve_step_message_with_alternative(note_template, alt_template, lead) if note_template else {"text": "", "used_alternative": False}
+                custom_note = resolved_note["text"]
                 action_result = await _dispatch_action(db, lead, expected_authorization, node_type, operation_id,
                     intent_id, operation_owner, lambda: voyager.send_connection_invite(
                     lead.get("linkedin_urn") or lead["linkedin_url"], custom_note,
@@ -746,7 +839,9 @@ class SequenceExecutor:
         elif node_type == SequenceNodeType.SEND_MESSAGE:
             if action_result is None:
                 body_template = effective_config.get("body", "Hi {{first_name}}")
-                msg_body = interpolate_template(body_template, lead)
+                alt_template = effective_config.get("alternative_message") or effective_config.get("fallback") or ""
+                resolved_body = resolve_step_message_with_alternative(body_template, alt_template, lead)
+                msg_body = resolved_body["text"]
                 attachment_url = effective_config.get("attachment_url")
                 attachment_name = effective_config.get("attachment_name")
                 action_result = await _dispatch_action(db, lead, expected_authorization, node_type, operation_id,
@@ -804,8 +899,10 @@ class SequenceExecutor:
                 action_config = effective_config
                 subject_template = action_config.get("subject") or "Quick question, {{first_name}}"
                 body_template = action_config.get("body") or action_config.get("message") or "Hi {{first_name}}"
+                alt_template = action_config.get("alternative_message") or action_config.get("fallback") or ""
                 inmail_subject = interpolate_template(subject_template, lead).strip()
-                inmail_body = interpolate_template(body_template, lead)
+                resolved_inmail = resolve_step_message_with_alternative(body_template, alt_template, lead)
+                inmail_body = resolved_inmail["text"]
                 attachment_url = action_config.get("attachment_url")
                 attachment_name = action_config.get("attachment_name")
                 action_result = await _dispatch_action(db, lead, expected_authorization, node_type, operation_id,
@@ -894,6 +991,31 @@ class SequenceExecutor:
             # intentionally has no outbound action and consumes no daily quota.
             action_result = {"status": "condition_checked"}
 
+        elif node_type == SequenceNodeType.REPLY_TO_COMMENT:
+            if action_result is None:
+                action_config = effective_config
+                reply_template = action_config.get("reply_text") or action_config.get("comment") or action_config.get("body") or "Thanks for your comment, {{first_name}}!"
+                reply_body = interpolate_template(reply_template, lead)
+                action_result = await _dispatch_action(db, lead, expected_authorization, node_type, operation_id,
+                    intent_id, operation_owner, lambda: voyager.comment_last_post(
+                    lead.get("linkedin_urn") or lead["linkedin_url"],
+                    comment_text=reply_body,
+                    max_age_days=action_config.get("max_post_age_days", 30),
+                ), content=reply_body, skip_empty_post=action_config.get("skip_if_no_posts", True))
+
+        elif node_type == SequenceNodeType.IF_OPENED_MESSAGE:
+            opened_signal = bool(lead.get("has_opened_message") or lead.get("has_replied"))
+            now = datetime.now(timezone.utc)
+            branches = node.get("branches", {})
+            next_node_id = branches.get("positive") if opened_signal else branches.get("negative")
+            updates = {
+                **successor_fields(compiled, next_node_id, now),
+                "updated_at": now,
+            }
+            if not await _advance_lead(db, lead, updates):
+                return {"status": "lead_changed"}
+            return {"status": "branch_advanced", "next_node_id": next_node_id, "condition_met": opened_signal}
+
         else:
             reason = f"Unsupported sequence step: {node_type}"
             await _advance_lead(db, lead, {
@@ -969,6 +1091,10 @@ class SequenceExecutor:
                     )
 
         if node_type == SequenceNodeType.CONNECTION_REQUEST and node.get("branches"):
+            auto_tag_val = str(effective_config.get("auto_tag") or "").strip()
+            existing_tags = list(lead.get("tags") or [])
+            if auto_tag_val and auto_tag_val not in existing_tags:
+                existing_tags.append(auto_tag_val)
             if lead.get('_id') is not None and lead.get('enrollment_id') and campaign.get('sequence_version_id'):
                 from outreach.core.connection_waits import begin_wait, ConnectionWaitUnavailable
                 from outreach.core.suppression import SuppressionUnavailable
@@ -978,29 +1104,41 @@ class SequenceExecutor:
                 except (ConnectionWaitUnavailable, SuppressionUnavailable, EpochUnavailable):
                     return {'status': 'connection_wait_review_required'}
                 if retained:
+                    if auto_tag_val:
+                        await _advance_lead(db, lead, {"tags": existing_tags})
                     return {'status': 'success', 'action': action_name, 'waiting_for': 'connection', 'connection_wait_id': retained['_id']}
             waiting_since = datetime.now(timezone.utc)
-            if not await _advance_lead(db, lead, {
-                    "waiting_for_connection_at": waiting_since,
-                    "execution_state": LeadExecutionState.WAITING_DELAY,
-                    "next_action_due_at": waiting_since + timedelta(hours=24),
-                    "last_action_taken": action_name,
-                    "last_action_at": waiting_since,
-                    "updated_at": waiting_since,
-                }):
+            invite_wait_fields: dict[str, Any] = {
+                "waiting_for_connection_at": waiting_since,
+                "execution_state": LeadExecutionState.WAITING_DELAY,
+                "next_action_due_at": waiting_since + timedelta(hours=24),
+                "last_action_taken": action_name,
+                "last_action_at": waiting_since,
+                "updated_at": waiting_since,
+            }
+            if auto_tag_val:
+                invite_wait_fields["tags"] = existing_tags
+            if not await _advance_lead(db, lead, invite_wait_fields):
                 return {"status": "lead_changed", "action": action_name}
             return {"status": "success", "action": action_name, "waiting_for": "connection"}
 
         if node_type in (SequenceNodeType.SEND_MESSAGE, SequenceNodeType.VOICE_NOTE) and node.get("branches"):
+            auto_tag_val = str(effective_config.get("auto_tag") or "").strip()
+            existing_tags = list(lead.get("tags") or [])
+            if auto_tag_val and auto_tag_val not in existing_tags:
+                existing_tags.append(auto_tag_val)
             waiting_since = datetime.now(timezone.utc)
-            if not await _advance_lead(db, lead, {
-                    "waiting_for_reply_at": waiting_since,
-                    "execution_state": LeadExecutionState.WAITING_DELAY,
-                    "next_action_due_at": waiting_since + timedelta(hours=24),
-                    "last_action_taken": action_name,
-                    "last_action_at": waiting_since,
-                    "updated_at": waiting_since,
-                }):
+            msg_wait_fields: dict[str, Any] = {
+                "waiting_for_reply_at": waiting_since,
+                "execution_state": LeadExecutionState.WAITING_DELAY,
+                "next_action_due_at": waiting_since + timedelta(hours=24),
+                "last_action_taken": action_name,
+                "last_action_at": waiting_since,
+                "updated_at": waiting_since,
+            }
+            if auto_tag_val:
+                msg_wait_fields["tags"] = existing_tags
+            if not await _advance_lead(db, lead, msg_wait_fields):
                 return {"status": "lead_changed", "action": action_name}
             return {"status": "success", "action": action_name, "waiting_for": "reply"}
 
@@ -1083,6 +1221,13 @@ class SequenceExecutor:
             existing_variants = dict(lead.get("ab_variants_assigned") or {})
             existing_variants[curr_node_id] = selected_variant_id
             update_fields["ab_variants_assigned"] = existing_variants
+
+        auto_tag_val = str(effective_config.get("auto_tag") or "").strip()
+        if auto_tag_val:
+            existing_tags = list(lead.get("tags") or [])
+            if auto_tag_val not in existing_tags:
+                existing_tags.append(auto_tag_val)
+            update_fields["tags"] = existing_tags
 
         if not await _advance_lead(db, lead, update_fields):
             return {"status": "lead_changed", "action": action_name}

@@ -59,10 +59,21 @@ def matches(doc, query):
                     return False
                 if op == "$ne" and (actual == operand or isinstance(actual, list) and operand in actual):
                     return False
-                if op == "$in" and actual not in operand:
-                    return False
-                if op == "$nin" and actual in operand:
-                    return False
+                if op == "$all":
+                    if not isinstance(actual, list) or not all(item in actual for item in operand):
+                        return False
+                if op == "$in":
+                    if isinstance(actual, list):
+                        if not any(item in actual for item in operand):
+                            return False
+                    elif actual not in operand:
+                        return False
+                if op == "$nin":
+                    if isinstance(actual, list):
+                        if any(item in actual for item in operand):
+                            return False
+                    elif actual in operand:
+                        return False
                 if op in {"$lt", "$lte", "$gt", "$gte"}:
                     if actual is None:
                         return False

@@ -1,5 +1,7 @@
 """Scoped integration credentials; key work stays outside Mongo callbacks."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from copy import deepcopy
 from dataclasses import dataclass, field

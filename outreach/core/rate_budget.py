@@ -19,8 +19,8 @@ def _to_utc(dt: Any) -> datetime:
         try:
             parsed = datetime.fromisoformat(dt.replace("Z", "+00:00"))
             return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Rate budget timestamp parse fallback to UTC now (%s)", type(exc).__name__)
     return datetime.now(timezone.utc)
 
 

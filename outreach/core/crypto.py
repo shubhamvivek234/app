@@ -2,6 +2,8 @@
 Phase 2: Cryptographic utilities for encrypting and decrypting sensitive LinkedIn
 session tokens (li_at, JSESSIONID) and proxy credentials using AES-256 Fernet.
 """
+import logging
+logger = logging.getLogger(__name__)
 from utils.encryption import encrypt as _fernet_encrypt, decrypt as _fernet_decrypt
 
 

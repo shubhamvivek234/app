@@ -1,5 +1,7 @@
 """Selected permanent invoice reuse exclusions; never payment/ownership proof."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 from dataclasses import dataclass
 import hashlib
 import json

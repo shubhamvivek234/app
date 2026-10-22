@@ -5,6 +5,8 @@ literal source CAS/readbacks. No transaction, index, receipt or grant is created
 here. Old writers must drain before coordinated activation; this process setting
 is not a distributed cutover fence or a claim of complete historical capture.
 """
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 import os
 from typing import Any, NoReturn

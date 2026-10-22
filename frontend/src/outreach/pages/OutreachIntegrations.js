@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { requestIntegrationTest, integrationTestMessage } from '../utils/integrationDelivery';
+import { outreachLogger } from '../utils/logger';
 
 const AVAILABLE_EVENTS = [
   { id: 'lead.replied', label: 'Lead Replied', desc: 'Prospect replies to a LinkedIn message or email' },
@@ -164,7 +165,9 @@ export default function OutreachIntegrations() {
         setSlackConnected(Boolean(data.connected));
         if (data.channel_name) setSlackChannel(data.channel_name);
       }
-    } catch (_) {}
+    } catch (err) {
+      outreachLogger.debug('integrations.slack_config_fetch_failed', { error: err });
+    }
   }, []);
 
   // ── Fetch HubSpot Config ────────────────────────────────────────────────────
@@ -180,7 +183,9 @@ export default function OutreachIntegrations() {
         setHubspotConnected(Boolean(data.connected));
         if (data.portal_id) setHubspotPortalId(data.portal_id);
       }
-    } catch (_) {}
+    } catch (err) {
+      outreachLogger.debug('integrations.hubspot_config_fetch_failed', { error: err });
+    }
   }, []);
 
   // ── Fetch Campaigns for Sheets Ingestion ────────────────────────────────────
@@ -199,7 +204,9 @@ export default function OutreachIntegrations() {
           setSheetsCampaignId(active[0].id);
         }
       }
-    } catch (_) {}
+    } catch (err) {
+      outreachLogger.debug('integrations.campaigns_fetch_failed', { error: err });
+    }
   }, [sheetsCampaignId]);
 
   useEffect(() => {

@@ -1,5 +1,7 @@
 """Bounded stopped local financial/proxy inspection; never reconciliation approval."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 from collections import Counter
 from datetime import datetime
 import json

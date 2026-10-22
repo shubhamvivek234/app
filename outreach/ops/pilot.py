@@ -4,6 +4,8 @@ Run on the trusted backend host with DB_NAME, MONGODB_URI and ENCRYPTION_KEY set
 The customer API never calls these commands. Never put proxy credentials in
 CLI arguments; import reads the IPROYAL_PROXY_URL environment variable.
 """
+import logging
+logger = logging.getLogger(__name__)
 import argparse
 import asyncio
 from datetime import datetime, timezone

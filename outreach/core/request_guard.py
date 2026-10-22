@@ -107,6 +107,20 @@ class PhysicalBudget:
                 business_cap = _bounded((config.get("limits") or {}).get(field), 20, action_default)
                 campaign_cap = _bounded((config.get("campaign_request_limits") or {}).get(field), business_cap, action_default)
                 action_cap = min(action_cap, business_cap, campaign_cap)
+                if config.get("activity_control_enabled") is True or config.get("status") == "warming":
+                    from outreach.core.safety_shield import WarmUpGovernor
+                    controlled = WarmUpGovernor.get_activity_control_limits(config, now=now)
+                    action_cap = min(action_cap, int(controlled.get(field, action_cap)))
+                    if action == "invite":
+                        tier = str(config.get("premium_product") or "classic").lower()
+                        weekly_ceiling = WarmUpGovernor.WEEKLY_INVITE_CEILINGS.get(tier, 100)
+                        if int(config.get("weekly_invites_sent") or 0) >= weekly_ceiling:
+                            return False, 86400, "weekly_invite_limit_reached"
+            if action == "invite" and config.get("weekly_invite_limit_reached") is True:
+                reset_dt = _utc(config.get("weekly_invite_reset_at"))
+                if reset_dt is None or reset_dt > now:
+                    wait_w = max(1, int((reset_dt - now).total_seconds()) + 1) if reset_dt else 86400
+                    return False, wait_w, "weekly_invite_limit_reached"
             spacing = _bounded(policy.get("min_interval_seconds"), 0, 3600)
             try:
                 await self.db.outreach_request_budgets.insert_one({**scope, "revision": 0})

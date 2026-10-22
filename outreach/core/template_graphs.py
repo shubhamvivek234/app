@@ -6,6 +6,8 @@ Current audit fields are not immutable history or durable outcome receipts;
 unknown commits must not be automatically replayed with a newer review.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from copy import deepcopy
 from datetime import datetime, timezone

@@ -1,4 +1,6 @@
 """Private drained migration of one managed proxy asset and its exact sender copies."""
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 import re
 from typing import Any

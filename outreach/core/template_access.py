@@ -6,6 +6,8 @@ No authority counters, sharing settings, ownership records or grants are written
 An optional caller-owned session binds every observation to its snapshot; the
 history caller separately writes authority counters in that same transaction.
 """
+import logging
+logger = logging.getLogger(__name__)
 from typing import Any
 
 from fastapi import HTTPException

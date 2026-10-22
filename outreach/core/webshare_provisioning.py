@@ -3,6 +3,8 @@
 No HTTP, purchase, renewal, vendor ownership proof or legacy adoption occurs.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from datetime import datetime, timezone
 import ipaddress

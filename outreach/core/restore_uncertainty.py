@@ -4,6 +4,8 @@ Labels are not receipts, non-call proofs, or replay authority. Independent
 substates remain visible even when a parent job was stopped or reviewed.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from collections import Counter
 from typing import Any

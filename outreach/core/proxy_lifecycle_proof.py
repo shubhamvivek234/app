@@ -1,5 +1,7 @@
 """Metadata-only current Webshare review lineage; ciphertext storage may rewrap."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 from typing import Any
 
 from outreach.core.authorization import canonical_hash

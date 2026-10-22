@@ -4,6 +4,8 @@ Saved responses can be replayed locally. Missing read responses require a new
 physical attempt/allowance; unlike OAuth mutations, a bounded GET may be retried.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import base64
 import asyncio

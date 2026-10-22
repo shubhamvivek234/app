@@ -114,11 +114,36 @@ export default function LeadTagManager({ onChanged }) {
     }
   };
 
+  const seedDefaults = async () => {
+    setBusy(true);
+    try {
+      const response = await fetch('/api/v1/outreach/leads/tags/seed-defaults', { method: 'POST', credentials: 'include', headers: headers() });
+      if (!response.ok) throw new Error(await detail(response, 'Could not load default sales tags'));
+      await load();
+      onChanged?.();
+      toast.success('Default sales tags loaded');
+    } catch (error) {
+      toast.error(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-xs space-y-5">
-      <div>
-        <h2 className="text-base font-bold text-gray-900">Lead tags</h2>
-        <p className="mt-1 text-xs text-gray-500">Names and colors update across Leads, campaigns, Inbox, and CSV exports.</p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-base font-bold text-gray-900">Lead tags</h2>
+          <p className="mt-1 text-xs text-gray-500">Names and colors update across Leads, campaigns, Inbox, and CSV exports.</p>
+        </div>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={seedDefaults}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"
+        >
+          Load default sales tags
+        </button>
       </div>
       <form onSubmit={create} className="flex flex-wrap items-center gap-2">
         <input aria-label="New tag color" type="color" value={color} onChange={(event) => setColor(event.target.value)} className="h-9 w-10 rounded-lg border border-gray-200 p-1" />

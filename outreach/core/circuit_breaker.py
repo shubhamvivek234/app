@@ -231,8 +231,8 @@ class CircuitBreaker:
             if not cooldown_dt and isinstance(cooldown_until, str):
                 try:
                     cooldown_dt = datetime.fromisoformat(cooldown_until.replace("Z", "+00:00"))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Sender cooldown timestamp parse skipped for sender=%s (%s)", sender.get("id"), type(exc).__name__)
             if cooldown_dt:
                 if cooldown_dt.tzinfo is None:
                     cooldown_dt = cooldown_dt.replace(tzinfo=timezone.utc)

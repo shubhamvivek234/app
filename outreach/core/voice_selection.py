@@ -1,4 +1,6 @@
 """Explicit sender assignment; no arbitrary workspace fallback or implicit default."""
+import logging
+logger = logging.getLogger(__name__)
 from outreach.core.workspace_scope import workspace_scope
 
 

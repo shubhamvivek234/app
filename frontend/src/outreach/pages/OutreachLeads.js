@@ -19,6 +19,8 @@ import {
   ChevronDown,
   Tag,
   Ban,
+  Play,
+  Pause,
 } from 'lucide-react';
 import ImportLeadsModal from '../components/ImportLeadsModal';
 import AudienceListsPanel from '../components/AudienceListsPanel';
@@ -56,6 +58,7 @@ export default function OutreachLeads({ onOpenWizard }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedState, setSelectedState] = useState('');
   const [selectedStage, setSelectedStage] = useState('');
+  const [selectedSource, setSelectedSource] = useState('');
   const [selectedLocation, setSelectedLocation] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [debouncedLocation, setDebouncedLocation] = useState('');
@@ -71,6 +74,7 @@ export default function OutreachLeads({ onOpenWizard }) {
   const [visibleColumns, setVisibleColumns] = useState({
     pipelineStage: true,
     executionState: true,
+    lastAction: true,
     company: true,
     jobTitle: true,
     location: true,
@@ -86,6 +90,17 @@ export default function OutreachLeads({ onOpenWizard }) {
   const [tagDefinitions, setTagDefinitions] = useState([]);
   const [tagLoadError, setTagLoadError] = useState('');
   const [selectedTagFilter, setSelectedTagFilter] = useState('');
+  const [tagMatchMode, setTagMatchMode] = useState('all');
+  const [selectedActionPerformed, setSelectedActionPerformed] = useState('');
+  const [selectedFailureReason, setSelectedFailureReason] = useState('');
+  const [includeActionsFilter, setIncludeActionsFilter] = useState('');
+  const [excludeActionsFilter, setExcludeActionsFilter] = useState('');
+  const [customFilters, setCustomFilters] = useState([]);
+  const [customFilterModalOpen, setCustomFilterModalOpen] = useState(false);
+  const [newFilterName, setNewFilterName] = useState('');
+  const [newFilterInclude, setNewFilterInclude] = useState([]);
+  const [newFilterExclude, setNewFilterExclude] = useState([]);
+  const [savingCustomFilter, setSavingCustomFilter] = useState(false);
   const [selectedLeadIds, setSelectedLeadIds] = useState([]);
   const [bulkTagId, setBulkTagId] = useState('');
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -94,7 +109,7 @@ export default function OutreachLeads({ onOpenWizard }) {
   const leadRequest = useRef(0);
   const refreshLeads = useRef(null);
   const currentQuery = useRef('');
-  const queryKey = JSON.stringify([page, debouncedSearch, selectedState, selectedStage, selectedTagFilter, debouncedLocation, selectedList]);
+  const queryKey = JSON.stringify([page, debouncedSearch, selectedState, selectedStage, selectedSource, selectedTagFilter, tagMatchMode, debouncedLocation, selectedList, selectedActionPerformed, selectedFailureReason, includeActionsFilter, excludeActionsFilter]);
   currentQuery.current = queryKey;
 
   const handleSetViewMode = (mode) => {
@@ -110,7 +125,69 @@ export default function OutreachLeads({ onOpenWizard }) {
     return () => clearTimeout(timer);
   }, [searchQuery, selectedLocation]);
 
-  useEffect(() => { setPage(0); }, [selectedList, selectedState, selectedStage, selectedTagFilter, debouncedSearch, debouncedLocation]);
+  useEffect(() => { setPage(0); setSelectedLeadIds([]); }, [selectedList, selectedState, selectedStage, selectedSource, selectedTagFilter, debouncedSearch, debouncedLocation, selectedActionPerformed, selectedFailureReason, includeActionsFilter, excludeActionsFilter]);
+
+  const fetchCustomFilters = async () => {
+    try {
+      const res = await fetch('/api/v1/outreach/leads/custom-filters', {
+        credentials: 'include', headers: authHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) setCustomFilters(data);
+      }
+    } catch {
+      // non-fatal
+    }
+  };
+
+  useEffect(() => { fetchCustomFilters(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSaveCustomFilter = async (e) => {
+    if (e) e.preventDefault();
+    if (!newFilterName.trim() || (!newFilterInclude.length && !newFilterExclude.length)) return;
+    setSavingCustomFilter(true);
+    try {
+      const res = await fetch('/api/v1/outreach/leads/custom-filters', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({
+          name: newFilterName.trim(),
+          include_actions: newFilterInclude,
+          exclude_actions: newFilterExclude,
+        }),
+      });
+      if (!res.ok) throw new Error(await errorMessage(res, 'Could not save custom filter'));
+      const saved = await res.json();
+      setCustomFilters((prev) => [saved, ...prev]);
+      setIncludeActionsFilter((saved.include_actions || []).join(','));
+      setExcludeActionsFilter((saved.exclude_actions || []).join(','));
+      setNewFilterName('');
+      setNewFilterInclude([]);
+      setNewFilterExclude([]);
+      setCustomFilterModalOpen(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSavingCustomFilter(false);
+    }
+  };
+
+  const handleDeleteCustomFilter = async (filterId) => {
+    try {
+      const res = await fetch(`/api/v1/outreach/leads/custom-filters/${filterId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: authHeaders(),
+      });
+      if (res.ok) {
+        setCustomFilters((prev) => prev.filter((f) => f.id !== filterId));
+      }
+    } catch {
+      // non-fatal
+    }
+  };
 
   const fetchCampaigns = async () => {
     try {
@@ -155,9 +232,19 @@ export default function OutreachLeads({ onOpenWizard }) {
     if (debouncedSearch) params.set('search', debouncedSearch);
     if (selectedState) params.set('execution_state', selectedState);
     if (selectedStage) params.set('pipeline_stage', selectedStage);
+    if (selectedSource) params.set('source', selectedSource);
     if (debouncedLocation) params.set('location', debouncedLocation);
     if (selectedTagFilter === '__untagged__') params.set('untagged', 'true');
-    else if (selectedTagFilter) params.set('tag_ids', selectedTagFilter);
+    else if (selectedTagFilter) {
+      params.set('tag_ids', selectedTagFilter);
+      if (selectedTagFilter.includes(',') && tagMatchMode === 'any') {
+        params.set('tag_match', 'any');
+      }
+    }
+    if (selectedActionPerformed) params.set('action_performed', selectedActionPerformed);
+    if (selectedFailureReason) params.set('failure_reason', selectedFailureReason);
+    if (includeActionsFilter) params.set('include_actions', includeActionsFilter);
+    if (excludeActionsFilter) params.set('exclude_actions', excludeActionsFilter);
     return params;
   };
 
@@ -181,7 +268,6 @@ export default function OutreachLeads({ onOpenWizard }) {
         return;
       }
       setLeads(data.leads || []);
-      setSelectedLeadIds([]);
       setTotal(data.total || 0);
       setError('');
     } catch (err) {
@@ -201,7 +287,7 @@ export default function OutreachLeads({ onOpenWizard }) {
     fetchLeads(controller.signal);
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, debouncedSearch, selectedState, selectedStage, selectedTagFilter, debouncedLocation, selectedList]);
+  }, [page, debouncedSearch, selectedState, selectedStage, selectedSource, selectedTagFilter, tagMatchMode, debouncedLocation, selectedList, selectedActionPerformed, selectedFailureReason, includeActionsFilter, excludeActionsFilter]);
 
   const toggleSelected = (leadId) => {
     setSelectedLeadIds((current) => current.includes(leadId)
@@ -218,6 +304,7 @@ export default function OutreachLeads({ onOpenWizard }) {
         body: JSON.stringify({ lead_ids: selectedLeadIds, tag_id: bulkTagId, operation }),
       });
       if (!res.ok) throw new Error(await errorMessage(res, 'Could not update selected leads'));
+      setSelectedLeadIds([]);
       await refreshLeads.current();
     } catch (err) {
       setError(err.message);
@@ -316,6 +403,35 @@ export default function OutreachLeads({ onOpenWizard }) {
     if (currentIdx < PIPELINE_STAGES.length - 1) {
       const nextStage = PIPELINE_STAGES[currentIdx + 1].id;
       handleUpdateStage(lead.id, nextStage);
+    }
+  };
+
+  const handleToggleSequencePause = async (lead) => {
+    if (!lead?.id || updatingLeadId) return;
+    setUpdatingLeadId(lead.id);
+    const isPaused = lead.execution_state === 'paused' || lead.execution_state === 'replied';
+    const endpoint = isPaused
+      ? `/api/v1/outreach/leads/${lead.id}/resume`
+      : `/api/v1/outreach/leads/${lead.id}/pause`;
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders(),
+        },
+        body: isPaused ? undefined : JSON.stringify({ reason: 'Manually paused from CRM leads view' }),
+      });
+      if (!res.ok) throw new Error(await errorMessage(res, `Could not ${isPaused ? 'resume' : 'pause'} lead sequence`));
+      const nextState = isPaused ? 'queued' : 'paused';
+      setLeads((prev) => prev.map((l) => (l.id === lead.id ? { ...l, execution_state: nextState } : l)));
+      setSelectedLead((prev) => (prev?.id === lead.id ? { ...prev, execution_state: nextState } : prev));
+      setError('');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUpdatingLeadId(null);
     }
   };
 
@@ -514,6 +630,115 @@ export default function OutreachLeads({ onOpenWizard }) {
           </div>
 
           <div className="relative">
+            <select
+              aria-label="Filter leads by source"
+              value={selectedSource}
+              onChange={(e) => setSelectedSource(e.target.value)}
+              className="rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-medium text-gray-700 shadow-2xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+            >
+              <option value="">All sources</option>
+              <option value="csv">CSV upload</option>
+              <option value="pasted_urls">Pasted URLs</option>
+              <option value="staged_preview">Reviewed import</option>
+              <option value="linkedin_search">LinkedIn search</option>
+              <option value="post_engagers">Post engagers</option>
+              <option value="my_network">My network</option>
+            </select>
+          </div>
+
+          <div className="relative">
+            <select
+              aria-label="Filter leads by action performed"
+              value={selectedActionPerformed}
+              onChange={(e) => setSelectedActionPerformed(e.target.value)}
+              className="rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-medium text-gray-700 shadow-2xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+            >
+              <option value="">Actions performed</option>
+              <option value="ready_to_enter">Ready to enter campaign</option>
+              <option value="invite_sent">Invite sent</option>
+              <option value="invite_accepted">Invite accepted</option>
+              <option value="invite_pending">Invite pending</option>
+              <option value="messaged">Messaged</option>
+              <option value="replied">Replied</option>
+              <option value="profile_viewed">Profile viewed</option>
+              <option value="liked_post">Liked a post</option>
+              <option value="endorsed">Endorsed skill</option>
+            </select>
+          </div>
+
+          <div className="relative">
+            <select
+              aria-label="Filter leads by failure reason"
+              value={selectedFailureReason}
+              onChange={(e) => setSelectedFailureReason(e.target.value)}
+              className="rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-medium text-gray-700 shadow-2xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+            >
+              <option value="">All failure reasons</option>
+              <option value="missing_profile_variable">Missing profile variable</option>
+              <option value="note_exceeds_300_chars">Invite note &gt; 300 chars</option>
+              <option value="duplicate_message">Duplicate message blocked</option>
+              <option value="not_first_degree">Not 1st-degree connection</option>
+            </select>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setCustomFilterModalOpen(true)}
+            className={`inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-xs font-semibold shadow-2xs transition-colors ${
+              includeActionsFilter || excludeActionsFilter
+                ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
+                : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+            }`}
+            title="Create or apply Include / Exclude action filter"
+          >
+            <Plus className="h-3.5 w-3.5" /> Add Filter
+          </button>
+
+          {(includeActionsFilter || excludeActionsFilter) && (
+            <button
+              type="button"
+              onClick={() => { setIncludeActionsFilter(''); setExcludeActionsFilter(''); }}
+              className="inline-flex items-center gap-1 rounded-xl border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-800"
+            >
+              <span>Custom Filter Active</span>
+              <X className="h-3 w-3" />
+            </button>
+          )}
+
+          {customFilters.map((cf) => {
+            const isActive =
+              includeActionsFilter === (cf.include_actions || []).join(',') &&
+              excludeActionsFilter === (cf.exclude_actions || []).join(',');
+            return (
+              <div key={cf.id} className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-700 gap-1.5 shadow-2xs">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isActive) {
+                      setIncludeActionsFilter('');
+                      setExcludeActionsFilter('');
+                    } else {
+                      setIncludeActionsFilter((cf.include_actions || []).join(','));
+                      setExcludeActionsFilter((cf.exclude_actions || []).join(','));
+                    }
+                  }}
+                  className={isActive ? 'text-indigo-700 font-bold' : 'text-gray-700 hover:text-indigo-600'}
+                >
+                  {cf.name}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteCustomFilter(cf.id)}
+                  className="text-gray-400 hover:text-red-600"
+                  title={`Delete ${cf.name}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            );
+          })}
+
+          <div className="relative">
             <input
               type="search"
               aria-label="Filter leads by location"
@@ -526,7 +751,7 @@ export default function OutreachLeads({ onOpenWizard }) {
 
           <select
             aria-label="Filter leads by tag"
-            value={selectedTagFilter}
+            value={selectedTagFilter.includes(',') ? '' : selectedTagFilter}
             onChange={(event) => setSelectedTagFilter(event.target.value)}
             className="rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-medium text-gray-700 shadow-2xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
           >
@@ -541,6 +766,49 @@ export default function OutreachLeads({ onOpenWizard }) {
           >
             <Tag className="h-3.5 w-3.5 text-gray-400" /> Manage tags
           </button>
+
+          {tagDefinitions.length > 0 && selectedTagFilter !== '__untagged__' && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {tagDefinitions.map((tag) => {
+                const selectedIds = selectedTagFilter ? selectedTagFilter.split(',').filter(Boolean) : [];
+                const active = selectedIds.includes(tag.id);
+                return (
+                  <button
+                    key={`lead-tag-chip:${tag.id}`}
+                    type="button"
+                    onClick={() => {
+                      const next = active ? selectedIds.filter((id) => id !== tag.id) : [...selectedIds, tag.id];
+                      setSelectedTagFilter(next.join(','));
+                    }}
+                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold transition-all ${
+                      active ? 'ring-1 ring-indigo-600 bg-indigo-50 text-indigo-700 border-indigo-300' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: tag.color || '#6366f1' }} />
+                    {tag.name}
+                  </button>
+                );
+              })}
+              {selectedTagFilter.includes(',') && (
+                <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-0.5 text-[10px]">
+                  <button
+                    type="button"
+                    onClick={() => setTagMatchMode('all')}
+                    className={`px-2 py-0.5 rounded-md font-semibold ${tagMatchMode === 'all' ? 'bg-white text-gray-900 shadow-2xs' : 'text-gray-500'}`}
+                  >
+                    Match All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTagMatchMode('any')}
+                    className={`px-2 py-0.5 rounded-md font-semibold ${tagMatchMode === 'any' ? 'bg-white text-gray-900 shadow-2xs' : 'text-gray-500'}`}
+                  >
+                    Match Any
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Columns Visibility Picker matching Prosp Columns */}
           <div className="relative">
@@ -562,6 +830,10 @@ export default function OutreachLeads({ onOpenWizard }) {
                 <label className="flex items-center gap-2 px-2 py-1 hover:bg-gray-50 rounded-lg cursor-pointer">
                   <input type="checkbox" checked={visibleColumns.executionState} onChange={(e) => setVisibleColumns((prev) => ({ ...prev, executionState: e.target.checked }))} />
                   <span>Execution status</span>
+                </label>
+                <label className="flex items-center gap-2 px-2 py-1 hover:bg-gray-50 rounded-lg cursor-pointer">
+                  <input type="checkbox" checked={visibleColumns.lastAction} onChange={(e) => setVisibleColumns((prev) => ({ ...prev, lastAction: e.target.checked }))} />
+                  <span>Last action</span>
                 </label>
                 <label className="flex items-center gap-2 px-2 py-1 hover:bg-gray-50 rounded-lg cursor-pointer">
                   <input
@@ -785,6 +1057,18 @@ export default function OutreachLeads({ onOpenWizard }) {
                                 <span className="truncate font-mono text-[10px]">{lead.phone}</span>
                               </div>
                             )}
+
+                            {lead.last_action_taken && (
+                              <div className="flex items-center justify-between text-[10px] text-indigo-700 bg-indigo-50/70 rounded-lg px-2 py-0.5 font-semibold">
+                                <span>Last: {String(lead.last_action_taken).replace(/_/g, ' ')}</span>
+                              </div>
+                            )}
+
+                            {(lead.failure_code || lead.failure_reason) && (
+                              <div className="text-[10px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-2 py-0.5 font-medium truncate" title={lead.failure_reason || lead.failure_code}>
+                                ⚠ {lead.failure_reason || String(lead.failure_code).replace(/_/g, ' ')}
+                              </div>
+                            )}
                           </div>
 
                           {/* Card Footer: Stage Quick-Changer */}
@@ -835,12 +1119,18 @@ export default function OutreachLeads({ onOpenWizard }) {
               <thead className="border-b border-gray-200 bg-gray-50/70 text-gray-500 uppercase font-semibold tracking-wider text-[10px]">
                 <tr>
                   <th className="py-3 px-4">
-                    <input aria-label="Select all leads on this page" type="checkbox" checked={displayedLeads.length > 0 && displayedLeads.every((lead) => selectedLeadIds.includes(lead.id))} onChange={(event) => setSelectedLeadIds(event.target.checked ? displayedLeads.map((lead) => lead.id) : [])} className="rounded border-gray-300 text-indigo-600" />
+                    <input aria-label="Select all leads on this page" type="checkbox" checked={displayedLeads.length > 0 && displayedLeads.every((lead) => selectedLeadIds.includes(lead.id))} onChange={(event) => {
+                      const pageIds = displayedLeads.map((lead) => lead.id);
+                      setSelectedLeadIds((current) => event.target.checked
+                        ? Array.from(new Set([...current, ...pageIds]))
+                        : current.filter((id) => !pageIds.includes(id)));
+                    }} className="rounded border-gray-300 text-indigo-600" />
                   </th>
                   <th className="py-3 px-4">Contact</th>
                   <th className="py-3 px-4">Tags</th>
                   {visibleColumns.pipelineStage && <th className="py-3 px-4">Pipeline Stage</th>}
                   {visibleColumns.executionState && <th className="py-3 px-4">Execution Status</th>}
+                  {visibleColumns.lastAction && <th className="py-3 px-4">Last Action</th>}
                   {visibleColumns.company && <th className="py-3 px-4">Company</th>}
                   {visibleColumns.jobTitle && <th className="py-3 px-4">Job Title</th>}
                   {visibleColumns.location && <th className="py-3 px-4">Location</th>}
@@ -906,17 +1196,29 @@ export default function OutreachLeads({ onOpenWizard }) {
                       )}
                       {visibleColumns.executionState && (
                         <td className="py-3 px-4">
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${
-                              lead.execution_state === 'replied'
-                                ? 'bg-emerald-50 text-emerald-700'
-                                : lead.execution_state === 'accepted'
-                                ? 'bg-indigo-50 text-indigo-700'
-                                : 'bg-gray-100 text-gray-600'
-                            }`}
-                          >
-                            {lead.execution_state}
-                          </span>
+                          <div className="flex flex-col items-start gap-1">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${
+                                lead.execution_state === 'replied'
+                                  ? 'bg-emerald-50 text-emerald-700'
+                                  : lead.execution_state === 'accepted'
+                                  ? 'bg-indigo-50 text-indigo-700'
+                                  : 'bg-gray-100 text-gray-600'
+                              }`}
+                            >
+                              {lead.execution_state}
+                            </span>
+                            {(lead.failure_code || lead.failure_reason) && (
+                              <span className="text-[10px] text-rose-700 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5 font-medium truncate max-w-[160px]" title={lead.failure_reason || lead.failure_code}>
+                                ⚠ {String(lead.failure_code || lead.failure_reason).replace(/_/g, ' ')}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      )}
+                      {visibleColumns.lastAction && (
+                        <td className="py-3 px-4 text-gray-600 capitalize">
+                          {lead.last_action_taken ? String(lead.last_action_taken).replace(/_/g, ' ') : '—'}
                         </td>
                       )}
                       {visibleColumns.company && <td className="py-3 px-4 text-gray-600">{lead.company_name || '—'}</td>}
@@ -928,14 +1230,36 @@ export default function OutreachLeads({ onOpenWizard }) {
                       )}
                       {visibleColumns.email && <td className="py-3 px-4 text-gray-500">{lead.email || '—'}</td>}
                       <td className="py-3 px-4 text-right" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          onClick={() => handleDeleteLead(lead.id)}
-                          disabled={deletingLeadId === lead.id}
-                          className="text-gray-400 hover:text-red-600 p-1 transition-colors"
-                          title="Delete contact"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        <div className="inline-flex items-center justify-end gap-1.5">
+                          {lead.execution_state !== 'staged' && (
+                            <button
+                              type="button"
+                              onClick={() => handleToggleSequencePause(lead)}
+                              disabled={updatingLeadId === lead.id}
+                              className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-semibold border transition-colors cursor-pointer ${
+                                lead.execution_state === 'paused' || lead.execution_state === 'replied'
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                                  : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                              }`}
+                              title={lead.execution_state === 'paused' || lead.execution_state === 'replied' ? 'Resume sequence' : 'Pause sequence'}
+                            >
+                              {lead.execution_state === 'paused' || lead.execution_state === 'replied' ? (
+                                <Play className="h-3 w-3" />
+                              ) : (
+                                <Pause className="h-3 w-3" />
+                              )}
+                              <span>{lead.execution_state === 'paused' || lead.execution_state === 'replied' ? 'Resume' : 'Pause'}</span>
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleDeleteLead(lead.id)}
+                            disabled={deletingLeadId === lead.id}
+                            className="text-gray-400 hover:text-red-600 p-1 transition-colors"
+                            title="Delete contact"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -992,6 +1316,113 @@ export default function OutreachLeads({ onOpenWizard }) {
         setFollowUpSelection(null); setSelectedLeadIds([]); fetchCampaigns();
         onOpenWizard?.(result.campaign_id, 1, result.name);
       }} />}
+
+      {/* Custom Include / Exclude Action Filter Builder Modal (Dripify Video #15 Parity) */}
+      {customFilterModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setCustomFilterModalOpen(false)}>
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl border border-gray-100 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+              <div>
+                <h3 className="text-sm font-bold text-gray-900">Create Custom Action Filter</h3>
+                <p className="text-[11px] text-gray-500">Combine Include & Exclude actions (e.g., Ignored Messages)</p>
+              </div>
+              <button type="button" onClick={() => setCustomFilterModalOpen(false)} className="p-1 text-gray-400 hover:bg-gray-100 rounded-lg">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-gray-500 mb-1">Filter Name</label>
+                <input
+                  type="text"
+                  placeholder="e.g., Ignored Messages"
+                  value={newFilterName}
+                  onChange={(e) => setNewFilterName(e.target.value)}
+                  className="w-full rounded-xl border border-gray-200 px-3 py-2 text-xs focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-emerald-700 mb-1">Include Actions Performed</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { id: 'invite_sent', label: 'Invite sent' },
+                    { id: 'invite_accepted', label: 'Invite accepted' },
+                    { id: 'messaged', label: 'Messaged' },
+                    { id: 'replied', label: 'Replied' },
+                    { id: 'profile_viewed', label: 'Profile viewed' },
+                    { id: 'liked_post', label: 'Liked post' },
+                    { id: 'endorsed', label: 'Endorsed' },
+                  ].map((act) => {
+                    const active = newFilterInclude.includes(act.id);
+                    return (
+                      <button
+                        key={`inc:${act.id}`}
+                        type="button"
+                        onClick={() => setNewFilterInclude((prev) => active ? prev.filter((x) => x !== act.id) : [...prev, act.id])}
+                        className={`px-2.5 py-1 rounded-lg border text-[11px] font-semibold transition-colors ${
+                          active ? 'bg-emerald-50 border-emerald-300 text-emerald-800' : 'bg-gray-50 border-gray-200 text-gray-600'
+                        }`}
+                      >
+                        {active ? '✓ ' : '+ '}{act.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-rose-700 mb-1">Exclude Actions Performed</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { id: 'invite_accepted', label: 'Invite accepted' },
+                    { id: 'messaged', label: 'Messaged' },
+                    { id: 'replied', label: 'Replied' },
+                  ].map((act) => {
+                    const active = newFilterExclude.includes(act.id);
+                    return (
+                      <button
+                        key={`exc:${act.id}`}
+                        type="button"
+                        onClick={() => setNewFilterExclude((prev) => active ? prev.filter((x) => x !== act.id) : [...prev, act.id])}
+                        className={`px-2.5 py-1 rounded-lg border text-[11px] font-semibold transition-colors ${
+                          active ? 'bg-rose-50 border-rose-300 text-rose-800' : 'bg-gray-50 border-gray-200 text-gray-600'
+                        }`}
+                      >
+                        {active ? '✕ ' : '– '}{act.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setIncludeActionsFilter(newFilterInclude.join(','));
+                  setExcludeActionsFilter(newFilterExclude.join(','));
+                  setCustomFilterModalOpen(false);
+                }}
+                disabled={!newFilterInclude.length && !newFilterExclude.length}
+                className="px-3.5 py-2 rounded-xl border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Apply Without Saving
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveCustomFilter}
+                disabled={savingCustomFilter || !newFilterName.trim() || (!newFilterInclude.length && !newFilterExclude.length)}
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold disabled:opacity-50"
+              >
+                {savingCustomFilter ? 'Saving…' : 'Save & Apply Filter'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,4 +1,6 @@
 """Fence campaign preparation before any lead metadata changes."""
+import logging
+logger = logging.getLogger(__name__)
 import uuid
 from datetime import datetime, timedelta, timezone
 

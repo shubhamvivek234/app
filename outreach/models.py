@@ -2,6 +2,8 @@
 Phase 1: Isolated Data Schemas & Models for LinkedIn Outbound & AI Sequence Engine.
 All schemas are strict Pydantic v2 models decoupled from core inbound logic.
 """
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
@@ -272,6 +274,7 @@ class OutreachCampaign(BaseModel):
     sender_account_ids: list[str] = Field(default_factory=list)  # Sender pooling
     schedule: WorkingSchedule = Field(default_factory=WorkingSchedule)
     limits: DailyLimits = Field(default_factory=DailyLimits)
+    skip_team_campaign_leads: bool = False  # Dripify Team Management: skip leads found in campaigns of team members
     leads_count: int = 0
     leads_contacted: int = 0
     replies_count: int = 0
@@ -749,7 +752,8 @@ class SearchImportJob(BaseModel):
     campaign_id: str
     sender_account_id: str
     search_url: str
-    search_type: str = "basic"  # 'basic' | 'sales_nav'
+    search_type: str = "basic"  # 'basic' | 'sales_nav' | 'recruiter' | 'connections'
+    list_name: str | None = None
     cursor: int = 0
     page_size: int = 10
     target_count: int = 100

@@ -4,6 +4,8 @@ The API only creates/consumes short-lived OAuth state. Token exchange and
 provider profile calls run in the outreach worker, never in a request handler.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import base64
 import hashlib

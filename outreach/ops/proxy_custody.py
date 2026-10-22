@@ -1,5 +1,7 @@
 """Private stopped managed-proxy conversion; no credential or provider arguments."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import argparse
 import asyncio

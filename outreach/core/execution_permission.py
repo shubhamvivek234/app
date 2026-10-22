@@ -1,4 +1,6 @@
 """Short-lived, explicit operator permission. Feature flags never grant it."""
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime, timedelta, timezone
 
 from pymongo.errors import DuplicateKeyError

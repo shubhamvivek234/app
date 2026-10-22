@@ -30,12 +30,32 @@ export default function SenderStoredDetails({ account }) {
   const cooldown = recordedTime(account.cooldown_until);
   const level = Number.isInteger(account.warmup_level) && account.warmup_level >= 1 && account.warmup_level <= 4
     ? account.warmup_level : 'Not recorded';
+  const readiness = account.readiness && typeof account.readiness === 'object' ? account.readiness : null;
+  const allowance = readiness?.effective_allowance && typeof readiness.effective_allowance === 'object'
+    ? readiness.effective_allowance : null;
   return <div className="mt-3 space-y-1 text-xs text-gray-500" aria-label="Recorded sender details">
     <p>Warm-up level: {level}</p>
     {hasStop && <p className="text-amber-800">{stop ? `Recorded stop: ${stop}` : 'Recorded stop requires review'}</p>}
     {hasCooldown && <p>{cooldown ? <>Recorded cooldown: <time dateTime={cooldown}>{cooldown.replace('T', ' ').replace('.000Z', ' UTC').replace('Z', ' UTC')}</time></>
       : 'Cooldown timing requires review'}</p>}
     {hasCooldown && <p>Elapsed cooldown does not clear a recorded stop.</p>}
+    {readiness && (
+      <div className="mt-2 rounded-lg border border-gray-100 bg-gray-50/70 p-2.5 space-y-1">
+        <p className={readiness.can_work_now ? 'font-semibold text-emerald-700' : 'font-semibold text-amber-800'}>
+          Operational status: {readiness.can_work_now ? 'Ready to send' : 'Blocked'}
+        </p>
+        {Array.isArray(readiness.blockers) && readiness.blockers.length > 0 && (
+          <p className="text-amber-800">Blockers: {readiness.blockers.join(' · ')}</p>
+        )}
+        {allowance && (
+          <p className="text-gray-600">
+            Remaining today: Invites <strong>{allowance.connection_invites?.remaining_today ?? '—'}</strong>/{allowance.connection_invites?.effective_cap ?? '—'}
+            {' · '}Messages <strong>{allowance.messages?.remaining_today ?? '—'}</strong>/{allowance.messages?.effective_cap ?? '—'}
+            {typeof allowance.weekly_invites_remaining === 'number' && ` · Weekly invites left: ${allowance.weekly_invites_remaining}/100`}
+          </p>
+        )}
+      </div>
+    )}
     <p>Live health is not verified here. Launch and sending check current access, resources and permissions.</p>
   </div>;
 }

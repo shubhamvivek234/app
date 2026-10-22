@@ -1,4 +1,6 @@
 """Exact scalar workspace scope for customer-facing resource admission."""
+import logging
+logger = logging.getLogger(__name__)
 from typing import Any
 
 

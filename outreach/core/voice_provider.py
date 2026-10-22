@@ -1,4 +1,6 @@
 """Single bounded TTS call. No retries, redirects, mock fallback or raw errors."""
+import logging
+logger = logging.getLogger(__name__)
 import asyncio
 from typing import Callable
 

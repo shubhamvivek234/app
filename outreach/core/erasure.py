@@ -4,6 +4,8 @@ No provider calls. Drain acknowledgement is an operator assertion, not a
 detector of cached credentials, old workers, backups or remote vendor data.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import asyncio
 from datetime import datetime, timezone

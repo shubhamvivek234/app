@@ -1,4 +1,6 @@
 """Drained manual-action review. Human assertions are never provider receipts."""
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 
 from outreach.core.authorization import canonical_hash

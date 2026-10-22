@@ -373,7 +373,64 @@ async def test_weekly_invite_limit_isolates_connection_invites_only():
 
 
 def test_custom_name_scrubber_strips_user_terms():
-    from outreach.core.name_cleaner import clean_first_name
+    from outreach.core.name_cleaner import clean_first_name, clean_company_name
 
     cleaned = clean_first_name("Dr. Elena (Hiring!) Ex-Meta", custom_scrub_terms=["Dr.", "Ex-Meta"])
     assert cleaned == "Elena"
+    # Mixed-case brand names (AppSumo, ClientAmp) must never be title-cased or lowercased
+    assert clean_company_name("AppSumo") == "AppSumo"
+    assert clean_company_name("ClientAmp") == "ClientAmp"
+
+
+@pytest.mark.asyncio
+async def test_add_tag_node_executes_without_voyager_and_applies_crm_tag(monkeypatch):
+    from outreach.tasks.sequence_executor import SequenceExecutor
+    from outreach.core.sequence_capabilities import sequence_capabilities
+
+    monkeypatch.setenv("OUTREACH_LIVE_ACTIONS_ENABLED", "true")
+    catalog = {entry["type"]: entry for entry in sequence_capabilities()}
+    assert catalog["add_tag"]["supported"] is True
+    assert catalog["add_tag"]["builder_available"] is True
+
+    db = _runner_db("add_tag")
+    db.outreach_sequences.find_one.return_value["compiled_dag"]["nodes"]["step_a"]["config"] = {"tag_name": "AppSumo"}
+    db.outreach_leads.update_one.return_value = MagicMock(matched_count=1)
+    with patch("outreach.tasks.sequence_executor.OutboundRateLimiter.is_within_working_hours", return_value=True), \
+         patch("outreach.tasks.sequence_executor.VoyagerClient") as voyager:
+        result = await SequenceExecutor.execute_lead_step("lead_a", db)
+
+    assert result["status"] == "success"
+    assert result["action"] == "add_tag"
+    assert result["tag_applied"] == "AppSumo"
+    voyager.assert_not_called()
+    assert any(
+        "AppSumo" in (call.args[1].get("$set", {}).get("tags") or [])
+        for call in db.outreach_leads.update_one.call_args_list
+    )
+
+
+def test_community_ai_prompts_synthesize_role_and_profile_observations():
+    from outreach.api.prompts import DEFAULT_PROMPTS, _synthesize_prompt_output
+
+    names = {p["name"] for p in DEFAULT_PROMPTS}
+    assert "Casual role-based value insights" in names
+    assert "Profile observation" in names
+    assert "Skill & experience compliment" in names
+
+    sample = {
+        "first_name": "Elvin",
+        "company_name": "ClientAmp",
+        "job_title": "Founder",
+        "industry": "B2B SaaS",
+        "headline": "Founder at ClientAmp | Scaling outbound acquisition systems",
+        "top_skill": "Django & React",
+        "years_in_role": "8+ years",
+    }
+    role_out = _synthesize_prompt_output("Casual role-based value insights", "", sample)
+    assert role_out.startswith("Most Founders like you at ClientAmp are trying to")
+
+    obs_out = _synthesize_prompt_output("Profile observation", "", sample)
+    assert obs_out.startswith("I noticed that at ClientAmp")
+
+    skill_out = _synthesize_prompt_output("Skill & experience compliment", "", sample)
+    assert "Elvin" in skill_out and "8+ years" in skill_out and "Django & React" in skill_out

@@ -3,6 +3,8 @@
 Capture preserves stored definitions, including UI fields and absent defaults.
 It proves neither renderer/provider behavior nor execution authorization.
 """
+import logging
+logger = logging.getLogger(__name__)
 from copy import deepcopy
 import math
 import re
@@ -25,6 +27,7 @@ CONFIG_FIELDS={
     'send_message':{'body','timeout_days'},'voice_note':{'script','fallback','timeout_days'},
     'like_last_post':{'max_post_age_days','skip_if_no_posts'},'if_connected':{'timeout_days'},
     'find_email':set(),'send_email':{'subject','body'},'if_email_available':set(),
+    'add_tag':{'tag_name','auto_tag'},
     'has_data_in_column':{'condition_contract_version','field','operator','value_type','value'}}
 
 

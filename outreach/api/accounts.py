@@ -58,8 +58,11 @@ class UpdateLimitsRequest(BaseModel):
 
 
 class ActivityControlRequest(BaseModel):
+    enabled: bool | None = None
     activity_control_enabled: bool | None = None
     connections_count: int | None = Field(default=None, ge=0, le=50000)
+    pending_invitations_count: int | None = Field(default=None, ge=0, le=5000)
+    premium_product: str | None = None
     warmup_level: int | None = Field(default=None, ge=1, le=4)
     connection_invites: int | None = Field(default=None, ge=0, le=75)
     messages: int | None = Field(default=None, ge=0, le=150)
@@ -92,6 +95,126 @@ def _sanitize_account(acc: dict[str, Any]) -> dict[str, Any]:
     return clean
 
 
+async def _compute_sender_readiness(
+    acc: dict[str, Any],
+    ws_id: str,
+    db: AsyncIOMotorDatabase,
+    now: datetime,
+    has_entitlement: bool | None = None,
+) -> dict[str, Any]:
+    from outreach.core.safety_shield import WarmUpGovernor
+    from outreach.core.paid_access import _utc
+
+    blockers: list[str] = []
+    if has_entitlement is False:
+        blockers.append("Subscription expired or inactive")
+
+    status_val = acc.get("status")
+    if status_val != "active":
+        blockers.append(f"Session status is {status_val or 'inactive'}")
+
+    has_session = bool(
+        acc.get("session_cookie_enc")
+        or acc.get("encrypted_session_cookie")
+        or acc.get("li_at_enc")
+    )
+    if not has_session:
+        blockers.append("Session credentials missing; reconnect sender")
+
+    stop_reason = acc.get("stop_reason")
+    if stop_reason:
+        blockers.append(f"Recorded stop ({stop_reason})")
+
+    cooldown_raw = acc.get("cooldown_until")
+    if cooldown_raw is not None:
+        deadline = _utc(cooldown_raw) if isinstance(cooldown_raw, (datetime, str)) else None
+        if deadline is None or deadline > now:
+            blockers.append("Cooldown active")
+
+    proxy_cfg = acc.get("proxy") or acc.get("proxy_config") or {}
+    if not isinstance(proxy_cfg, dict) or not proxy_cfg.get("host"):
+        blockers.append("Proxy not configured")
+
+    sender_id = str(acc.get("id") or "")
+    today_str = now.strftime("%Y-%m-%d")
+    budget_doc = None
+    if sender_id and hasattr(db, "outreach_request_budgets") and hasattr(db.outreach_request_budgets, "find_one"):
+        try:
+            budget_doc = await db.outreach_request_budgets.find_one({
+                "workspace_id": ws_id,
+                "sender_id": sender_id,
+                "day": today_str,
+            })
+        except Exception as exc:
+            logger.debug("Sender request budget lookup skipped for sender=%s (%s)", sender_id, type(exc).__name__)
+            budget_doc = None
+
+    budget_actions = (budget_doc or {}).get("actions") if isinstance((budget_doc or {}).get("actions"), dict) else {}
+    counters = acc.get("daily_counters") if isinstance(acc.get("daily_counters"), dict) else {}
+    same_day = counters.get("date") == today_str
+    limits = acc.get("limits") if isinstance(acc.get("limits"), dict) else {}
+
+    used_invites = max(
+        int(counters.get("connection_invites", 0) or 0) if same_day else 0,
+        int(budget_actions.get("invite", 0) or 0),
+    )
+    used_messages = max(
+        int(counters.get("messages", 0) or 0) if same_day else 0,
+        int(budget_actions.get("message", 0) or 0),
+    )
+    used_visits = max(
+        int(counters.get("profile_visits", 0) or 0) if same_day else 0,
+        int(budget_actions.get("visit", 0) or 0),
+    )
+    used_emails = int(counters.get("email_sends", 0) or 0) if same_day else 0
+
+    activity_limits = WarmUpGovernor.get_activity_control_limits(acc, now=now)
+
+    def _effective(action_key: str, default_cap: int, used: int) -> dict[str, Any]:
+        raw_saved = limits.get(action_key)
+        saved_cap = raw_saved if type(raw_saved) is int and 0 <= raw_saved <= 150 else None
+        base_cap = saved_cap if saved_cap is not None else default_cap
+        gov_cap = int(activity_limits.get(action_key, base_cap))
+        eff_cap = min(base_cap, gov_cap) if saved_cap is None else gov_cap
+        remaining = max(0, eff_cap - used)
+        return {
+            "saved_cap": saved_cap,
+            "effective_cap": eff_cap,
+            "used_today": used,
+            "remaining_today": remaining,
+        }
+
+    inv_allow = _effective("connection_invites", 25, used_invites)
+    msg_allow = _effective("messages", 40, used_messages)
+    vis_allow = _effective("profile_visits", 50, used_visits)
+    eml_allow = _effective("email_sends", 35, used_emails)
+
+    weekly_sent = int(acc.get("weekly_invites_sent", 0) or 0)
+    weekly_remaining = max(0, 100 - weekly_sent)
+    if weekly_remaining == 0:
+        inv_allow["remaining_today"] = 0
+        blockers.append("Weekly invite limit reached (100/wk)")
+    else:
+        inv_allow["remaining_today"] = min(inv_allow["remaining_today"], weekly_remaining)
+
+    if inv_allow["remaining_today"] == 0 and msg_allow["remaining_today"] == 0:
+        blockers.append("Daily invite and message allowance exhausted")
+
+    return {
+        "can_work_now": len(blockers) == 0,
+        "blockers": blockers,
+        "effective_allowance": {
+            "connection_invites": inv_allow,
+            "messages": msg_allow,
+            "profile_visits": vis_allow,
+            "email_sends": eml_allow,
+            "weekly_invites_sent": weekly_sent,
+            "weekly_invites_remaining": weekly_remaining,
+        },
+        "checked_at": now.isoformat(),
+    }
+
+
 # ── Endpoints ──────────────────────────────────────────────────────────────
 
 @router.get("")
@@ -103,7 +226,30 @@ async def list_outreach_accounts(
     ws_id = current_user.get("default_workspace_id") or current_user.get("user_id")
     cursor = db.outreach_accounts.find({"workspace_id": ws_id})
     accounts = await cursor.to_list(length=100)
-    return [_sanitize_account(a) for a in accounts]
+    now = datetime.now(timezone.utc)
+    has_entitlement: bool | None = None
+    if hasattr(db, "outreach_entitlements") or hasattr(db, "subscriptions"):
+        try:
+            from outreach.core.paid_access import get_active_entitlement
+            has_entitlement = bool(await get_active_entitlement(db, ws_id, now))
+        except Exception as exc:
+            logger.debug("Entitlement check skipped for workspace=%s (%s)", ws_id, type(exc).__name__)
+            has_entitlement = None
+
+    from outreach.core.safety_shield import WarmUpGovernor
+    results = []
+    for a in accounts:
+        sanitized = _sanitize_account(a)
+        try:
+            sanitized["readiness"] = await _compute_sender_readiness(a, ws_id, db, now, has_entitlement)
+        except Exception as exc:
+            logger.warning("Sender readiness check degraded for account=%s (%s)", a.get("id"), type(exc).__name__)
+        try:
+            sanitized["activity_control"] = WarmUpGovernor.compute_activity_control_summary(a, now=now)
+        except Exception as exc:
+            logger.warning("Activity control summary degraded for account=%s (%s)", a.get("id"), type(exc).__name__)
+        results.append(sanitized)
+    return results
 
 
 
@@ -261,7 +407,11 @@ async def update_activity_control(
 
     updates: dict[str, Any] = {}
     payload = req.model_dump(exclude_unset=True)
-    for top_field in ("activity_control_enabled", "connections_count", "warmup_level"):
+    if "enabled" in payload and payload["enabled"] is not None and payload.get("activity_control_enabled") is None:
+        payload["activity_control_enabled"] = bool(payload.pop("enabled"))
+    else:
+        payload.pop("enabled", None)
+    for top_field in ("activity_control_enabled", "connections_count", "pending_invitations_count", "premium_product", "warmup_level"):
         if top_field in payload and payload[top_field] is not None:
             updates[top_field] = payload.pop(top_field)
 
@@ -275,7 +425,9 @@ async def update_activity_control(
 
     updated_account = await db.outreach_accounts.find_one({"id": account_id, "workspace_id": ws_id})
     sanitized = _sanitize_account(updated_account)
-    sanitized["activity_control"] = WarmUpGovernor.compute_activity_control_summary(updated_account)
+    summary = WarmUpGovernor.compute_activity_control_summary(updated_account)
+    sanitized["activity_control"] = summary
+    sanitized["daily_limits"] = summary["effective_limits"]
     return sanitized
 
 

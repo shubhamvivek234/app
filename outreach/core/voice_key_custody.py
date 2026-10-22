@@ -5,6 +5,8 @@ profile review. Neither key possession nor an operator label proves vendor accou
 identity. Plaintext material exists only in one worker operation, outside Mongo.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from dataclasses import dataclass, field
 import hmac

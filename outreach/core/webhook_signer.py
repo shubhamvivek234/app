@@ -2,6 +2,8 @@
 Cryptographic Webhook Payload Signer and Verifier.
 Implements HMAC-SHA256 signature scheme with timestamped replay prevention.
 """
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 import hashlib
 import hmac

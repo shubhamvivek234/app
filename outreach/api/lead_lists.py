@@ -1,5 +1,6 @@
 """Scoped campaign audience-list metadata; collection and launch remain separate."""
 from typing import Any, Literal, Annotated
+import logging
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -9,6 +10,7 @@ from db.mongo import get_db
 from outreach.api.dependencies import require_outreach_permission, workspace_id
 from outreach.core import lead_lists, lead_list_imports
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/lead-lists", tags=["Outreach audience lists"])
 
 

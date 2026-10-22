@@ -3,6 +3,8 @@ Safe, Non-Destructive Name Normalization Engine for Outreach Personalization.
 Eliminates naive title-casing bugs (e.g. preserving McDonald, O'Connor, de la Cruz).
 Only normalizes 100% ALL-CAPS strings and strips trailing noise/emojis/certifications.
 """
+import logging
+logger = logging.getLogger(__name__)
 import re
 from typing import Tuple
 
@@ -138,4 +140,27 @@ def clean_first_name(raw: str | None, custom_scrub_terms: list[str] | None = Non
                 capitalized_words.append(_smart_title_case_word(w))
         return " ".join(capitalized_words)
 
+    return text
+
+
+def clean_company_name(raw: str | None) -> str:
+    """
+    Cleans a company name safely while strictly preserving mixed-case brand names
+    such as 'AppSumo', 'ClientAmp', 'LinkedIn', 'OpenAI', 'HubSpot', 'YouTube'.
+    Only normalizes 100% ALL-CAPS strings longer than 4 characters.
+    """
+    if not raw or not isinstance(raw, str):
+        return ""
+    text = EMOJI_PATTERN.sub("", raw).strip()
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return ""
+    has_lower = any(c.islower() for c in text)
+    has_upper = any(c.isupper() for c in text)
+    # Mixed-case (e.g. AppSumo, ClientAmp) is ALWAYS preserved verbatim
+    if has_lower and has_upper:
+        return text
+    # Short all-caps acronyms (e.g. IBM, AWS, SaaS, AI) stay uppercase
+    if has_upper and not has_lower and len(text) > 4:
+        return " ".join(w if len(w) <= 3 else _smart_title_case_word(w) for w in text.split(" "))
     return text

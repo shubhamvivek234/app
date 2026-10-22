@@ -4,6 +4,8 @@ Observed baselines do not prove creation or complete history. No template
 content, Firebase UID, restoration or execution authority is retained here.
 The caller must already fence mutation authority in the shared transaction.
 """
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 import re
 from typing import Any, NoReturn

@@ -3,6 +3,8 @@
 Original receipts/configuration/expiry remain. No replay, adoption or activation.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone

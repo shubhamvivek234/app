@@ -1,4 +1,6 @@
 """Immutable exact-content review, separate from execution and outcome authority."""
+import logging
+logger = logging.getLogger(__name__)
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
@@ -6,7 +8,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
 
 from outreach.core.authorization import canonical_hash
-from outreach.core.dag_compiler import interpolate_template, contains_ai_prompt_token, select_step_variant
+from outreach.core.dag_compiler import interpolate_template, contains_ai_prompt_token, select_step_variant, resolve_step_message_with_alternative
 from outreach.core.inbox_freshness import credential_generation
 from outreach.core.paid_access import _utc
 from outreach.core.sequence_versions import load_sequence
@@ -98,15 +100,20 @@ async def sequence_binding(db: AsyncIOMotorDatabase, workspace_id: str, lead_id:
             context["voice_artifact_id"] = voice_artifact["_id"]
             context["voice_artifact_generation"] = voice_artifact.get("generation_id", "legacy")
     elif action == "inmail":
+        alt_msg = config.get("alternative_message") or config.get("fallback") or ""
         subject = interpolate_template(config.get("subject") or "Quick question, {{first_name}}", lead).strip()
-        body = interpolate_template(config.get("body") or "Hi {{first_name}}", lead)
+        primary_body = config.get("body") or config.get("message") or "Hi {{first_name}}"
+        resolved = resolve_step_message_with_alternative(primary_body, alt_msg, lead)
+        body = resolved["text"]
         content = {"subject": subject, "body": body}
     elif action == "comment_last_post":
         template = config.get("comment") or config.get("body") or "Great insights on this, {{first_name}}!"
         content = {"body": interpolate_template(template, lead)}
     else:
         template = config.get("note", "") if action == "connection_request" else config.get("body", "Hi {{first_name}}")
-        content = {"body": interpolate_template(template, lead)}
+        alt_msg = config.get("alternative_message") or config.get("fallback") or ""
+        resolved = resolve_step_message_with_alternative(template, alt_msg, lead) if template else {"text": ""}
+        content = {"body": resolved["text"]}
     return make_binding(workspace_id=workspace_id, account=account, source="sequence", recipient=recipient,
                         action=action, content=content, context=context)
 

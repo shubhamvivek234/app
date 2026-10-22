@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 from typing import Any
 from outreach.core.authorization import authorization_snapshot
 from outreach.core.connection_waits import (admission, one, scope_guard, read_operation, read_context,
@@ -12,6 +13,8 @@ from outreach.core.restore_epoch import EpochUnavailable
 from outreach.core.session_custody import account_session
 from outreach.core.proxy_custody import prepare_proxy
 from outreach.engine.voyager_client import VoyagerClient
+
+logger = logging.getLogger(__name__)
 
 
 async def recheck_connection(db: Any, lead: dict, campaign: dict, sequence: dict,
@@ -60,5 +63,6 @@ async def recheck_connection(db: Any, lead: dict, campaign: dict, sequence: dict
         request_id = observation.get('request_id') if isinstance(observation, dict) else None
         result = await apply_observation(db, workspace, lead['id'], scope['_id'], request_id)
         return None if result['status'] == 'connection_negative_confirmed' else result
-    except (ConnectionWaitUnavailable, EpochUnavailable, RequestDenied):
+    except (ConnectionWaitUnavailable, EpochUnavailable, RequestDenied) as exc:
+        logger.info("Connection recheck deferred for lead=%s workspace=%s (%s)", lead.get('id'), workspace, type(exc).__name__)
         return {'status': 'connection_recheck_required', 'not_submitted': True}

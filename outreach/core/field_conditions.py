@@ -1,5 +1,7 @@
 """Versioned literal stored-field checks shared by authoring, preview and workers."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import math
 import re

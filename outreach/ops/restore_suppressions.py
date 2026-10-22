@@ -1,5 +1,7 @@
 """Private selected-recipient restore CLI; never echo recipient source material."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 import argparse
 import asyncio
 import hashlib

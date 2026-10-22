@@ -126,7 +126,7 @@ async def test_prompt_custom_collision_selects_current_workspace_and_reserved_ca
         assert "current-public" in first.text
         assert "foreign-private" not in first.text and "forged-private" not in first.text
         system = [p for p in first.json() if p["is_system"]]
-        assert len(system) == 5 and len({p["id"] for p in system}) == 5
+        assert len(system) == 8 and len({p["id"] for p in system}) == 8
         assert all(not p.get("runs_count") for p in system)
         for item in system:
             assert (await client.delete("/prompts/" + item["id"])).status_code == 404
@@ -159,7 +159,7 @@ async def test_prompt_catalog_is_available_without_database_seeding_or_shared_mu
     db.collections["outreach_ai_prompts"] = StreamingCollection()
     async with client_for(app_for(db, prompts.router)) as client:
         first = await client.get("/prompts")
-        assert first.status_code == 200 and len(first.json()) == 5
+        assert first.status_code == 200 and len(first.json()) == 8
         assert db.outreach_ai_prompts.docs == []
         original = deepcopy(first.json())
         first.json()[0]["prompt_text"] = "Local changed response"
@@ -410,8 +410,14 @@ async def test_route_graph_covers_every_ordinary_route_and_preserves_auth_except
     # These exact readers own their permission/UID/erasure transaction rather
     # than taking an ordinary sequential outreach-context snapshot first.
     snapshot_readers = {
-        sequences.get_template_history: '/outreach/sequences/templates/{template_id}/revision-checkpoints',
-        sequences.get_template_snapshot_content: '/outreach/sequences/templates/{template_id}/revision-checkpoints/{checkpoint_id}/content',
+        sequences.get_template_history: (
+            '/outreach/sequences/templates/{template_id}/revision-checkpoints',
+            '/sequences/templates/{template_id}/revision-checkpoints',
+        ),
+        sequences.get_template_snapshot_content: (
+            '/outreach/sequences/templates/{template_id}/revision-checkpoints/{checkpoint_id}/content',
+            '/sequences/templates/{template_id}/revision-checkpoints/{checkpoint_id}/content',
+        ),
     }
     for route in routes:
         calls = list(dependency_calls(route.dependant))
@@ -420,7 +426,7 @@ async def test_route_graph_covers_every_ordinary_route_and_preserves_auth_except
             assert not guarded, route.path  # OAuth/state and API-key auth stay independent.
             assert get_current_user not in calls, route.path
         elif route.endpoint in snapshot_readers:
-            assert route.path == snapshot_readers[route.endpoint] and route.methods == {'GET'}
+            assert route.path in snapshot_readers[route.endpoint] and route.methods == {'GET'}
             assert not guarded and get_current_user in calls, route.path
         else:
             assert guarded and get_current_user in calls, route.path

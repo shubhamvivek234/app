@@ -60,6 +60,21 @@ export default function LeadActivityDrawer({ leadId, isOpen, onClose, onLeadUpda
   const [tagDefinitions, setTagDefinitions] = useState([]);
   const [changingTag, setChangingTag] = useState(false);
   const [excluding, setExcluding] = useState(false);
+  const [whitelisting, setWhitelisting] = useState(false);
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileForm, setProfileForm] = useState({
+    first_name: '',
+    last_name: '',
+    headline: '',
+    job_title: '',
+    company_name: '',
+    location: '',
+    university_name: '',
+    top_skill: '',
+    company_followed: '',
+    linkedin_email: '',
+  });
   const activeLead = useRef(null);
   activeLead.current = isOpen ? leadId : null;
   const activityRequest = useRef(0);
@@ -154,6 +169,66 @@ export default function LeadActivityDrawer({ leadId, isOpen, onClose, onLeadUpda
       toast.error(failure.message);
     } finally {
       setExcluding(false);
+    }
+  };
+
+  const whitelistLead = async () => {
+    if (!lead || lead.id !== leadId || activeLead.current !== leadId || whitelisting) return;
+    setWhitelisting(true);
+    try {
+      const response = await fetch(`/api/v1/outreach/leads/${leadId}/whitelist`, {
+        method: 'POST', credentials: 'include', headers: authHeaders(),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || 'Could not whitelist this contact');
+      await fetchActivity();
+      onLeadUpdated?.();
+      toast.success('Contact whitelisted — eligible for outreach again');
+    } catch (failure) {
+      toast.error(failure.message);
+    } finally {
+      setWhitelisting(false);
+    }
+  };
+
+  const handleOpenProfileEdit = () => {
+    if (!lead) return;
+    setProfileForm({
+      first_name: lead.first_name || '',
+      last_name: lead.last_name || '',
+      headline: lead.headline || '',
+      job_title: lead.job_title || '',
+      company_name: lead.company_name || '',
+      location: lead.location || '',
+      university_name: lead.university_name || '',
+      top_skill: lead.top_skill || '',
+      company_followed: lead.company_followed || '',
+      linkedin_email: lead.linkedin_email || lead.email || '',
+    });
+    setEditingProfile(true);
+  };
+
+  const handleSaveProfileEdit = async (e) => {
+    if (e) e.preventDefault();
+    if (!lead || savingProfile) return;
+    setSavingProfile(true);
+    try {
+      const response = await fetch(`/api/v1/outreach/leads/${leadId}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: authHeaders(),
+        body: JSON.stringify(profileForm),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || 'Could not update lead profile');
+      setEditingProfile(false);
+      await fetchActivity();
+      onLeadUpdated?.();
+      toast.success('Lead profile information updated');
+    } catch (failure) {
+      toast.error(failure.message);
+    } finally {
+      setSavingProfile(false);
     }
   };
 
@@ -333,8 +408,23 @@ export default function LeadActivityDrawer({ leadId, isOpen, onClose, onLeadUpda
                   <option value="">Add a tag…</option>
                   {tagDefinitions.filter((tag) => !(lead.tag_ids || []).includes(tag.id)).map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
                 </select>
-                <div className="border-t border-gray-100 pt-3">
-                  {lead.do_not_contact ? <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-red-700"><Ban className="h-3.5 w-3.5" />Do-Not-Contact</span> : (
+                <div className="border-t border-gray-100 pt-3 flex items-center justify-between gap-2">
+                  {lead.do_not_contact ? (
+                    <div className="flex items-center justify-between w-full">
+                      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-red-700">
+                        <Ban className="h-3.5 w-3.5" />Do-Not-Contact
+                      </span>
+                      <button
+                        type="button"
+                        disabled={whitelisting}
+                        onClick={whitelistLead}
+                        className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                      >
+                        <CheckCircle2 className="h-3 w-3" />
+                        {whitelisting ? 'Whitelisting…' : 'Whitelist Contact'}
+                      </button>
+                    </div>
+                  ) : (
                     <button disabled={excluding} onClick={excludeLead} className="inline-flex items-center gap-1.5 text-xs font-semibold text-red-600 disabled:opacity-50"><Ban className="h-3.5 w-3.5" />{excluding ? 'Saving exclusion…' : 'Add to Do-Not-Contact'}</button>
                   )}
                 </div>
@@ -467,22 +557,150 @@ export default function LeadActivityDrawer({ leadId, isOpen, onClose, onLeadUpda
 
               {/* Campaign & Contact Details */}
               <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-2xs space-y-2.5 text-xs">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block">
-                  Campaign & Contact Info
-                </span>
-                <div className="flex items-center justify-between text-gray-600">
-                  <span>Campaign:</span>
-                  <span className="font-semibold text-gray-900">{lead.campaign_name || lead.campaign_id || '—'}</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block">
+                    Campaign & Contact Info
+                  </span>
+                  {!editingProfile && (
+                    <button
+                      type="button"
+                      onClick={handleOpenProfileEdit}
+                      className="text-[11px] font-semibold text-indigo-600 hover:underline"
+                    >
+                      Edit Profile Info
+                    </button>
+                  )}
                 </div>
-                <div className="flex items-center justify-between text-gray-600">
-                  <span>Source:</span>
-                  <span className="font-mono text-gray-700 capitalize">{lead.source || 'csv'}</span>
-                </div>
-                {lead.email && (
-                  <div className="flex items-center justify-between text-gray-600">
-                    <span className="flex items-center gap-1"><Mail className="w-3.5 h-3.5 text-gray-400" /> Email:</span>
-                    <span className="font-mono text-gray-900">{lead.email}</span>
-                  </div>
+
+                {editingProfile ? (
+                  <form onSubmit={handleSaveProfileEdit} className="space-y-2 pt-1">
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        placeholder="First name"
+                        value={profileForm.first_name}
+                        onChange={(e) => setProfileForm((p) => ({ ...p, first_name: e.target.value }))}
+                        className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Last name"
+                        value={profileForm.last_name}
+                        onChange={(e) => setProfileForm((p) => ({ ...p, last_name: e.target.value }))}
+                        className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs"
+                      />
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Job title / position"
+                      value={profileForm.job_title}
+                      onChange={(e) => setProfileForm((p) => ({ ...p, job_title: e.target.value }))}
+                      className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Company name"
+                      value={profileForm.company_name}
+                      onChange={(e) => setProfileForm((p) => ({ ...p, company_name: e.target.value }))}
+                      className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Location"
+                      value={profileForm.location}
+                      onChange={(e) => setProfileForm((p) => ({ ...p, location: e.target.value }))}
+                      className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs"
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        placeholder="University"
+                        value={profileForm.university_name}
+                        onChange={(e) => setProfileForm((p) => ({ ...p, university_name: e.target.value }))}
+                        className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Top skill"
+                        value={profileForm.top_skill}
+                        onChange={(e) => setProfileForm((p) => ({ ...p, top_skill: e.target.value }))}
+                        className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        placeholder="Company followed"
+                        value={profileForm.company_followed}
+                        onChange={(e) => setProfileForm((p) => ({ ...p, company_followed: e.target.value }))}
+                        className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs"
+                      />
+                      <input
+                        type="email"
+                        placeholder="LinkedIn email"
+                        value={profileForm.linkedin_email}
+                        onChange={(e) => setProfileForm((p) => ({ ...p, linkedin_email: e.target.value }))}
+                        className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs"
+                      />
+                    </div>
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setEditingProfile(false)}
+                        className="px-3 py-1 rounded-lg border border-gray-200 text-xs text-gray-600"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={savingProfile}
+                        className="px-3.5 py-1 rounded-lg bg-indigo-600 text-white text-xs font-semibold disabled:opacity-50"
+                      >
+                        {savingProfile ? 'Saving…' : 'Save Profile'}
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between text-gray-600">
+                      <span>Campaign:</span>
+                      <span className="font-semibold text-gray-900">{lead.campaign_name || lead.campaign_id || '—'}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-gray-600">
+                      <span>Source:</span>
+                      <span className="font-mono text-gray-700 capitalize">{lead.source || 'csv'}</span>
+                    </div>
+                    {lead.location && (
+                      <div className="flex items-center justify-between text-gray-600">
+                        <span>Location:</span>
+                        <span className="text-gray-900">{lead.location}</span>
+                      </div>
+                    )}
+                    {lead.university_name && (
+                      <div className="flex items-center justify-between text-gray-600">
+                        <span>University:</span>
+                        <span className="text-gray-900">{lead.university_name}</span>
+                      </div>
+                    )}
+                    {lead.top_skill && (
+                      <div className="flex items-center justify-between text-gray-600">
+                        <span>Top Skill:</span>
+                        <span className="text-gray-900">{lead.top_skill}</span>
+                      </div>
+                    )}
+                    {lead.company_followed && (
+                      <div className="flex items-center justify-between text-gray-600">
+                        <span>Company Followed:</span>
+                        <span className="text-gray-900">{lead.company_followed}</span>
+                      </div>
+                    )}
+                    {(lead.linkedin_email || lead.email) && (
+                      <div className="flex items-center justify-between text-gray-600">
+                        <span className="flex items-center gap-1"><Mail className="w-3.5 h-3.5 text-gray-400" /> LinkedIn Email:</span>
+                        <span className="font-mono text-gray-900">{lead.linkedin_email || lead.email}</span>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
 

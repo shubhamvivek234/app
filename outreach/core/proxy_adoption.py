@@ -3,6 +3,8 @@
 No missing purchase/owner facts, vendor requests or activation are supplied.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from copy import deepcopy
 from datetime import datetime, timezone

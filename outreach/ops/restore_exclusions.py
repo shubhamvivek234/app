@@ -1,5 +1,7 @@
 """Private bounded exclusion files; no identity/content material in CLI output."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 import argparse
 import asyncio
 import hashlib

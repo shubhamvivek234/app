@@ -1,4 +1,6 @@
 """Async custody for LinkedIn cookies; KMS never runs inside Mongo callbacks."""
+import logging
+logger = logging.getLogger(__name__)
 import os
 
 from outreach.core.credential_custody import CredentialContext, CredentialCustody, CustodyUnavailable, PREFIX

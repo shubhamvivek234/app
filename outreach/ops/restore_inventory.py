@@ -1,5 +1,7 @@
 """Private metadata-only stopped financial/resource and operation inventory."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 import argparse
 import asyncio
 import json

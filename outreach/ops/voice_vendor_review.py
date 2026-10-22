@@ -1,5 +1,7 @@
 """Private reference-only vendor evidence; capture explicitly makes one GET."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import argparse
 import asyncio

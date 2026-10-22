@@ -1,4 +1,6 @@
 """Atomic current-field/email-policy decision and durable job receipt."""
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 import re
 from typing import Any

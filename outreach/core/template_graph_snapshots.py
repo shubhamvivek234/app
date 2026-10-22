@@ -3,6 +3,8 @@
 Only version-one known graph fields are copied. Existing source documents
 remain plaintext, and this codec is not a public historical-content reader.
 """
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime,timezone
 import json
 from typing import Any

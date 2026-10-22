@@ -1,5 +1,7 @@
 """Encrypted prepared recordings only; loading can never synthesize audio."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone

@@ -28,7 +28,11 @@ class CreateAIPromptRequest(BaseModel):
 
 class PromptPreviewRequest(BaseModel):
     template: str = Field(..., description="Message text with contact variables and optional prompt guidance tokens")
+    alternative_message: str | None = None
+    subject: str | None = None
     lead_id: str | None = None
+    campaign_id: str | None = None
+    evaluate_ai: bool = False
     custom_lead_data: dict[str, Any] | None = None
 
 
@@ -78,6 +82,33 @@ DEFAULT_PROMPTS = [
         "description": "Niche peer-to-peer connection icebreaker.",
         "author_name": "Unravler Curated",
         "id": "curated_niche-connection",
+        "runs_count": 0,
+        "is_system": True,
+    },
+    {
+        "name": "Casual role-based value insights",
+        "prompt_text": "Based on the following information from the LinkedIn profile, write a very short sentence starting with 'Most [role] like you are trying to [goal]' tailored to their headline, biography, and company overview.",
+        "description": "Role-based insight hook starting with 'Most [role] like you are trying to...'",
+        "author_name": "Unravler Curated",
+        "id": "curated_role-value-insights",
+        "runs_count": 0,
+        "is_system": True,
+    },
+    {
+        "name": "Profile observation",
+        "prompt_text": "Analyze the prospect's LinkedIn headline, summary, and company overview to write a concise observation starting with 'I noticed that...' about what their company builds or offers.",
+        "description": "Personalized company & profile observation icebreaker.",
+        "author_name": "Unravler Curated",
+        "id": "curated_profile-observation",
+        "runs_count": 0,
+        "is_system": True,
+    },
+    {
+        "name": "Skill & experience compliment",
+        "prompt_text": "Write a genuine 1-sentence compliment referencing their specific technical or leadership skills, years of experience, or notable projects from their LinkedIn profile.",
+        "description": "Specific compliment on tenure, projects, and top skills.",
+        "author_name": "Unravler Curated",
+        "id": "curated_skill-compliment",
         "runs_count": 0,
         "is_system": True,
     },
@@ -161,6 +192,84 @@ async def delete_prompt(
     return {"status": "deleted", "prompt_id": prompt_id}
 
 
+def _synthesize_prompt_output(prompt_name: str, prompt_text: str, lead_data: dict[str, Any]) -> str:
+    """Synthesize personalized copy from real lead profile context (headline, role, company, summary, recent_post)."""
+    first_name = (lead_data.get("first_name") or "there").strip()
+    company = (lead_data.get("company_name") or "your team").strip()
+    job_title = (lead_data.get("job_title") or "leader").strip()
+    industry = (lead_data.get("industry") or "your space").strip()
+    headline = (lead_data.get("headline") or "").strip()
+    summary = (lead_data.get("summary") or "").strip()
+    recent_post = (lead_data.get("recent_post") or "").strip()
+    name_lower = prompt_name.lower()
+    text_lower = prompt_text.lower()
+
+    if "3-5 words" in name_lower or "doing x" in name_lower or "concise phrase" in text_lower:
+        if "|" in headline:
+            segment = headline.split("|")[-1].strip().rstrip(".")
+            words = segment.split()
+            if 2 <= len(words) <= 7:
+                return segment[0].lower() + segment[1:] if segment else f"leading {job_title.lower()} initiatives at {company}"
+        if recent_post:
+            words = recent_post.split()[:5]
+            return " ".join(words).rstrip(".,!?:;").lower()
+        if summary:
+            words = summary.split()[:5]
+            return " ".join(words).rstrip(".,!?:;").lower()
+        return f"scaling {industry.lower()} initiatives at {company}"
+
+    if "website" in name_lower or "designer" in name_lower or "ui aesthetic" in text_lower:
+        return f"Really impressed by {company}'s clean brand positioning and product clarity in {industry}."
+
+    if "recent post" in name_lower or "latest linkedin post" in text_lower:
+        if recent_post:
+            snippet = recent_post[:90].rstrip("., ") + ("..." if len(recent_post) > 90 else "")
+            return f"Your recent post on \"{snippet}\" really resonated with what we're seeing in {industry}."
+        return f"Been following your perspective as {job_title} at {company}—spot-on take on where {industry} is heading."
+
+    if "milestone" in name_lower or "congratulations" in name_lower or "hiring" in text_lower:
+        return f"Congrats on the momentum at {company}—exciting to see how you're leading the {job_title} charter."
+
+    if "niche" in name_lower or "mutual" in name_lower:
+        return f"Always great connecting with fellow leaders focused on {industry} and modern growth workflows at {company}."
+
+    if "role-based" in name_lower or "value insights" in name_lower or "most [" in text_lower:
+        role_plural = f"{job_title}s" if not job_title.lower().endswith("s") else job_title
+        goal = f"scale {industry.lower()} pipelines without sacrificing personalization"
+        if "|" in headline:
+            tail = headline.split("|")[-1].strip().rstrip(".")
+            if len(tail.split()) >= 2:
+                goal = tail[0].lower() + tail[1:]
+        return f"Most {role_plural} like you at {company} are trying to {goal}."
+
+    if "profile observation" in name_lower or "i noticed that" in text_lower:
+        if summary:
+            obs = summary[:80].rstrip("., ") + ("..." if len(summary) > 80 else "")
+            return f"I noticed that at {company} ({obs}), you're focused on high-impact {industry.lower()} outcomes."
+        if "|" in headline:
+            obs = headline.split("|")[-1].strip().rstrip(".")
+            return f"I noticed that at {company} you're {obs[0].lower() + obs[1:] if obs else f'leading {industry.lower()} initiatives'}."
+        return f"I noticed that {company} is building strong momentum in {industry} under your leadership as {job_title}."
+
+    if "skill" in name_lower or "experience" in name_lower or "compliment" in name_lower:
+        top_skill = (lead_data.get("top_skill") or industry).strip()
+        years = (lead_data.get("years_in_role") or lead_data.get("years_in_company") or "").strip()
+        tenure_clause = f"—{years} in {top_skill} shows real dedication" if years else f" and your focus on {top_skill} at {company} really stands out"
+        return f"Solid work on the {company} initiatives, {first_name}{tenure_clause}."
+
+    if "?" in prompt_text or "question" in name_lower or "ask" in text_lower:
+        return f"How is your team at {company} approaching {industry.lower()} automation as {job_title} this quarter?"
+
+    if recent_post:
+        return f"Loved your recent perspective at {company} ({job_title})—especially your point on {recent_post[:60].rstrip()}."
+    if summary:
+        snippet = summary[:75].rstrip("., ") + ("..." if len(summary) > 75 else "")
+        return f"Noticed from your profile ({snippet}) how you're driving {industry.lower()} growth at {company}."
+    if headline:
+        return f"Noticed your work as {headline} and how you're driving growth at {company}."
+    return f"Impressed by your work as {job_title} at {company}, {first_name}."
+
+
 @router.post("/preview")
 async def preview_evaluated_message(
     req: PromptPreviewRequest,
@@ -168,70 +277,253 @@ async def preview_evaluated_message(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """
-    Renders contact variables and placeholder prompt tokens against a real or sample lead.
+    Renders contact variables and prompt tokens against a real or sample lead.
     """
+    ws_scope = workspace_scope(workspace_id(current_user))
     lead_data: dict[str, Any] = {
         "first_name": "Elena",
         "last_name": "Rostova",
+        "full_name": "Elena Rostova",
         "company_name": "CognitiveFlow",
+        "company": "CognitiveFlow",
         "job_title": "Founder & CEO",
+        "position": "Founder & CEO",
         "location": "London, United Kingdom",
         "location_raw": "London, United Kingdom",
+        "country": "United Kingdom",
+        "company_location": "London, UK",
         "industry": "Artificial Intelligence",
         "headline": "Founder & CEO at CognitiveFlow | Building autonomous reasoning systems",
+        "summary": "Building autonomous reasoning systems for B2B revenue teams.",
+        "school": "Imperial College London",
+        "university_name": "Imperial College London",
+        "university": "Imperial College London",
+        "top_skill": "Enterprise AI & Outbound GTM",
+        "company_followed": "OpenAI",
+        "connections_count": "2,450",
+        "number_of_connections": "2,450",
+        "years_in_company": "4 years",
+        "years_in_role": "3 years",
+        "mutual_connections": "14 mutual connections",
+        "profile_type": "Open Profile",
         "recent_post": "AI agents are fundamentally restructuring how outbound SDR workflows operate. Speed and contextual relevance win.",
     }
+    resolved_lead_id: str | None = None
+    available_leads: list[dict[str, Any]] = []
+
+    def _hydrate_lead_doc(lead_doc: dict[str, Any]) -> dict[str, Any]:
+        custom_vars = lead_doc.get("custom_variables") or {}
+        first = lead_doc.get("first_name") or "Lead"
+        last = lead_doc.get("last_name") or ""
+        company = lead_doc.get("company_name") or "Company"
+        title = lead_doc.get("job_title") or "Leader"
+        school_val = (
+            lead_doc.get("university_name")
+            or lead_doc.get("school")
+            or custom_vars.get("university_name")
+            or custom_vars.get("school")
+            or "Stanford University"
+        )
+        conns_val = str(lead_doc.get("connections_count") or custom_vars.get("connections_count") or "500+")
+        profile_type_val = (
+            "Open Profile"
+            if lead_doc.get("is_open_profile") is True
+            else "Premium"
+            if lead_doc.get("is_premium") is True
+            else (lead_doc.get("profile_type") or custom_vars.get("profile_type") or "Standard")
+        )
+        hydrated = {
+            "id": lead_doc.get("id"),
+            "first_name": first,
+            "last_name": last,
+            "full_name": f"{first} {last}".strip(),
+            "company_name": company,
+            "company": company,
+            "job_title": title,
+            "position": title,
+            "location": lead_doc.get("location") or "Global",
+            "location_raw": lead_doc.get("location") or "Global",
+            "country": lead_doc.get("country") or custom_vars.get("country") or "",
+            "company_location": lead_doc.get("company_location") or custom_vars.get("company_location") or lead_doc.get("location") or "Global",
+            "industry": lead_doc.get("industry") or custom_vars.get("industry", "Technology"),
+            "headline": lead_doc.get("headline") or f"{title} at {company}",
+            "summary": lead_doc.get("summary") or custom_vars.get("summary") or "",
+            "school": school_val,
+            "university_name": school_val,
+            "university": school_val,
+            "top_skill": lead_doc.get("top_skill") or custom_vars.get("top_skill") or "Leadership",
+            "company_followed": lead_doc.get("company_followed") or custom_vars.get("company_followed") or "",
+            "connections_count": conns_val,
+            "number_of_connections": conns_val,
+            "years_in_company": lead_doc.get("years_in_company") or custom_vars.get("years_in_company") or "2 years",
+            "years_in_role": lead_doc.get("years_in_role") or custom_vars.get("years_in_role") or "2 years",
+            "mutual_connections": lead_doc.get("mutual_connections") or custom_vars.get("mutual_connections") or "5 mutual connections",
+            "profile_type": profile_type_val,
+            "recent_post": custom_vars.get("recent_post") or lead_doc.get("summary") or "",
+            "linkedin_url": lead_doc.get("linkedin_url") or "",
+        }
+        hydrated.update(custom_vars)
+        return hydrated
+
+    # Fetch available leads for the campaign/workspace switcher if outreach_leads exists
+    leads_col = getattr(db, "outreach_leads", None)
+    if leads_col is not None and hasattr(leads_col, "find"):
+        try:
+            query: dict[str, Any] = {**ws_scope}
+            if req.campaign_id and req.campaign_id != "new":
+                query["campaign_id"] = req.campaign_id
+            cursor = leads_col.find(query)
+            docs = await _fetch_cursor_docs(cursor, length=25)
+            if not docs and req.campaign_id:
+                cursor = leads_col.find({**ws_scope})
+                docs = await _fetch_cursor_docs(cursor, length=25)
+            for d in docs:
+                if d.get("id") and (d.get("first_name") or d.get("last_name") or d.get("company_name")):
+                    available_leads.append({
+                        "id": d.get("id"),
+                        "first_name": d.get("first_name") or "Lead",
+                        "last_name": d.get("last_name") or "",
+                        "company_name": d.get("company_name") or "",
+                        "job_title": d.get("job_title") or "",
+                        "location": d.get("location") or "",
+                    })
+        except Exception as exc:
+            logger.debug("Available leads preview query skipped (%s)", type(exc).__name__)
+            available_leads = []
 
     if req.lead_id:
         lead_doc = await db.outreach_leads.find_one({
             "id": req.lead_id,
-            **workspace_scope(workspace_id(current_user)),
+            **ws_scope,
         })
         if not lead_doc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
-        lead_data = {
-            "first_name": lead_doc.get("first_name", "Lead"),
-            "last_name": lead_doc.get("last_name", ""),
-            "company_name": lead_doc.get("company_name", "Acme"),
-            "job_title": lead_doc.get("job_title", "Growth Leader"),
-            "location": lead_doc.get("location", "Global"),
-            "location_raw": lead_doc.get("location", "Global"),
-            "industry": lead_doc.get("industry") or (lead_doc.get("custom_variables") or {}).get("industry", ""),
-            "headline": lead_doc.get("headline") or f"{lead_doc.get('job_title', '')} at {lead_doc.get('company_name', '')}",
-            "recent_post": (lead_doc.get("custom_variables") or {}).get("recent_post", ""),
-        }
-        lead_data.update(lead_doc.get("custom_variables") or {})
+        lead_data = _hydrate_lead_doc(lead_doc)
+        resolved_lead_id = lead_doc.get("id")
     elif req.custom_lead_data:
         lead_data.update(req.custom_lead_data)
+        if "company_name" in req.custom_lead_data and "company" not in req.custom_lead_data:
+            lead_data["company"] = req.custom_lead_data["company_name"]
+        elif "company" in req.custom_lead_data and "company_name" not in req.custom_lead_data:
+            lead_data["company_name"] = req.custom_lead_data["company"]
+        if "job_title" in req.custom_lead_data and "position" not in req.custom_lead_data:
+            lead_data["position"] = req.custom_lead_data["job_title"]
+        elif "position" in req.custom_lead_data and "job_title" not in req.custom_lead_data:
+            lead_data["job_title"] = req.custom_lead_data["position"]
+        if "university_name" in req.custom_lead_data and "school" not in req.custom_lead_data:
+            lead_data["school"] = req.custom_lead_data["university_name"]
+            lead_data["university"] = req.custom_lead_data["university_name"]
+        if "location" in req.custom_lead_data and "location_raw" not in req.custom_lead_data:
+            lead_data["location_raw"] = req.custom_lead_data["location"]
+    elif available_leads:
+        first_lead_doc = await db.outreach_leads.find_one({
+            "id": available_leads[0]["id"],
+            **ws_scope,
+        })
+        if first_lead_doc:
+            lead_data = _hydrate_lead_doc(first_lead_doc)
+            resolved_lead_id = first_lead_doc.get("id")
 
-    rendered_text = req.template
+    from outreach.core.dag_compiler import find_missing_profile_variables
+
+    missing_primary_vars = find_missing_profile_variables(req.template, lead_data)
+    used_alternative_message = False
+    active_template = req.template
+    if missing_primary_vars and req.alternative_message and req.alternative_message.strip():
+        active_template = req.alternative_message.strip()
+        used_alternative_message = True
+
+    rendered_text = active_template
+    rendered_subject = req.subject or ""
 
     # 1. Replace static variables
     for var, val in lead_data.items():
         rendered_text = rendered_text.replace(f"{{{{{var}}}}}", str(val))
         rendered_text = rendered_text.replace(f"{{{var}}}", str(val))
+        if rendered_subject:
+            rendered_subject = rendered_subject.replace(f"{{{{{var}}}}}", str(val))
+            rendered_subject = rendered_subject.replace(f"{{{var}}}", str(val))
 
     # Fallback replacements
-    rendered_text = rendered_text.replace("{{first_name}}", lead_data["first_name"])
-    rendered_text = rendered_text.replace("{{company_name}}", lead_data["company_name"])
-    rendered_text = rendered_text.replace("{{job_title}}", lead_data["job_title"])
+    rendered_text = rendered_text.replace("{{first_name}}", str(lead_data.get("first_name", "")))
+    rendered_text = rendered_text.replace("{{company_name}}", str(lead_data.get("company_name", "")))
+    rendered_text = rendered_text.replace("{{job_title}}", str(lead_data.get("job_title", "")))
+    if rendered_subject:
+        rendered_subject = rendered_subject.replace("{{first_name}}", str(lead_data.get("first_name", "")))
+        rendered_subject = rendered_subject.replace("{{company_name}}", str(lead_data.get("company_name", "")))
+        rendered_subject = rendered_subject.replace("{{job_title}}", str(lead_data.get("job_title", "")))
 
-    # Prompt instructions are not executed by the live runner. Keep previews explicit
-    # instead of inventing AI-generated copy that would not be sent to prospects.
     import re
     token_pattern = re.compile(r"✨\s*\[([^\]]+)\]")
-    rendered_text = token_pattern.sub(
-        lambda match: f"[Prompt guidance not generated: {match.group(1).strip()}]",
-        rendered_text,
-    )
 
+    # Also build an AI-evaluated version resolving ✨ [Prompt Name] against the lead's profile
+    catalog_by_name = {p["name"].lower(): p for p in DEFAULT_PROMPTS}
+    prompts_col = getattr(db, "outreach_ai_prompts", None)
+    if prompts_col is not None and hasattr(prompts_col, "find"):
+        try:
+            custom_docs = await _fetch_cursor_docs(
+                prompts_col.find({**ws_scope, "is_system": {"$ne": True}}),
+                length=100,
+            )
+            for cd in custom_docs:
+                if cd.get("name"):
+                    catalog_by_name[cd["name"].lower()] = cd
+        except Exception as exc:
+            logger.debug("Custom AI prompts lookup skipped (%s)", type(exc).__name__)
+
+    def _resolve_ai_match(match: re.Match) -> str:
+        p_name = match.group(1).strip()
+        p_doc = catalog_by_name.get(p_name.lower(), {})
+        p_text = p_doc.get("prompt_text", p_name)
+        return _synthesize_prompt_output(p_name, p_text, lead_data)
+
+    ai_generated_text = token_pattern.sub(_resolve_ai_match, rendered_text)
+
+    if req.evaluate_ai:
+        rendered_text = ai_generated_text
+        # Increment runs_count on custom prompts used
+        if prompts_col is not None and hasattr(prompts_col, "update_one"):
+            for m in token_pattern.finditer(active_template):
+                p_name = m.group(1).strip().lower()
+                p_doc = catalog_by_name.get(p_name)
+                if p_doc and not p_doc.get("is_system") and p_doc.get("id"):
+                    try:
+                        await prompts_col.update_one(
+                            {"id": p_doc["id"], **ws_scope},
+                            {"$inc": {"runs_count": 1}},
+                        )
+                    except Exception as exc:
+                        logger.debug("Prompt runs_count increment skipped for prompt=%s (%s)", p_doc.get("id"), type(exc).__name__)
+    else:
+        # Prompt instructions are not executed by the live runner unless resolved.
+        rendered_text = token_pattern.sub(
+            lambda match: f"[Prompt guidance not generated: {match.group(1).strip()}]",
+            rendered_text,
+        )
+
+    sender_name = current_user.get("name") or "You"
     return {
         "evaluated_text": rendered_text,
-        "is_illustrative_preview": not bool(req.lead_id),
-        "notice": "Prompt guidance is shown as a placeholder, not AI-generated copy. Replace it with finished message text before launching.",
+        "evaluated_subject": rendered_subject if req.subject is not None else None,
+        "ai_generated_text": ai_generated_text,
+        "has_ai_tokens": bool(token_pattern.search(active_template)),
+        "used_alternative_message": used_alternative_message,
+        "missing_variables": missing_primary_vars,
+        "is_illustrative_preview": not bool(resolved_lead_id),
+        "selected_lead_id": resolved_lead_id,
+        "available_leads": available_leads,
+        "notice": (
+            f"Alternative message used because profile variable(s) {', '.join(missing_primary_vars)} were missing on this lead."
+            if used_alternative_message
+            else (
+                "AI prompt personalized against lead profile. Click 'Apply AI Copy to Step' to save finished copy for campaign launch."
+                if req.evaluate_ai
+                else "Prompt guidance is shown as a placeholder, not AI-generated copy. Replace it with finished message text before launching."
+            )
+        ),
         "lead_preview": lead_data,
         "sender_preview": {
-            "name": current_user.get("name") or "You",
-            "avatar": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80",
+            "name": sender_name,
+            "avatar": current_user.get("avatar_url") or "",
         }
     }

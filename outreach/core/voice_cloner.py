@@ -3,6 +3,8 @@ Phase 6: ElevenLabs Instant Voice Cloning & Dynamic Audio Personalization Pipeli
 Allows users to clone their voice from a 30s audio sample and synthesize customized
 voice notes with lead tokens ({{first_name}}, {{company_name}}).
 """
+import logging
+logger = logging.getLogger(__name__)
 import os
 import io
 import uuid

@@ -4,6 +4,8 @@ No ciphertext opening, provider call, replay, refund or activation occurs.
 Proof concerns the participating job protocol; drain remains an assertion.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from datetime import datetime, timedelta
 from typing import Any

@@ -1,11 +1,13 @@
 """Bounded authoring analysis and illustrative paths. Never an execution grant."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import re
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
-from outreach.core.dag_compiler import DAGCompiler, contains_ai_prompt_token, interpolate_template
+from outreach.core.dag_compiler import DAGCompiler, contains_ai_prompt_token, interpolate_template, resolve_step_message_with_alternative
 from outreach.core.sequence_capabilities import sequence_capability_map
 from outreach.core.sequence_contract import DAGValidationError, bounded_json, delay_hours, MAX_RENDER_CHARS
 
@@ -14,8 +16,9 @@ WAIT_KINDS = {'connection_request', 'if_connected', 'send_message', 'voice_note'
 STANDARD_VARIABLES = {
     'first_name', 'last_name', 'full_name', 'headline', 'company_name', 'company',
     'job_title', 'position', 'industry', 'location_raw', 'location', 'country',
-    'connections_count', 'number_of_connections', 'top_skill', 'company_location',
-    'summary', 'school', 'years_in_company', 'years_in_role', 'mutual_connections',
+    'connections_count', 'number_of_connections', 'top_skill', 'company_followed',
+    'company_location', 'summary', 'school', 'university_name', 'university',
+    'profile_type', 'years_in_company', 'years_in_role', 'mutual_connections',
 }
 _FIELDS = {
     'connection_request': ('note',),
@@ -75,7 +78,7 @@ def timeout_days(node: dict) -> int:
 
 
 def content_templates(node: dict, lead: dict | None = None) -> dict[str, str]:
-    from outreach.core.dag_compiler import select_step_variant
+    from outreach.core.dag_compiler import select_step_variant, find_missing_profile_variables
     defaults = {
         'note': '',
         'body': 'Hi {{first_name}}',
@@ -84,14 +87,21 @@ def content_templates(node: dict, lead: dict | None = None) -> dict[str, str]:
         'subject': 'Quick question, {{first_name}}',
     }
     _, effective_config = select_step_variant(node, lead)
+    alt_msg = (effective_config.get('alternative_message') or effective_config.get('fallback') or '').strip()
     def _resolve_field(cfg: dict, field: str) -> Any:
+        raw = ''
         if field in cfg:
-            return cfg[field]
-        if node['type'] == 'inmail' and field == 'body' and 'message' in cfg:
-            return cfg['message']
-        if node['type'] == 'comment_last_post' and field == 'comment' and 'comment_template' in cfg:
-            return cfg['comment_template']
-        return '' if node['type'] in {'send_email', 'inmail'} else defaults.get(field, '')
+            raw = cfg[field]
+        elif node['type'] == 'inmail' and field == 'body' and 'message' in cfg:
+            raw = cfg['message']
+        elif node['type'] == 'comment_last_post' and field == 'comment' and 'comment_template' in cfg:
+            raw = cfg['comment_template']
+        else:
+            raw = '' if node['type'] in {'send_email', 'inmail'} else defaults.get(field, '')
+        if lead is not None and alt_msg and field in ('note', 'body') and node['type'] in {'connection_request', 'send_message', 'inmail'}:
+            if find_missing_profile_variables(str(raw or ''), lead):
+                return alt_msg
+        return raw
     return {field: _resolve_field(effective_config, field) for field in _FIELDS.get(node['type'], ())}
 
 

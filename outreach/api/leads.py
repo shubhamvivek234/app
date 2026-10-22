@@ -32,7 +32,7 @@ from outreach.core.lead_importer import (
 from outreach.core.name_cleaner import clean_first_name
 from outreach.core.search_sources import (
     SearchSourceError, require_search_collection, search_source_capabilities,
-    unverified_search_lead, UNVERIFIED_LEAD,
+    unverified_search_lead, UNVERIFIED_LEAD, classify_linkedin_source_url, SOURCE_LIMITS_METADATA,
 )
 from outreach.core.paid_access import get_active_entitlement
 from outreach.models import LeadExecutionState, SearchImportJob, SearchImportJobStatus, SearchImportStopReason
@@ -43,6 +43,7 @@ from outreach.core.lead_tags import (
     edit_tag,
     hydrate_lead_tags,
     migrate_legacy_tags,
+    seed_default_tags,
     validate_tag_id,
     stored_ids,
     stored_revision,
@@ -87,10 +88,13 @@ class ImportCSVRequest(BaseModel):
     custom_mapping: dict[str, str] | None = None
     default_first_name: str | None = None
     default_company_name: str | None = None
+    list_name: str | None = Field(default=None, max_length=120, description="Optional contact list name (preserves exact capitalization)")
     skip_already_contacted: bool = True
     skip_do_not_contact: bool = True
+    skip_team_campaign_leads: bool | None = None
     require_name: bool = Field(default=False, strict=True)
     consent_basis: str = Field(default="user_provided", description="Consent or source basis")
+    request_id: str | None = Field(default=None, max_length=128)
 
 
 class ImportURLsRequest(BaseModel):
@@ -98,19 +102,25 @@ class ImportURLsRequest(BaseModel):
     urls_text: str = Field(..., description="Newline-separated URLs or URL, Name lines")
     default_first_name: str | None = None
     default_company_name: str | None = None
+    list_name: str | None = Field(default=None, max_length=120, description="Optional contact list name (preserves exact capitalization)")
     skip_already_contacted: bool = True
     skip_do_not_contact: bool = True
+    skip_team_campaign_leads: bool | None = None
     require_name: bool = True
     consent_basis: str = Field(default="user_provided", description="Consent or source basis")
+    request_id: str | None = Field(default=None, max_length=128)
 
 
 class ImportStagedRequest(BaseModel):
     campaign_id: str
     leads: list[dict[str, Any]] = Field(..., min_length=1, max_length=1000, description="Staged lead objects from preview")
+    list_name: str | None = Field(default=None, max_length=120, description="Optional contact list name (preserves exact capitalization)")
     skip_already_contacted: bool = True
     skip_do_not_contact: bool = True
+    skip_team_campaign_leads: bool | None = None
     require_name: bool = False
     consent_basis: str = Field(default="user_provided", description="Consent or source basis")
+    request_id: str | None = Field(default=None, max_length=128)
 
 
 class LeadPreviewRequest(BaseModel):
@@ -122,6 +132,7 @@ class LeadPreviewRequest(BaseModel):
     default_company_name: str | None = None
     skip_already_contacted: bool = True
     skip_do_not_contact: bool = True
+    skip_team_campaign_leads: bool | None = None
     require_name: bool = False
 
 
@@ -129,13 +140,19 @@ class ImportSearchRequest(BaseModel):
     campaign_id: str
     search_url: str
     sender_account_id: str | None = None
-    search_type: str = Field(default="basic", description="'basic' | 'sales_nav' | 'post_engagers'")
+    search_type: str = Field(default="basic", description="'basic' | 'sales_nav' | 'recruiter' | 'connections'")
     max_leads: int = Field(default=100, ge=1, le=2500)
+    list_name: str | None = Field(default=None, max_length=120, description="Optional contact list name (preserves exact capitalization)")
+
+
+class ValidateSourceUrlRequest(BaseModel):
+    url: str = Field(..., max_length=4096)
 
 
 class CommitStagedLeadsRequest(BaseModel):
     selected_lead_ids: list[str] | None = None
     name_overrides: dict[str, str] | None = None
+    list_name: str | None = Field(default=None, max_length=120)
 
 
 class DoNotContactRequest(BaseModel):
@@ -314,6 +331,7 @@ async def preview_leads_intake(
         skip_already_contacted=req.skip_already_contacted,
         skip_do_not_contact=req.skip_do_not_contact,
         require_name=req.require_name,
+        skip_team_campaign_leads=req.skip_team_campaign_leads,
     ))
 
 
@@ -331,7 +349,97 @@ async def preview_edited_leads(
     await ensure_intake_provenance(db, _workspace_id(current_user), req.leads, "staged_preview")
     return scoped_result(context, await LeadImporter.preview_leads(req.leads, req.campaign_id, _workspace_id(current_user), db,
         skip_already_contacted=req.skip_already_contacted, skip_do_not_contact=True,
-        require_name=req.require_name))
+        require_name=req.require_name, skip_team_campaign_leads=req.skip_team_campaign_leads))
+
+
+async def _get_or_save_import_receipt(
+    db: AsyncIOMotorDatabase,
+    workspace_id: str,
+    campaign_id: str,
+    request_id: str | None,
+    source: str,
+    result: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    if not request_id or not hasattr(db, "outreach_import_reports"):
+        return None
+    if result is None:
+        if hasattr(db.outreach_import_reports, "find_one"):
+            existing = await db.outreach_import_reports.find_one({
+                **workspace_scope(workspace_id),
+                "campaign_id": campaign_id,
+                "request_id": request_id,
+            })
+            if existing and isinstance(existing.get("receipt_payload"), dict):
+                return existing["receipt_payload"]
+        return None
+    if hasattr(db.outreach_import_reports, "insert_one"):
+        try:
+            await db.outreach_import_reports.insert_one({
+                "id": f"rep_{uuid.uuid4().hex[:12]}",
+                "request_id": request_id,
+                "workspace_id": workspace_id,
+                "campaign_id": campaign_id,
+                "source": source,
+                "status": result.get("status", "completed"),
+                "imported_count": result.get("imported_count", 0),
+                "duplicates_count": result.get("duplicates_count", result.get("skipped_duplicates", 0)),
+                "skipped_duplicates": result.get("skipped_duplicates", result.get("duplicates_count", 0)),
+                "skipped_do_not_contact": result.get("skipped_do_not_contact", 0),
+                "skipped_count": result.get("skipped_count", 0),
+                "rejections": (result.get("rejections") or [])[:100],
+                "receipt_payload": {
+                    "request_id": request_id,
+                    "campaign_id": campaign_id,
+                    "source": source,
+                    "status": result.get("status", "completed"),
+                    "imported_count": result.get("imported_count", 0),
+                    "duplicates_count": result.get("duplicates_count", result.get("skipped_duplicates", 0)),
+                    "skipped_duplicates": result.get("skipped_duplicates", result.get("duplicates_count", 0)),
+                    "skipped_do_not_contact": result.get("skipped_do_not_contact", 0),
+                    "skipped_count": result.get("skipped_count", 0),
+                    "rejections": (result.get("rejections") or [])[:100],
+                },
+                "created_at": datetime.now(timezone.utc),
+            })
+        except Exception as exc:
+            logger.warning("Import receipt persistence degraded for request_id=%s (%s)", request_id, type(exc).__name__)
+    return result
+
+
+@router.get("/import-receipts/{request_id}")
+async def get_import_receipt(
+    request_id: str,
+    campaign_id: str = Query(..., min_length=1, max_length=200),
+    current_user: dict = _lead_permission("lead:read"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    import_scope: Annotated[str | None, Header(alias="X-Outreach-Import-Scope", pattern=r"^[0-9a-f]{64}$")] = None,
+):
+    """Recovers a durable import operation receipt by request_id after network disconnects or reloads."""
+    context = await verify_import_scope(db, current_user, campaign_id, import_scope)
+    workspace_id = _workspace_id(current_user)
+    await _require_campaign(campaign_id, current_user, db)
+    if not hasattr(db, "outreach_import_reports") or not hasattr(db.outreach_import_reports, "find_one"):
+        raise HTTPException(status_code=404, detail="Import operation receipt not found")
+    doc = await db.outreach_import_reports.find_one({
+        **workspace_scope(workspace_id),
+        "campaign_id": campaign_id,
+        "request_id": request_id,
+    })
+    if not doc:
+        raise HTTPException(status_code=404, detail="Import operation receipt not found")
+    payload = doc.get("receipt_payload") if isinstance(doc.get("receipt_payload"), dict) else {
+        "request_id": doc.get("request_id") or request_id,
+        "campaign_id": doc.get("campaign_id") or campaign_id,
+        "source": doc.get("source") or "csv",
+        "status": doc.get("status", "completed"),
+        "imported_count": doc.get("imported_count", 0),
+        "duplicates_count": doc.get("duplicates_count", doc.get("skipped_duplicates", 0)),
+        "skipped_duplicates": doc.get("skipped_duplicates", 0),
+        "skipped_do_not_contact": doc.get("skipped_do_not_contact", 0),
+        "skipped_count": doc.get("skipped_count", 0),
+        "rejections": doc.get("rejections", []),
+    }
+    return scoped_result(context, {**payload, "recovered": True})
 
 
 @router.post("/import-urls")
@@ -347,6 +455,9 @@ async def import_leads_urls(
     context = await verify_import_scope(db, current_user, req.campaign_id, import_scope)
     workspace_id = _workspace_id(current_user)
     campaign = await _require_campaign(req.campaign_id, current_user, db)
+    existing_receipt = await _get_or_save_import_receipt(db, workspace_id, req.campaign_id, req.request_id, "pasted_urls")
+    if existing_receipt is not None:
+        return scoped_result(context, {**existing_receipt, "recovered": True})
     if campaign.get("status") == "warming_up":
         raise HTTPException(status_code=409, detail="Pause conditional launch before changing its lead cohort")
     if campaign.get("status") == "active":
@@ -391,25 +502,17 @@ async def import_leads_urls(
         skip_do_not_contact=req.skip_do_not_contact,
         campaign=campaign,
         source="pasted_urls",
-        source_metadata={"source_type": "pasted_urls", "consent_basis": req.consent_basis},
+        source_metadata={
+            "source_type": "pasted_urls",
+            "consent_basis": req.consent_basis,
+            **({"list_name": req.list_name.strip()} if req.list_name and req.list_name.strip() else {}),
+        },
         require_name=req.require_name,
         include_rejections=True,
         _import_scope=context,
+        skip_team_campaign_leads=req.skip_team_campaign_leads,
     )
-    if hasattr(db, "outreach_import_reports") and hasattr(db.outreach_import_reports, "insert_one"):
-        try:
-            await db.outreach_import_reports.insert_one({
-                "id": f"rep_{uuid.uuid4().hex[:12]}",
-                "workspace_id": workspace_id,
-                "campaign_id": req.campaign_id,
-                "source": "pasted_urls",
-                "imported_count": result.get("imported_count", 0),
-                "skipped_duplicates": result.get("skipped_duplicates", 0),
-                "skipped_do_not_contact": result.get("skipped_do_not_contact", 0),
-                "created_at": datetime.now(timezone.utc),
-            })
-        except Exception:
-            pass
+    await _get_or_save_import_receipt(db, workspace_id, req.campaign_id, req.request_id or f"rep_{uuid.uuid4().hex[:12]}", "pasted_urls", result)
 
     return scoped_result(context, result)
 
@@ -427,6 +530,9 @@ async def import_leads_csv(
     context = await verify_import_scope(db, current_user, req.campaign_id, import_scope)
     workspace_id = _workspace_id(current_user)
     campaign = await _require_campaign(req.campaign_id, current_user, db)
+    existing_receipt = await _get_or_save_import_receipt(db, workspace_id, req.campaign_id, req.request_id, "csv")
+    if existing_receipt is not None:
+        return scoped_result(context, {**existing_receipt, "recovered": True})
     if campaign.get("status") == "warming_up":
         raise HTTPException(status_code=409, detail="Pause conditional launch before changing its lead cohort")
     if campaign.get("status") == "active":
@@ -472,25 +578,17 @@ async def import_leads_csv(
         skip_do_not_contact=req.skip_do_not_contact,
         campaign=campaign,
         source="csv",
-        source_metadata={"source_type": "csv", "consent_basis": req.consent_basis},
+        source_metadata={
+            "source_type": "csv",
+            "consent_basis": req.consent_basis,
+            **({"list_name": req.list_name.strip()} if req.list_name and req.list_name.strip() else {}),
+        },
         require_name=req.require_name,
         include_rejections=True,
         _import_scope=context,
+        skip_team_campaign_leads=req.skip_team_campaign_leads,
     )
-    if hasattr(db, "outreach_import_reports") and hasattr(db.outreach_import_reports, "insert_one"):
-        try:
-            await db.outreach_import_reports.insert_one({
-                "id": f"rep_{uuid.uuid4().hex[:12]}",
-                "workspace_id": workspace_id,
-                "campaign_id": req.campaign_id,
-                "source": "csv",
-                "imported_count": result.get("imported_count", 0),
-                "skipped_duplicates": result.get("skipped_duplicates", 0),
-                "skipped_do_not_contact": result.get("skipped_do_not_contact", 0),
-                "created_at": datetime.now(timezone.utc),
-            })
-        except Exception:
-            pass
+    await _get_or_save_import_receipt(db, workspace_id, req.campaign_id, req.request_id or f"rep_{uuid.uuid4().hex[:12]}", "csv", result)
 
     return scoped_result(context, result)
 
@@ -508,6 +606,9 @@ async def import_leads_staged(
     context = await verify_import_scope(db, current_user, req.campaign_id, import_scope)
     workspace_id = _workspace_id(current_user)
     campaign = await _require_campaign(req.campaign_id, current_user, db)
+    existing_receipt = await _get_or_save_import_receipt(db, workspace_id, req.campaign_id, req.request_id, "staged_preview")
+    if existing_receipt is not None:
+        return scoped_result(context, {**existing_receipt, "recovered": True})
     if campaign.get("status") == "warming_up":
         raise HTTPException(status_code=409, detail="Pause conditional launch before changing its lead cohort")
     if campaign.get("status") == "active":
@@ -546,11 +647,17 @@ async def import_leads_staged(
         skip_do_not_contact=req.skip_do_not_contact,
         campaign=campaign,
         source="staged_preview",
-        source_metadata={"source_type": "staged_preview", "consent_basis": req.consent_basis},
+        source_metadata={
+            "source_type": "staged_preview",
+            "consent_basis": req.consent_basis,
+            **({"list_name": req.list_name.strip()} if req.list_name and req.list_name.strip() else {}),
+        },
         require_name=req.require_name,
         include_rejections=True,
         _import_scope=context,
+        skip_team_campaign_leads=req.skip_team_campaign_leads,
     )
+    await _get_or_save_import_receipt(db, workspace_id, req.campaign_id, req.request_id, "staged_preview", result)
 
     return scoped_result(context, result)
 
@@ -558,6 +665,18 @@ async def import_leads_staged(
 @router.get("/import-sources")
 async def get_import_sources(current_user: dict = _lead_permission("lead:read")):
     return search_source_capabilities()
+
+
+@router.post("/validate-source-url")
+async def validate_linkedin_source_url(
+    req: ValidateSourceUrlRequest,
+    current_user: dict = _lead_permission("lead:read"),
+):
+    """
+    Classifies a LinkedIn lead sourcing URL (Basic Search, Sales Navigator, Recruiter/Pipeline,
+    or My Network 1st-Degree Connections) and returns exact profile/page caps and batching hints.
+    """
+    return classify_linkedin_source_url(req.url)
 
 
 @router.post("/import-search")
@@ -568,13 +687,13 @@ async def import_search_url(
     import_scope: Annotated[str | None, Header(alias="X-Outreach-Import-Scope", pattern=r"^[0-9a-f]{64}$")] = None,
 ):
     """
-    1-Click LinkedIn Search & Sales Navigator URL lead extraction.
+    1-Click LinkedIn Search, Sales Navigator, Recruiter & My Network URL lead extraction.
     Performs strict preflight safety checks, provisions SearchImportJob, and dispatches crawl_page.
     """
     context = await verify_import_scope(db, current_user, req.campaign_id, import_scope)
     campaign = await _require_campaign(req.campaign_id, current_user, db)
     workspace_id = _workspace_id(current_user)
-    if req.search_type not in {"basic", "sales_nav"}:
+    if req.search_type not in {"basic", "sales_nav", "recruiter", "connections", "events"}:
         raise HTTPException(422, "Unsupported search source")
     try:
         parsed_search = require_search_collection(req.search_url)
@@ -614,7 +733,7 @@ async def import_search_url(
     # 3. URL parsing & classification
     clean_url = parsed_search["clean_url"]
 
-    # 4. Sales Nav seat check for sales_nav URLs
+    # 4. Sales Nav / Recruiter seat check for premium URLs
     search_type = parsed_search["search_type"]
     if search_type == "sales_nav":
         prem_prod = sender.get("premium_product")
@@ -623,6 +742,13 @@ async def import_search_url(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="The selected sender does not have a Sales Navigator seat or session cookie. Connect a Sales Navigator seat in Settings to import Sales Navigator searches.",
+            )
+    elif search_type == "recruiter":
+        prem_prod = sender.get("premium_product")
+        if prem_prod != "recruiter":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The selected sender does not have a LinkedIn Recruiter or Recruiter Lite seat. Connect a Recruiter seat in Settings to import Recruiter searches or pipelines.",
             )
 
     # 5. Dedicated ISP IP proxy lease check
@@ -649,10 +775,11 @@ async def import_search_url(
             detail="An active search import job is already running for this sender. Please wait for it to complete or cancel it before starting another.",
         )
 
-    # 7. Configure page size and target caps
-    page_size = 25 if search_type == "sales_nav" else 10
+    # 7. Configure page size and target caps (Sales Nav: 25/page up to 2,500; Recruiter: 25/page up to 1,000; Basic/My Network: 10/page up to 1,000)
+    page_size = 25 if search_type in ("sales_nav", "recruiter") else 10
     max_cap = 2500 if search_type == "sales_nav" else 1000
     clamped_target = min(req.max_leads, max_cap)
+    clean_list_name = req.list_name.strip() if req.list_name and req.list_name.strip() else None
 
     job = SearchImportJob(
         workspace_id=workspace_id,
@@ -660,6 +787,7 @@ async def import_search_url(
         sender_account_id=req.sender_account_id,
         search_url=clean_url,
         search_type=search_type,
+        list_name=clean_list_name,
         cursor=0,
         page_size=page_size,
         target_count=clamped_target,
@@ -828,14 +956,108 @@ async def commit_staged_leads(
                 name = req.name_overrides[row["id"]].strip()
                 candidate.update(first_name=name, raw_first_name=name, cleaned_first_name=name)
             candidates.append(candidate)
-        result = await LeadImporter.ingest_leads(candidates, job["campaign_id"], workspace_id, current,
-            source="linkedin_search", include_rejections=True, _ordered=True, _staged_rows=rows, _import_scope=context)
+        effective_list_name = (
+            req.list_name.strip()
+            if req and req.list_name and req.list_name.strip()
+            else str(job.get("list_name") or "").strip()
+        )
+        result = await LeadImporter.ingest_leads(
+            candidates,
+            job["campaign_id"],
+            workspace_id,
+            current,
+            source="linkedin_search",
+            source_metadata={"list_name": effective_list_name} if effective_list_name else None,
+            include_rejections=True,
+            _ordered=True,
+            _staged_rows=rows,
+            _import_scope=context,
+        )
         return {"status": "committed", "enrolled_count": result["imported_count"],
-                "campaign_id": job["campaign_id"], "rejections": result.get("rejections", [])}
+                "campaign_id": job["campaign_id"], "rejections": result.get("rejections", []),
+                **({"list_name": effective_list_name} if effective_list_name else {})}
     try:
         return scoped_result(context, await mutate_suppression(db, workspace_id, promote))
     except SuppressionUnavailable:
         raise HTTPException(503, "Could not confirm enrollment. Reload campaign contacts before retrying.") from None
+
+
+def _action_performed_clause(action_code: str, *, negate: bool = False) -> dict[str, Any] | None:
+    """
+    Builds a MongoDB filter clause for Dripify Video #15 'Actions Performed' & 'Include/Exclude' filters:
+    - ready_to_enter: Ready to enter sequence (queued with no last_action_taken)
+    - invite_sent: Received connection request
+    - invite_accepted: Accepted invite
+    - invite_pending: Invite still pending
+    - messaged: Messaged
+    - replied: Replied
+    - profile_viewed: Viewed profile
+    - liked_post: Liked post
+    - endorsed: Endorsed skill
+    """
+    code = (action_code or "").strip().lower()
+    if not code:
+        return None
+    if code == "ready_to_enter":
+        pos = {
+            "execution_state": "queued",
+            "last_action_taken": {"$in": [None, ""]},
+        }
+        return {"$nor": [pos]} if negate else pos
+    if code in ("invite_sent", "connection_request"):
+        pos = {
+            "$or": [
+                {"last_action_taken": "connection_request"},
+                {"waiting_for_connection_at": {"$nin": [None, ""]}},
+                {"is_connected": True},
+                {"accepted_at": {"$nin": [None, ""]}},
+            ]
+        }
+        return {"$nor": [pos]} if negate else pos
+    if code in ("invite_accepted", "accepted"):
+        pos = {
+            "$or": [
+                {"is_connected": True},
+                {"execution_state": "accepted"},
+                {"accepted_at": {"$nin": [None, ""]}},
+            ]
+        }
+        return {"$nor": [pos]} if negate else pos
+    if code == "invite_pending":
+        pos = {
+            "waiting_for_connection_at": {"$nin": [None, ""]},
+            "is_connected": {"$ne": True},
+        }
+        return {"$nor": [pos]} if negate else pos
+    if code in ("messaged", "send_message"):
+        pos = {
+            "$or": [
+                {"last_action_taken": {"$in": ["send_message", "inmail", "voice_note"]}},
+                {"pipeline_stage": {"$in": ["contacted", "replied", "call_booked"]}},
+                {"waiting_for_reply_at": {"$nin": [None, ""]}},
+            ]
+        }
+        return {"$nor": [pos]} if negate else pos
+    if code == "replied":
+        pos = {
+            "$or": [
+                {"has_replied": True},
+                {"execution_state": "replied"},
+                {"pipeline_stage": "replied"},
+            ]
+        }
+        return {"$nor": [pos]} if negate else pos
+    if code in ("profile_viewed", "visit_profile"):
+        pos = {"last_action_taken": "visit_profile"}
+        return {"$nor": [pos]} if negate else pos
+    if code in ("liked_post", "like_last_post"):
+        pos = {"last_action_taken": "like_last_post"}
+        return {"$nor": [pos]} if negate else pos
+    if code in ("endorsed", "endorse_skills"):
+        pos = {"last_action_taken": "endorse_skills"}
+        return {"$nor": [pos]} if negate else pos
+    pos = {"last_action_taken": code}
+    return {"$nor": [pos]} if negate else pos
 
 
 async def _lead_query(
@@ -848,6 +1070,14 @@ async def _lead_query(
     db: AsyncIOMotorDatabase,
     tag_ids: str | None = None,
     untagged: bool = False,
+    source: str | None = None,
+    custom_key: str | None = None,
+    custom_value: str | None = None,
+    tag_match: str = "all",
+    action_performed: str | None = None,
+    failure_reason: str | None = None,
+    include_actions: str | None = None,
+    exclude_actions: str | None = None,
 ) -> dict[str, Any]:
     workspace_id = _workspace_id(current_user)
 
@@ -860,6 +1090,45 @@ async def _lead_query(
         clauses.append({"execution_state": execution_state})
     if pipeline_stage:
         clauses.append({"pipeline_stage": pipeline_stage})
+    if action_performed:
+        act_clause = _action_performed_clause(action_performed)
+        if act_clause:
+            clauses.append(act_clause)
+    if failure_reason:
+        clean_fail = failure_reason.strip()[:100]
+        if clean_fail:
+            escaped_fail = re.escape(clean_fail)
+            clauses.append({
+                "$or": [
+                    {"failure_code": clean_fail},
+                    {"failure_reason": {"$regex": escaped_fail, "$options": "i"}},
+                ]
+            })
+    if include_actions:
+        for inc_code in [c.strip() for c in include_actions.split(",") if c.strip()][:10]:
+            inc_clause = _action_performed_clause(inc_code, negate=False)
+            if inc_clause:
+                clauses.append(inc_clause)
+    if exclude_actions:
+        for exc_code in [c.strip() for c in exclude_actions.split(",") if c.strip()][:10]:
+            exc_clause = _action_performed_clause(exc_code, negate=True)
+            if exc_clause:
+                clauses.append(exc_clause)
+    if source:
+        clean_src = source.strip()[:64]
+        if clean_src:
+            clauses.append({"$or": [
+                {"source": clean_src},
+                {"source_metadata.source_type": clean_src},
+            ]})
+    if custom_key:
+        safe_key = re.sub(r"[^a-zA-Z0-9_]", "", custom_key.strip()[:64])
+        if safe_key:
+            if custom_value:
+                escaped_val = re.escape(custom_value.strip()[:100])
+                clauses.append({f"custom_variables.{safe_key}": {"$regex": escaped_val, "$options": "i"}})
+            else:
+                clauses.append({f"custom_variables.{safe_key}": {"$nin": [None, ""]}})
     if search:
         escaped = re.escape(search.strip()[:100])
         clauses.append({
@@ -887,7 +1156,8 @@ async def _lead_query(
         definitions = await active_tag_map(db, workspace_id, requested_tags)
         if len(definitions) != len(requested_tags):
             raise HTTPException(status_code=404, detail="One or more tags were not found")
-        clauses.append({"tag_ids": {"$all": requested_tags}})
+        match_op = "$in" if str(tag_match).lower() == "any" else "$all"
+        clauses.append({"tag_ids": {match_op: requested_tags}})
     elif untagged:
         active_ids = list(await active_tag_map(db, workspace_id))
         clauses.append({"tag_ids": {"$nin": active_ids}})
@@ -903,14 +1173,27 @@ async def list_leads(
     search: str | None = None,
     location: str | None = None,
     tag_ids: str | None = None,
+    tag_match: str = "all",
     untagged: bool = False,
+    source: str | None = None,
+    custom_key: str | None = None,
+    custom_value: str | None = None,
+    action_performed: str | None = None,
+    failure_reason: str | None = None,
+    include_actions: str | None = None,
+    exclude_actions: str | None = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     current_user: dict = _lead_permission("lead:read"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Returns filterable, paginated leads for the active workspace."""
-    query = await _lead_query(campaign_id, execution_state, pipeline_stage, search, location, current_user, db, tag_ids, untagged)
+    query = await _lead_query(
+        campaign_id, execution_state, pipeline_stage, search, location, current_user, db,
+        tag_ids, untagged, source, custom_key, custom_value, tag_match=tag_match,
+        action_performed=action_performed, failure_reason=failure_reason,
+        include_actions=include_actions, exclude_actions=exclude_actions,
+    )
 
     total = await db.outreach_leads.count_documents(query)
     cursor = db.outreach_leads.find(query).sort([("created_at", -1), ("id", -1)]).skip(skip).limit(limit)
@@ -958,13 +1241,26 @@ async def export_leads(
     search: str | None = None,
     location: str | None = None,
     tag_ids: str | None = None,
+    tag_match: str = "all",
     untagged: bool = False,
+    source: str | None = None,
+    custom_key: str | None = None,
+    custom_value: str | None = None,
+    action_performed: str | None = None,
+    failure_reason: str | None = None,
+    include_actions: str | None = None,
+    exclude_actions: str | None = None,
     current_user: dict = _lead_permission("lead:read"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     """Export every matching workspace lead, independent of the current UI page."""
     workspace_id = _workspace_id(current_user)
-    query = await _lead_query(campaign_id, execution_state, pipeline_stage, search, location, current_user, db, tag_ids, untagged)
+    query = await _lead_query(
+        campaign_id, execution_state, pipeline_stage, search, location, current_user, db,
+        tag_ids, untagged, source, custom_key, custom_value, tag_match=tag_match,
+        action_performed=action_performed, failure_reason=failure_reason,
+        include_actions=include_actions, exclude_actions=exclude_actions,
+    )
     definitions = await active_tag_map(db, workspace_id, include_archived=True)
 
     async def rows():
@@ -1010,6 +1306,15 @@ async def import_legacy_lead_tags(
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
     return await migrate_legacy_tags(db, _workspace_id(current_user), _user_id(current_user), after_id)
+
+
+@router.post("/tags/seed-defaults")
+async def seed_default_lead_tags(
+    current_user: dict = _lead_permission("lead:update"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Explicitly seeds preset Dripify/sales workflow tags (Interested, High priority, etc.)."""
+    return await seed_default_tags(db, _workspace_id(current_user), _user_id(current_user))
 
 
 @router.post("/tags", status_code=status.HTTP_201_CREATED)
@@ -1260,6 +1565,8 @@ async def import_post_engagers(
     """
     ws_id = _workspace_id(current_user)
     campaign = await _require_campaign(req.campaign_id, current_user, db)
+    if campaign.get("status") == "warming_up":
+        raise HTTPException(status_code=409, detail="Pause conditional launch before changing its lead cohort")
 
     clean_url = req.post_url.strip()
     if not clean_url or "linkedin.com" not in clean_url:
@@ -1276,27 +1583,45 @@ async def import_post_engagers(
         **workspace_scope(ws_id),
         "status": "active",
     }) if hasattr(db, "outreach_accounts") else None
-    if not sender or not (sender.get("session_cookie_enc") or sender.get("encrypted_session_cookie")):
+    if not sender or not (sender.get("session_cookie_enc") or sender.get("encrypted_session_cookie") or sender.get("li_at_enc")):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Selected sender account is not active or has no valid LinkedIn session cookie.",
         )
 
     from outreach.engine.voyager_client import VoyagerClient
-    from outreach.core.crypto import decrypt_secret
+    from outreach.core.proxy_manager import prepare_proxy
+    from outreach.core.session_custody import account_session
+    from outreach.core.request_guard import RequestEnvelope
+    from outreach.core.paid_access import sender_is_ready
 
-    enc_cookie = sender.get("session_cookie_enc") or sender.get("encrypted_session_cookie")
+    if hasattr(db, "outreach_proxy_leases") and not await sender_is_ready(db, ws_id, sender):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Selected sender account is not ready or its proxy lease is unavailable.",
+        )
+
+    proxy_cfg = sender.get("proxy_config") or sender.get("proxy") or {}
     try:
-        li_at = decrypt_secret(enc_cookie)
+        proxy_url = await prepare_proxy(proxy_cfg, workspace_id=ws_id) if proxy_cfg else sender.get("proxy_url")
     except Exception:
-        li_at = enc_cookie
-    client = VoyagerClient(li_at_cookie=li_at, proxy_url=sender.get("proxy_url"))
-    candidates = await client.fetch_post_engagers(
-        post_url=clean_url,
-        include_likes=req.export_likes,
-        include_comments=req.export_comments,
-        max_leads=req.max_leads,
-    )
+        proxy_url = sender.get("proxy_url")
+    envelope = RequestEnvelope(db, ws_id, sender.get("id", ""), "import_post_engagers", proxy_url or "")
+
+    async with account_session(sender, ws_id) as creds:
+        client = VoyagerClient(
+            li_at=creds["li_at"],
+            jsession_id=creds["jsession_id"],
+            proxy_url=proxy_url,
+            user_agent=sender.get("user_agent"),
+            request_envelope=envelope,
+        )
+        candidates = await client.fetch_post_engagers(
+            post_url=clean_url,
+            include_likes=req.export_likes,
+            include_comments=req.export_comments,
+            max_leads=req.max_leads,
+        )
     if not candidates:
         return {"status": "completed", "imported_count": 0, "skipped_duplicates": 0, "leads": []}
 
@@ -1333,26 +1658,44 @@ async def import_first_degree_network(
         **workspace_scope(ws_id),
         "status": "active",
     }) if hasattr(db, "outreach_accounts") else None
-    if not sender or not (sender.get("session_cookie_enc") or sender.get("encrypted_session_cookie")):
+    if not sender or not (sender.get("session_cookie_enc") or sender.get("encrypted_session_cookie") or sender.get("li_at_enc")):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Active sender account not found in workspace.",
         )
 
     from outreach.engine.voyager_client import VoyagerClient
-    from outreach.core.crypto import decrypt_secret
+    from outreach.core.proxy_manager import prepare_proxy
+    from outreach.core.session_custody import account_session
+    from outreach.core.request_guard import RequestEnvelope
+    from outreach.core.paid_access import sender_is_ready
 
-    enc_cookie = sender.get("session_cookie_enc") or sender.get("encrypted_session_cookie")
+    if hasattr(db, "outreach_proxy_leases") and not await sender_is_ready(db, ws_id, sender):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Selected sender account is not ready or its proxy lease is unavailable.",
+        )
+
+    proxy_cfg = sender.get("proxy_config") or sender.get("proxy") or {}
     try:
-        li_at = decrypt_secret(enc_cookie)
+        proxy_url = await prepare_proxy(proxy_cfg, workspace_id=ws_id) if proxy_cfg else sender.get("proxy_url")
     except Exception:
-        li_at = enc_cookie
-    client = VoyagerClient(li_at_cookie=li_at, proxy_url=sender.get("proxy_url"))
-    candidates = await client.fetch_first_degree_connections(
-        start=0,
-        count=req.max_leads,
-        keywords=req.keywords,
-    )
+        proxy_url = sender.get("proxy_url")
+    envelope = RequestEnvelope(db, ws_id, sender.get("id", ""), "import_network", proxy_url or "")
+
+    async with account_session(sender, ws_id) as creds:
+        client = VoyagerClient(
+            li_at=creds["li_at"],
+            jsession_id=creds["jsession_id"],
+            proxy_url=proxy_url,
+            user_agent=sender.get("user_agent"),
+            request_envelope=envelope,
+        )
+        candidates = await client.fetch_first_degree_connections(
+            start=0,
+            count=req.max_leads,
+            keywords=req.keywords,
+        )
     if not candidates:
         return {"status": "completed", "imported_count": 0, "skipped_duplicates": 0, "leads": []}
 
@@ -1697,11 +2040,13 @@ async def get_lead_activity(
         else:
             notes = []
         for note in notes:
+            note_text = note.get("note") or note.get("body") or ""
             activities.append({
                 "id": str(note.get("id") or note.get("_id") or ""),
                 "kind": "note",
-                "note": note.get("note"),
-                "author": note.get("author") or "Team Member",
+                "note": note_text,
+                "body": note_text,
+                "author": note.get("author") or note.get("author_name") or "Team Member",
                 "timestamp": note.get("created_at"),
             })
 
@@ -1759,6 +2104,15 @@ async def get_lead_activity(
             "last_name": lead.get("last_name"),
             "company_name": lead.get("company_name"),
             "job_title": lead.get("job_title"),
+            "headline": lead.get("headline") or "",
+            "location": lead.get("location") or "",
+            "university_name": lead.get("university_name") or lead.get("school") or "",
+            "top_skill": lead.get("top_skill") or "",
+            "company_followed": lead.get("company_followed") or "",
+            "email": lead.get("email") or "",
+            "linkedin_email": lead.get("linkedin_email") or lead.get("email") or "",
+            "failure_code": lead.get("failure_code"),
+            "failure_reason": lead.get("failure_reason"),
             "execution_state": lead.get("execution_state"),
             "pipeline_stage": lead.get("pipeline_stage"),
             "current_node_id": lead.get("current_node_id"),
@@ -1819,9 +2173,10 @@ async def add_lead_note(
 
 
 @router.post("/{lead_id}/pause")
+@router.post("/{lead_id}/pause-sequence")
 async def pause_lead(
     lead_id: str,
-    req: PauseLeadRequest,
+    req: PauseLeadRequest | None = None,
     current_user: dict = _lead_permission("lead:update"),
     db: AsyncIOMotorDatabase = Depends(get_db),
 ):
@@ -1835,7 +2190,7 @@ async def pause_lead(
     if state == "staged" or state is not None and not isinstance(state, str):
         raise HTTPException(409, "Staged contacts must remain in source review; they cannot be paused into enrollment.")
 
-    pause_reason = req.reason or "Manually paused by operator"
+    pause_reason = (req.reason if req else None) or "Manually paused by operator"
     state_match = ({"$eq": state, "$type": "string"} if isinstance(state, str) else
                    {"$type": "null", "$exists": True} if "execution_state" in lead else {"$exists": False})
     changed = await db.outreach_leads.update_one(
@@ -1852,10 +2207,21 @@ async def pause_lead(
             {"$set": {"status": "skipped", "skip_reason": f"Lead paused: {pause_reason}", "resolved_at": datetime.now(timezone.utc)}}
         )
 
+    if hasattr(db, "outreach_inbox_threads") and hasattr(db.outreach_inbox_threads, "update_many"):
+        try:
+            await db.outreach_inbox_threads.update_many(
+                {"lead_id": lead_id, **workspace_scope(workspace_id)},
+                {"$set": {"sequence_paused": True, "updated_at": datetime.now(timezone.utc)}},
+            )
+        except Exception as exc:
+            logger.debug("Inbox thread pause sync skipped for lead=%s (%s)", lead_id, type(exc).__name__)
+
+    logger.info("Lead sequence paused lead_id=%s workspace_id=%s reason=%s", lead_id, workspace_id, pause_reason)
     return {"status": "paused", "lead_id": lead_id, "pause_reason": pause_reason}
 
 
 @router.post("/{lead_id}/resume")
+@router.post("/{lead_id}/resume-sequence")
 async def resume_lead(
     lead_id: str,
     current_user: dict = _lead_permission("lead:update"),
@@ -1934,4 +2300,200 @@ async def resume_lead(
     if not changed.matched_count:
         raise HTTPException(409, "Contact source changed; refresh before resuming.")
 
+    if hasattr(db, "outreach_inbox_threads") and hasattr(db.outreach_inbox_threads, "update_many"):
+        try:
+            await db.outreach_inbox_threads.update_many(
+                {"lead_id": lead_id, **workspace_scope(workspace_id)},
+                {"$set": {"sequence_paused": False, "updated_at": datetime.now(timezone.utc)}},
+            )
+        except Exception as exc:
+            logger.debug("Inbox thread resume sync skipped for lead=%s (%s)", lead_id, type(exc).__name__)
+
+    logger.info("Lead sequence resumed lead_id=%s workspace_id=%s", lead_id, workspace_id)
     return {"status": "resumed", "lead_id": lead_id, "execution_state": "queued"}
+
+
+class UpdateLeadProfileRequest(BaseModel):
+    first_name: str | None = Field(default=None, max_length=120)
+    last_name: str | None = Field(default=None, max_length=120)
+    headline: str | None = Field(default=None, max_length=300)
+    job_title: str | None = Field(default=None, max_length=180)
+    company_name: str | None = Field(default=None, max_length=180)
+    location: str | None = Field(default=None, max_length=180)
+    university_name: str | None = Field(default=None, max_length=180)
+    top_skill: str | None = Field(default=None, max_length=180)
+    company_followed: str | None = Field(default=None, max_length=180)
+    linkedin_email: str | None = Field(default=None, max_length=254)
+    email: str | None = Field(default=None, max_length=254)
+
+
+@router.patch("/{lead_id}")
+async def update_lead_profile(
+    lead_id: str,
+    req: UpdateLeadProfileRequest,
+    current_user: dict = _lead_permission("lead:update"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Edits a lead's LinkedIn profile attributes (Video #15: Edit Lead Information from Lead Profile).
+    """
+    workspace_id = _workspace_id(current_user)
+    lead_filter = _lead_filter(lead_id, current_user)
+    lead = await db.outreach_leads.find_one(lead_filter)
+    if not lead:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+
+    payload = req.model_dump(exclude_unset=True)
+    if not payload:
+        raise HTTPException(status_code=422, detail="Provide at least one profile field to update")
+
+    updates: dict[str, Any] = {"updated_at": datetime.now(timezone.utc)}
+    for k, v in payload.items():
+        clean_v = v.strip() if isinstance(v, str) else ""
+        updates[k] = clean_v
+        if k == "company_name":
+            updates["company"] = clean_v
+        elif k == "job_title":
+            updates["position"] = clean_v
+        elif k == "university_name":
+            updates["school"] = clean_v
+        elif k == "location":
+            updates["location_raw"] = clean_v
+
+    await db.outreach_leads.update_one(lead_filter, {"$set": updates})
+    updated = await db.outreach_leads.find_one(lead_filter)
+    if updated:
+        updated.pop("_id", None)
+    return {"status": "updated", "lead_id": lead_id, "lead": updated or {**lead, **updates}}
+
+
+@router.post("/{lead_id}/whitelist")
+@router.delete("/{lead_id}/do-not-contact")
+async def whitelist_lead(
+    lead_id: str,
+    current_user: dict = _lead_permission("lead:update"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """
+    Whitelists a previously blacklisted/Do-Not-Contact lead so actions can be performed again (Video #15).
+    Removes matching identifiers from `outreach_do_not_contact` and sets `do_not_contact=False` on the lead.
+    """
+    workspace_id = _workspace_id(current_user)
+    lead_filter = _lead_filter(lead_id, current_user)
+    lead = await db.outreach_leads.find_one(lead_filter)
+    if not lead:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
+
+    original = lead.get("identifiers") if isinstance(lead.get("identifiers"), dict) else {}
+    urls = [u for u in (lead.get("linkedin_url"), original.get("normalized_url")) if isinstance(u, str) and u.strip()]
+    vanities = [v for v in (lead.get("vanity_name"), original.get("vanity_name")) if isinstance(v, str) and v.strip()]
+    urns = [u for u in (lead.get("member_urn"), lead.get("linkedin_urn"), original.get("member_urn")) if isinstance(u, str) and u.strip()]
+    emails = [e for e in (lead.get("email"), original.get("email")) if isinstance(e, str) and e.strip()]
+
+    or_clauses: list[dict[str, Any]] = []
+    if urls:
+        or_clauses.append({"linkedin_url": {"$in": urls}})
+    if vanities:
+        or_clauses.append({"vanity_name": {"$in": vanities}})
+    if urns:
+        or_clauses.append({"member_urn": {"$in": urns}})
+    if emails:
+        or_clauses.append({"email": {"$in": emails}})
+
+    if or_clauses and hasattr(db, "outreach_do_not_contact") and hasattr(db.outreach_do_not_contact, "delete_many"):
+        try:
+            await db.outreach_do_not_contact.delete_many({
+                **workspace_scope(workspace_id),
+                "$or": or_clauses,
+            })
+        except Exception as exc:
+            logger.warning("DNC whitelist removal degraded for lead=%s (%s)", lead_id, type(exc).__name__)
+
+    await db.outreach_leads.update_one(
+        lead_filter,
+        {
+            "$set": {"do_not_contact": False, "updated_at": datetime.now(timezone.utc)},
+            "$unset": {"do_not_contact_at": ""},
+        },
+    )
+    logger.info("Lead whitelisted from DNC lead_id=%s workspace_id=%s", lead_id, workspace_id)
+    return {"status": "whitelisted", "lead_id": lead_id, "do_not_contact": False}
+
+
+class CreateCustomLeadFilterRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+    include_actions: list[str] = Field(default_factory=list, max_length=10)
+    exclude_actions: list[str] = Field(default_factory=list, max_length=10)
+    failure_reason: str | None = Field(default=None, max_length=100)
+
+
+@router.get("/custom-filters")
+async def list_custom_lead_filters(
+    current_user: dict = _lead_permission("lead:read"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Lists saved Include/Exclude action filters for the workspace (Video #15 `+ Add Filter`)."""
+    ws_id = _workspace_id(current_user)
+    col = getattr(db, "outreach_lead_custom_filters", None)
+    if col is None or not hasattr(col, "find"):
+        return []
+    cursor = col.find(workspace_scope(ws_id), {"_id": 0}).sort("created_at", -1)
+    if hasattr(cursor, "__await__"):
+        cursor = await cursor
+    docs = await cursor.to_list(length=50) if hasattr(cursor, "to_list") else (cursor if isinstance(cursor, list) else [])
+    for d in docs:
+        d.pop("_id", None)
+        if isinstance(d.get("created_at"), datetime):
+            d["created_at"] = d["created_at"].isoformat()
+    return docs
+
+
+@router.post("/custom-filters", status_code=status.HTTP_201_CREATED)
+async def create_custom_lead_filter(
+    req: CreateCustomLeadFilterRequest,
+    current_user: dict = _lead_permission("lead:update"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Creates a saved Include/Exclude action filter (e.g. 'Ignored Messages': Include Messaged, Exclude Replied)."""
+    ws_id = _workspace_id(current_user)
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Filter name cannot be blank")
+    inc = [a.strip() for a in req.include_actions if isinstance(a, str) and a.strip()]
+    exc = [a.strip() for a in req.exclude_actions if isinstance(a, str) and a.strip()]
+    fail_r = req.failure_reason.strip() if req.failure_reason and req.failure_reason.strip() else None
+    if not inc and not exc and not fail_r:
+        raise HTTPException(status_code=422, detail="Select at least one Include action, Exclude action, or Failure reason")
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": f"flt_{uuid.uuid4().hex[:10]}",
+        "workspace_id": ws_id,
+        "user_id": _user_id(current_user),
+        "name": name,
+        "include_actions": inc,
+        "exclude_actions": exc,
+        "failure_reason": fail_r,
+        "created_at": now,
+    }
+    col = getattr(db, "outreach_lead_custom_filters", None)
+    if col is not None and hasattr(col, "insert_one"):
+        await col.insert_one(doc)
+    doc.pop("_id", None)
+    doc["created_at"] = now.isoformat()
+    return doc
+
+
+@router.delete("/custom-filters/{filter_id}")
+async def delete_custom_lead_filter(
+    filter_id: str,
+    current_user: dict = _lead_permission("lead:update"),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    """Deletes a saved custom lead filter."""
+    ws_id = _workspace_id(current_user)
+    col = getattr(db, "outreach_lead_custom_filters", None)
+    if col is not None and hasattr(col, "delete_one"):
+        res = await col.delete_one({"id": filter_id, **workspace_scope(ws_id)})
+        if getattr(res, "deleted_count", 0) == 0:
+            raise HTTPException(status_code=404, detail="Custom filter not found")
+    return {"status": "deleted", "filter_id": filter_id}

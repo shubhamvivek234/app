@@ -47,6 +47,10 @@ export default function OutreachVoice() {
   const [previewScript, setPreviewScript] = useState('Hey {{first_name}}, saw you are also leading growth at {{company_name}} and wanted to reach out!');
   const [leadFirstName, setLeadFirstName] = useState('Sarah');
   const [leadCompany, setLeadCompany] = useState('Acme Inc');
+  const [leadJobTitle, setLeadJobTitle] = useState('Head of Growth');
+  const [leadLocation, setLeadLocation] = useState('San Francisco, CA');
+  const [workspaceLeads, setWorkspaceLeads] = useState([]);
+  const [selectedPreviewLeadId, setSelectedPreviewLeadId] = useState('');
   const [isPlayingPreview, setIsPlayingPreview] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
 
@@ -57,6 +61,63 @@ export default function OutreachVoice() {
   const previewAudioRef = useRef(null);
   const audioContextRef = useRef(null);
   const maxVolumeRef = useRef(0);
+  const recordingSecondsRef = useRef(0);
+
+  const renderInterpolatedPreview = (script) => {
+    const vars = {
+      first_name: leadFirstName,
+      company_name: leadCompany,
+      job_title: leadJobTitle,
+      location: leadLocation,
+      location_raw: leadLocation,
+    };
+    const withVars = String(script || '').replace(
+      /\{\{\s*([a-zA-Z0-9_]+)(?:\s*\|\s*(?:"([^"]*)"|'([^']*)'))?\s*\}\}/g,
+      (_, varName, fbDouble, fbSingle) => {
+        const val = vars[varName];
+        if (val && String(val).trim()) return String(val).trim();
+        const fallback = fbDouble !== undefined ? fbDouble : fbSingle !== undefined ? fbSingle : '';
+        return fallback;
+      }
+    );
+    return withVars.replace(
+      /(?:✨\s*)?\[([^\]]+)\]/g,
+      (_, promptName) => {
+        const pLower = String(promptName || '').toLowerCase();
+        const co = leadCompany || 'your company';
+        const role = leadJobTitle || 'leader';
+        if (pLower.includes('3-5 words') || pLower.includes('doing x')) {
+          return `scaling ${role.toLowerCase()} initiatives at ${co}`;
+        }
+        return `impressed by what you're building as ${role} at ${co}`;
+      }
+    );
+  };
+
+  const openVoicePreviewModal = async (voice) => {
+    setPreviewVoice(voice);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/v1/outreach/leads?limit=25', {
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      if (res && res.ok) {
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : Array.isArray(data?.leads) ? data.leads : [];
+        if (mounted.current && list.length > 0) {
+          setWorkspaceLeads(list);
+          const first = list[0];
+          setSelectedPreviewLeadId(first.id || '');
+          if (first.first_name) setLeadFirstName(first.first_name);
+          if (first.company_name) setLeadCompany(first.company_name);
+          if (first.job_title || first.headline) setLeadJobTitle(first.job_title || first.headline);
+          if (first.location) setLeadLocation(first.location);
+        }
+      }
+    } catch {
+      // Ignore lead load failure in preview modal
+    }
+  };
 
   const fetchVoices = async () => {
     try {
@@ -147,6 +208,7 @@ export default function OutreachVoice() {
     setAudioBlob(null);
     setAudioUrl(null);
     setRecordingSeconds(0);
+    recordingSecondsRef.current = 0;
     audioChunksRef.current = [];
     maxVolumeRef.current = 0;
 
@@ -193,7 +255,7 @@ export default function OutreachVoice() {
         stream.getTracks().forEach((track) => track.stop());
 
         // Check if user was silent or spoke too quietly
-        if (maxVolumeRef.current < 2 && recordingSeconds < 5) {
+        if (maxVolumeRef.current < 2 && recordingSecondsRef.current < 5) {
           setErrorMsg("We couldn't hear you. Sit closer to the mic and read the script out loud.");
         }
       };
@@ -204,10 +266,13 @@ export default function OutreachVoice() {
       timerIntervalRef.current = setInterval(() => {
         setRecordingSeconds((prev) => {
           if (prev >= 30) {
+            recordingSecondsRef.current = 30;
             stopRecording();
             return 30;
           }
-          return prev + 1;
+          const next = prev + 1;
+          recordingSecondsRef.current = next;
+          return next;
         });
       }, 1000);
     } catch (err) {
@@ -232,6 +297,7 @@ export default function OutreachVoice() {
     setAudioBlob(null);
     setAudioUrl(null);
     setRecordingSeconds(0);
+    recordingSecondsRef.current = 0;
     setErrorMsg('');
   };
 
@@ -243,8 +309,21 @@ export default function OutreachVoice() {
       setErrorMsg('Audio file is too large (max 10MB).');
       return;
     }
+    const nextUrl = URL.createObjectURL(file);
     setAudioBlob(file);
-    setAudioUrl(URL.createObjectURL(file));
+    setAudioUrl(nextUrl);
+    try {
+      const tempAudio = new Audio(nextUrl);
+      tempAudio.onloadedmetadata = () => {
+        if (mounted.current && Number.isFinite(tempAudio.duration) && tempAudio.duration > 0) {
+          const secs = Math.round(tempAudio.duration);
+          recordingSecondsRef.current = secs;
+          setRecordingSeconds(secs);
+        }
+      };
+    } catch {
+      // Ignore metadata probe errors in headless test environments
+    }
   };
 
   const handleCreateClone = async () => {
@@ -344,7 +423,7 @@ export default function OutreachVoice() {
     setPreviewLoading(true);
     try {
       const payload = { voice_id: previewVoice.id, template_text: previewScript,
-        lead_sample: { first_name: leadFirstName, company_name: leadCompany } };
+        lead_sample: { first_name: leadFirstName, company_name: leadCompany, job_title: leadJobTitle, location: leadLocation } };
       await studioAction('preview', 'POST', { ...payload, request_id: requestId(JSON.stringify(payload)) });
       setPreviewVoice(null);
     } catch (error) { setErrorMsg(error.message); }
@@ -492,7 +571,7 @@ export default function OutreachVoice() {
                       className="hidden"
                     />
                   </label>
-                  <p className="text-[11px] text-gray-400 mt-1">Audio your browser can decode up to 25MB</p>
+                  <p className="text-[11px] text-gray-400 mt-1">Audio your browser can decode (20–60s, up to 10MB)</p>
                 </div>
               </div>
             )}
@@ -503,7 +582,10 @@ export default function OutreachVoice() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 text-xs font-semibold text-indigo-900">
                     <Volume2 className="w-4 h-4 text-indigo-600" />
-                    <span>Recorded voice sample ({recordingSeconds}s)</span>
+                    <span>
+                      {activeTab === 'upload' ? 'Uploaded voice sample' : 'Recorded voice sample'}
+                      {recordingSeconds > 0 ? ` (${recordingSeconds}s)` : ''}
+                    </span>
                   </div>
                   <button
                     onClick={resetRecording}
@@ -595,7 +677,7 @@ export default function OutreachVoice() {
                           <div className="flex items-center gap-1.5">
                             <button
                               disabled={!studioEnabled || v.status !== "active" || !v.consent_current}
-                              onClick={() => setPreviewVoice(v)}
+                              onClick={() => openVoicePreviewModal(v)}
                               title="Test voice personalization"
                               className="px-2 py-1 text-xs font-semibold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors flex items-center gap-1"
                             >
@@ -742,10 +824,53 @@ export default function OutreachVoice() {
               </div>
 
               <div className="space-y-4 text-xs">
+                {workspaceLeads.length > 0 && (
+                  <div>
+                    <label className="block text-gray-700 font-semibold mb-1">
+                      Preview against Real Workspace Lead:
+                    </label>
+                    <select
+                      value={selectedPreviewLeadId}
+                      onChange={(e) => {
+                        const nextId = e.target.value;
+                        setSelectedPreviewLeadId(nextId);
+                        const chosen = workspaceLeads.find((l) => String(l.id) === String(nextId));
+                        if (chosen) {
+                          setLeadFirstName(chosen.first_name || 'Sarah');
+                          setLeadCompany(chosen.company_name || 'Acme Inc');
+                          setLeadJobTitle(chosen.job_title || chosen.headline || 'Head of Growth');
+                          setLeadLocation(chosen.location || 'San Francisco, CA');
+                        }
+                      }}
+                      className="w-full p-2 border border-gray-200 rounded-xl text-xs bg-white text-gray-800"
+                    >
+                      {workspaceLeads.map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {l.first_name || 'Lead'} {l.last_name || ''} {l.company_name ? `— ${l.company_name}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
                 <div>
-                  <label className="block text-gray-700 font-semibold mb-1">
-                    Template Script with Personalization Tokens:
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-gray-700 font-semibold">
+                      Template Script with Personalization Tokens:
+                    </label>
+                    <div className="flex flex-wrap gap-1">
+                      {['{{first_name}}', '{{company_name}}', '{{job_title}}', '{{location}}', '✨ [ Doing X in 3-5 words ]'].map((tok) => (
+                        <button
+                          key={tok}
+                          type="button"
+                          onClick={() => setPreviewScript((prev) => `${prev} ${tok}`.trim())}
+                          className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-[10px] font-semibold"
+                        >
+                          + {tok}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <textarea
                     rows={3}
                     value={previewScript}
@@ -773,15 +898,31 @@ export default function OutreachVoice() {
                       className="w-full p-2 border border-gray-200 rounded-xl text-xs"
                     />
                   </div>
+                  <div>
+                    <label className="block text-gray-500 mb-1">Lead Job Title:</label>
+                    <input
+                      type="text"
+                      value={leadJobTitle}
+                      onChange={(e) => setLeadJobTitle(e.target.value)}
+                      className="w-full p-2 border border-gray-200 rounded-xl text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-gray-500 mb-1">Lead Location:</label>
+                    <input
+                      type="text"
+                      value={leadLocation}
+                      onChange={(e) => setLeadLocation(e.target.value)}
+                      className="w-full p-2 border border-gray-200 rounded-xl text-xs"
+                    />
+                  </div>
                 </div>
 
                 <div className="bg-[#f9f8f5] p-3.5 rounded-xl border border-stone-200/70 text-gray-700">
                   <span className="font-bold text-gray-900 block mb-1">Personalized Spoken Output:</span>
                   <p className="italic text-gray-600">
                     &ldquo;
-                    {previewScript
-                      .replace(/\{\{first_name\}\}/g, leadFirstName)
-                      .replace(/\{\{company_name\}\}/g, leadCompany)}
+                    {renderInterpolatedPreview(previewScript)}
                     &rdquo;
                   </p>
                 </div>

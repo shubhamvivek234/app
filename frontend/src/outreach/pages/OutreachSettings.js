@@ -61,6 +61,8 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState('editor');
   const [sendingInvite, setSendingInvite] = useState(false);
+  const [showRoleMatrix, setShowRoleMatrix] = useState(false);
+  const [updatingRoleFor, setUpdatingRoleFor] = useState(null);
 
   // ── Help State ─────────────────────────────────────────────────────────────
   const [expandedFaq, setExpandedFaq] = useState(null);
@@ -229,35 +231,80 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
   // ── Member Actions ─────────────────────────────────────────────────────────
   const handleSendInvite = async (e) => {
     e.preventDefault();
-    if (!inviteEmail || !inviteEmail.includes('@')) {
-      toast.error('Please provide a valid teammate email');
+    const rawEmails = (inviteEmail || '')
+      .split(/[,;\n\s]+/)
+      .map((s) => s.trim())
+      .filter((s) => s && s.includes('@'));
+    if (rawEmails.length === 0) {
+      toast.error('Please provide at least one valid teammate email');
       return;
     }
     setSendingInvite(true);
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch('/api/v1/workspace/members/invite', {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: token ? `Bearer ${token}` : '',
-        },
-        body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole }),
-      });
-      if (res.ok) {
-        toast.success(`Invitation sent to ${inviteEmail}`);
+      let successCount = 0;
+      let lastError = '';
+      for (const emailAddr of rawEmails) {
+        const res = await fetch('/api/v1/workspace/members/invite', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: token ? `Bearer ${token}` : '',
+          },
+          body: JSON.stringify({ email: emailAddr, role: inviteRole }),
+        });
+        if (res.ok) {
+          successCount += 1;
+        } else {
+          const err = await res.json().catch(() => ({}));
+          lastError = err.detail || `Failed to invite ${emailAddr}`;
+        }
+      }
+      if (successCount > 0) {
+        toast.success(
+          successCount === 1
+            ? `Invitation sent to ${rawEmails[0]}`
+            : `Sent ${successCount} teammate invitations`
+        );
         setInviteEmail('');
         setInviteModalOpen(false);
         fetchMembers();
       } else {
-        const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'Failed to send invite');
+        toast.error(lastError || 'Failed to send invite');
       }
     } catch (_) {
       toast.error('Network error sending invite');
     } finally {
       setSendingInvite(false);
+    }
+  };
+
+  const handleUpdateMemberRole = async (memberId, newRole) => {
+    if (!memberId || !newRole) return;
+    setUpdatingRoleFor(memberId);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/v1/workspace/members/${memberId}/role`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({ role: newRole }),
+      });
+      if (res.ok) {
+        toast.success('Teammate role updated');
+        fetchMembers();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'Failed to update member role');
+      }
+    } catch (_) {
+      toast.error('Network error updating member role');
+    } finally {
+      setUpdatingRoleFor(null);
     }
   };
 
@@ -381,18 +428,88 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
               <div className="space-y-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
-                    <h2 className="text-base font-bold text-gray-900">Workspace Members</h2>
+                    <h2 className="text-base font-bold text-gray-900">Workspace Members &amp; Team Roles</h2>
                     <p className="text-xs text-gray-500 mt-0.5">
-                      Collaborate on outreach campaigns, share unified inboxes, and manage sender accounts.
+                      Collaborate on outreach campaigns, share sequence templates, and prevent duplicate lead outreach across teammates.
                     </p>
                   </div>
-                  <button
-                    onClick={() => setInviteModalOpen(true)}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors"
-                  >
-                    <UserPlus className="w-3.5 h-3.5" /> Invite Teammate
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowRoleMatrix((v) => !v)}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 rounded-xl text-xs font-semibold shadow-xs transition-colors"
+                    >
+                      <HelpCircle className="w-3.5 h-3.5 text-indigo-600" />
+                      {showRoleMatrix ? 'Hide Role Comparison' : 'See Key Differences Between Roles'}
+                    </button>
+                    <button
+                      onClick={() => setInviteModalOpen(true)}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors"
+                    >
+                      <UserPlus className="w-3.5 h-3.5" /> Invite Teammates
+                    </button>
+                  </div>
                 </div>
+
+                {/* Role & Permissions Comparison Matrix (Dripify Video #17 & #18) */}
+                {showRoleMatrix && (
+                  <div className="bg-indigo-50/50 rounded-2xl border border-indigo-100 p-5 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-xs font-bold text-indigo-950 uppercase tracking-wider">
+                          Roles &amp; Permissions Matrix
+                        </h3>
+                        <p className="text-[11px] text-indigo-700 mt-0.5">
+                          Choose the right role for each teammate. Roles can be updated anytime from the Active Members list below.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowRoleMatrix(false)}
+                        className="p-1 text-indigo-400 hover:text-indigo-700 rounded-lg"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                      <div className="bg-white rounded-xl border border-indigo-100 p-4 space-y-2 shadow-2xs">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-gray-900">User (Editor)</span>
+                          <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 text-[10px] font-bold uppercase">Standard</span>
+                        </div>
+                        <ul className="space-y-1 text-[11px] text-gray-600">
+                          <li>• Run campaigns &amp; manage own leads/inbox</li>
+                          <li>• Use shared team sequence templates</li>
+                          <li>• Automatic cross-team lead deduplication</li>
+                          <li className="text-gray-400">✕ Cannot invite/remove teammates or change roles</li>
+                        </ul>
+                      </div>
+                      <div className="bg-white rounded-xl border border-indigo-200 p-4 space-y-2 shadow-2xs">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-indigo-900">Manager (Admin)</span>
+                          <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-[10px] font-bold uppercase">Team Lead</span>
+                        </div>
+                        <ul className="space-y-1 text-[11px] text-gray-600">
+                          <li>• View all team members &amp; LinkedIn stats</li>
+                          <li>• Invite or remove members (except Owners) &amp; assign roles</li>
+                          <li>• Create &amp; manage shared team sequence templates</li>
+                          <li>• Inspect teammates&apos; campaigns, queues &amp; inbox</li>
+                        </ul>
+                      </div>
+                      <div className="bg-white rounded-xl border border-emerald-200 p-4 space-y-2 shadow-2xs">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-emerald-900">Owner</span>
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-bold uppercase">Full Control</span>
+                        </div>
+                        <ul className="space-y-1 text-[11px] text-gray-600">
+                          <li>• All Manager &amp; User permissions</li>
+                          <li>• Full workspace, billing &amp; seat administration</li>
+                          <li>• Manage all team members, roles &amp; workspace settings</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Members List Table */}
                 <div className="bg-white rounded-2xl border border-gray-200 shadow-xs overflow-hidden">
@@ -434,9 +551,24 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
                           </div>
 
                           <div className="flex items-center gap-3">
-                            <span className="px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-gray-100 text-gray-700">
-                              {member.role || 'Member'}
-                            </span>
+                            {permissions.can_update_member_role && member.role !== 'owner' ? (
+                              <select
+                                aria-label={`Change role for ${member.display_name || member.email}`}
+                                value={member.role || 'editor'}
+                                disabled={updatingRoleFor === member.user_id}
+                                onChange={(e) => handleUpdateMemberRole(member.user_id, e.target.value)}
+                                className="px-2.5 py-1 rounded-lg border border-gray-200 bg-white text-[11px] font-semibold text-gray-700 focus:outline-none focus:border-indigo-500"
+                              >
+                                <option value="editor">User (Editor)</option>
+                                <option value="admin">Manager (Admin)</option>
+                                <option value="client">Client</option>
+                                <option value="viewer">Viewer</option>
+                              </select>
+                            ) : (
+                              <span className="px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-gray-100 text-gray-700">
+                                {member.role === 'admin' ? 'Manager (Admin)' : member.role === 'editor' ? 'User (Editor)' : (member.role || 'Member')}
+                              </span>
+                            )}
                             {permissions.can_remove_member && member.role !== 'owner' && (
                               <button
                                 onClick={() => handleRemoveMember(member.user_id, member.display_name)}
@@ -467,7 +599,7 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
                           <div>
                             <p className="text-xs font-semibold text-gray-800">{invite.email}</p>
                             <span className="text-[10px] text-gray-400">
-                              Role: <strong className="capitalize">{invite.role}</strong> • Status: {invite.status}
+                              Role: <strong className="capitalize">{invite.role === 'admin' ? 'Manager (Admin)' : invite.role === 'editor' ? 'User (Editor)' : invite.role}</strong> • Status: {invite.status}
                             </span>
                           </div>
                           <div className="flex items-center gap-2">
@@ -481,10 +613,10 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
                             )}
                             <button
                               onClick={() => handleRevokeInvite(invite.invite_id)}
-                              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                              title="Revoke invite"
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-red-200 text-[11px] font-semibold text-red-600 hover:bg-red-50 transition-colors"
+                              title="Recall invite"
                             >
-                              <X className="w-3.5 h-3.5" />
+                              <X className="w-3 h-3" /> Recall Invite
                             </button>
                           </div>
                         </div>
@@ -620,6 +752,47 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
                   </div>
                 </div>
 
+                {/* Campaign Playbooks & Walkthrough Guides (Prosp Parity) */}
+                <div className="bg-white rounded-2xl border border-gray-200/80 shadow-xs p-6 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-bold text-gray-900">Campaign Playbooks &amp; Walkthrough Guides</h3>
+                      <p className="text-[11px] text-gray-500 mt-0.5">
+                        Step-by-step reference guides for sourcing leads, AI prompt personalization, voice notes, and CRM sync.
+                      </p>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 text-[10px] font-bold uppercase tracking-wider">
+                      4 Core Workflows
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    <div className="p-3.5 rounded-xl border border-gray-100 bg-gray-50/60 space-y-1">
+                      <p className="font-bold text-gray-900">1. Interactive Lead Finder &amp; Search Import</p>
+                      <p className="text-[11px] text-gray-500 leading-relaxed">
+                        Filter prospects by industry, location, company headcount, connection degree, or recent LinkedIn post activity, or paste any LinkedIn Search / Sales Navigator / Post Engagers URL.
+                      </p>
+                    </div>
+                    <div className="p-3.5 rounded-xl border border-gray-100 bg-gray-50/60 space-y-1">
+                      <p className="font-bold text-gray-900">2. AI Personalization &amp; Prompt Library</p>
+                      <p className="text-[11px] text-gray-500 leading-relaxed">
+                        Insert <code className="font-mono text-indigo-600">✨ [Prompt Name]</code> tokens alongside <code className="font-mono text-indigo-600">{'{{first_name}}'}</code> and <code className="font-mono text-indigo-600">{'{{company_name}}'}</code> to synthesize profile-aware icebreakers and preview them across real enrolled leads.
+                      </p>
+                    </div>
+                    <div className="p-3.5 rounded-xl border border-gray-100 bg-gray-50/60 space-y-1">
+                      <p className="font-bold text-gray-900">3. Cloned Voice Notes &amp; Spoken Previews</p>
+                      <p className="text-[11px] text-gray-500 leading-relaxed">
+                        Record or upload a clean 15–60s voice sample in Voice Studio, preview dynamic spoken variables against real workspace contacts, and attach voice note steps to your sequence.
+                      </p>
+                    </div>
+                    <div className="p-3.5 rounded-xl border border-gray-100 bg-gray-50/60 space-y-1">
+                      <p className="font-bold text-gray-900">4. Unified Inbox, Auto-Tagging &amp; Webhooks</p>
+                      <p className="text-[11px] text-gray-500 leading-relaxed">
+                        Configure sequence steps to auto-tag leads on completion, filter conversations by campaign/sender/tag in Unified Inbox, and stream real-time webhook events to Slack, Make, or HubSpot.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
                 {/* FAQ Accordion */}
                 <div className="bg-white rounded-2xl border border-gray-200/80 shadow-xs p-6 space-y-3">
                   <h3 className="text-sm font-bold text-gray-900 mb-2">Frequently Asked Questions</h3>
@@ -685,30 +858,42 @@ export default function OutreachSettings({ initialTab = 'accounts' }) {
             <form onSubmit={handleSendInvite} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-gray-700 mb-1">
-                  Teammate Email Address *
+                  Teammate Email Address(es) *
                 </label>
                 <input
-                  type="email"
+                  type="text"
                   required
                   value={inviteEmail}
                   onChange={(e) => setInviteEmail(e.target.value)}
-                  placeholder="colleague@company.com"
+                  placeholder="colleague@company.com, teammate2@company.com"
                   className="w-full rounded-xl border border-gray-300 px-3.5 py-2 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
                 />
+                <p className="mt-1 text-[10px] text-gray-400">
+                  Separate multiple email addresses with commas to invite several teammates at once.
+                </p>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1">
-                  Role & Permissions
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-gray-700">
+                    Role &amp; Permissions
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowRoleMatrix(true)}
+                    className="text-[10px] font-semibold text-indigo-600 hover:underline"
+                  >
+                    See key differences between roles
+                  </button>
+                </div>
                 <select
                   value={inviteRole}
                   onChange={(e) => setInviteRole(e.target.value)}
                   className="w-full rounded-xl border border-gray-300 px-3.5 py-2 text-xs bg-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
                 >
-                  <option value="editor">Editor — Can edit sequences, leads & reply in inbox</option>
-                  <option value="admin">Admin — Full workspace control, billing & account setup</option>
-                  <option value="client">Client — View inbox & analytics only</option>
+                  <option value="editor">User (Editor) — Run own campaigns, leads &amp; shared templates</option>
+                  <option value="admin">Manager (Admin) — Manage team members, templates &amp; view all campaigns</option>
+                  <option value="client">Client — View inbox &amp; analytics only</option>
                   <option value="viewer">Viewer — Read-only access</option>
                 </select>
               </div>

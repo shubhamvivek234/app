@@ -1,5 +1,7 @@
 """Private digest-only invoice exclusion CLI; never echo raw invoice or payment material."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 import argparse
 import asyncio
 import hashlib

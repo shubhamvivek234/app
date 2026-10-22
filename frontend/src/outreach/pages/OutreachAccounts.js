@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Globe, Trash2, Sliders, RefreshCw } from 'lucide-react';
+import { Globe, Trash2, Sliders, RefreshCw, Shield } from 'lucide-react';
 import ConnectLinkedInModal from '../components/ConnectLinkedInModal';
 import SenderVerificationRecovery from '../components/SenderVerificationRecovery';
 import SenderStoredDetails, { savedStatus, savedCap } from '../components/SenderStoredDetails';
@@ -18,6 +18,7 @@ export default function OutreachAccounts() {
   const [limitsForm, setLimitsForm] = useState({ connection_invites: '', messages: '', email_sends: '' });
   const [limitChanges, setLimitChanges] = useState({});
   const [savingLimits, setSavingLimits] = useState(false);
+  const [togglingActivityControlId, setTogglingActivityControlId] = useState(null);
   const openingLimits = useRef({});
   const validChanges = Object.values(limitChanges).every(value => /^(0|[1-9]\d?)$/.test(value) && Number(value) <= 35);
   const canSaveLimits = Object.keys(limitChanges).length > 0 && validChanges && !savingLimits;
@@ -108,6 +109,31 @@ export default function OutreachAccounts() {
     }
   };
 
+  const handleToggleActivityControl = async (acc) => {
+    const currentlyEnabled = Boolean(acc.activity_control_enabled || acc.activity_control?.activity_control_enabled);
+    setTogglingActivityControlId(acc.id);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/v1/outreach/accounts/${acc.id}/activity-control`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({ activity_control_enabled: !currentlyEnabled }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Could not update Activity Control');
+      const updated = await res.json();
+      setAccounts((current) => current.map((account) => (account.id === acc.id ? updated : account)));
+      toast.success(!currentlyEnabled ? 'Activity Control enabled' : 'Activity Control disabled');
+    } catch (err) {
+      toast.error(err.message || 'Could not update Activity Control');
+    } finally {
+      setTogglingActivityControlId(null);
+    }
+  };
+
   const openConnection = target => {
     if (recovery.blocked || !recovery.context || recovery.token !== localStorage.getItem('token')) return;
     setModalContext(recovery.context);
@@ -162,13 +188,37 @@ export default function OutreachAccounts() {
               {/* Account Top Row */}
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-3.5">
-                  <img
-                    src={acc.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100'}
-                    alt={acc.account_name}
-                    className="h-12 w-12 rounded-full object-cover border border-gray-100"
-                  />
+                  {acc.avatar_url ? (
+                    <img
+                      src={acc.avatar_url}
+                      alt={acc.account_name}
+                      className="h-12 w-12 rounded-full object-cover border border-gray-100"
+                    />
+                  ) : (
+                    <div className="h-12 w-12 rounded-full bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-sm border border-indigo-200 shrink-0">
+                      {(acc.account_name || 'LI')
+                        .split(/\s+/)
+                        .filter(Boolean)
+                        .slice(0, 2)
+                        .map((part) => part[0]?.toUpperCase())
+                        .join('')}
+                    </div>
+                  )}
                   <div>
-                    <h3 className="font-bold text-gray-900 leading-tight">{acc.account_name}</h3>
+                    <div className="flex items-center gap-1.5">
+                      <h3 className="font-bold text-gray-900 leading-tight">{acc.account_name}</h3>
+                      <span
+                        title="Activity Control automatically adjusts daily connection & message limits based on 1st-degree connections, pending sent invitations, account type & warm-up activity."
+                        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
+                          acc.activity_control_enabled || acc.activity_control?.activity_control_enabled
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : 'bg-gray-100 text-gray-500'
+                        }`}
+                      >
+                        <Shield className="h-3 w-3" />
+                        {acc.activity_control_enabled || acc.activity_control?.activity_control_enabled ? 'Activity Control' : 'Manual Caps'}
+                      </span>
+                    </div>
                     <p className="text-xs text-gray-400 font-mono mt-0.5">@{acc.vanity_name || 'linkedin'}</p>
                     <div className="flex items-center gap-1.5 mt-1">
                       <span className="inline-flex items-center text-[11px] font-medium px-2 py-0.5 rounded-full text-gray-600 bg-gray-100">
@@ -292,6 +342,26 @@ export default function OutreachAccounts() {
                   </div>
                 )}
                 <p className="mt-2 text-xs text-gray-500">Actual allowance can be lower. Campaign caps, daily use, warm-up and current execution checks also apply.</p>
+                <div className="mt-3 pt-2.5 border-t border-gray-200/70 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  <div className="text-gray-600">
+                    <span className="font-semibold text-gray-800 inline-flex items-center gap-1">
+                      <Shield className="h-3 w-3 text-emerald-600" /> Activity Control:
+                    </span>{' '}
+                    Auto-adjusts daily limits by connections, pending invites, tier ({acc.premium_product || 'classic'}) &amp; warm-up.
+                  </div>
+                  <button
+                    type="button"
+                    disabled={togglingActivityControlId === acc.id}
+                    onClick={() => handleToggleActivityControl(acc)}
+                    className={`px-2.5 py-1 rounded-lg font-semibold transition-colors ${
+                      acc.activity_control_enabled || acc.activity_control?.activity_control_enabled
+                        ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                        : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-100'
+                    }`}
+                  >
+                    {acc.activity_control_enabled || acc.activity_control?.activity_control_enabled ? 'Disable Activity Control' : 'Enable Activity Control'}
+                  </button>
+                </div>
               </div>
             </div>
           ))}

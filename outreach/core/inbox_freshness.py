@@ -1,5 +1,7 @@
 """Completed LinkedIn coverage, credential fencing and durable priority sync."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import hashlib
 import json

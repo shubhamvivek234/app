@@ -4,6 +4,8 @@ Successful reads write existing guard/user/role authority counters. They do not
 capture, repair, restore, create indexes, grant execution or prove completeness.
 Content leaves this service only after its owning snapshot transaction commits.
 """
+import logging
+logger = logging.getLogger(__name__)
 from datetime import timezone
 import os
 import re

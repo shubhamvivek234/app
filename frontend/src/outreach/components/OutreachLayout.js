@@ -11,6 +11,7 @@ import {
   ChevronDown,
   Sparkles,
   Bookmark,
+  Shield,
 } from 'lucide-react';
 import UnravlerLogo from '@/components/UnravlerLogo';
 
@@ -18,6 +19,7 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hi
   const [workspaceName, setWorkspaceName] = useState('Workspace');
   const [actorInitials, setActorInitials] = useState('?');
   const [accountsCount, setAccountsCount] = useState(null);
+  const [activityControlProtected, setActivityControlProtected] = useState(false);
   const [billing, setBilling] = useState(null);
   const [billingUnavailable, setBillingUnavailable] = useState(false);
 
@@ -35,7 +37,11 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hi
       }));
       if (!current) return;
       const [accounts, plan, workspace, actor] = results;
-      setAccountsCount(accounts.status === 'fulfilled' && Array.isArray(accounts.value) ? accounts.value.length : null);
+      const accArr = accounts.status === 'fulfilled' && Array.isArray(accounts.value) ? accounts.value : null;
+      setAccountsCount(accArr ? accArr.length : null);
+      setActivityControlProtected(
+        Boolean(accArr && accArr.some((a) => a?.activity_control_enabled || a?.activity_control?.activity_control_enabled))
+      );
       if (plan.status === 'fulfilled' && typeof plan.value?.access_active === 'boolean') {
         setBilling(plan.value); setBillingUnavailable(false);
       } else setBillingUnavailable(true);
@@ -123,9 +129,22 @@ export default function OutreachLayout({ activeTab, onNavigate, onOpenWizard, hi
 
           <div
             onClick={() => onNavigate('settings')}
-            className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-bold cursor-pointer hover:ring-2 hover:ring-indigo-300 transition-all"
+            title={
+              activityControlProtected
+                ? 'Protected by Activity Control — automatically adjusts daily limits based on connections, pending invites, account type & warm-up'
+                : 'Settings & Activity Control'
+            }
+            className="relative w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-xs font-bold cursor-pointer hover:ring-2 hover:ring-indigo-300 transition-all"
           >
             {actorInitials}
+            <span
+              className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center border border-white shadow-2xs ${
+                activityControlProtected ? 'bg-emerald-500 text-white' : 'bg-gray-200 text-gray-600'
+              }`}
+              aria-label="Activity Control shield"
+            >
+              <Shield className="w-2.5 h-2.5" />
+            </span>
           </div>
         </div>
       </aside>

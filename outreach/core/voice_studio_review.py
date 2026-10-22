@@ -4,6 +4,8 @@ The drain is an operator assertion. Snapshot/majority ordering covers current
 participating writers, not cached credentials or an already authorized call.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import re
 from datetime import datetime

@@ -103,8 +103,8 @@ class OutboundRateLimiter:
                     return datetime.strptime(normalized, fmt).time()
                 except ValueError:
                     continue
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as exc:
+            logger.debug("Rate limiter time string parse failed (%s)", type(exc).__name__)
         return None
 
     @staticmethod
@@ -160,16 +160,19 @@ class OutboundRateLimiter:
                 0,
             ]
         }
+        set_fields: dict = {
+            "counters.date": today_str,
+            f"counters.{action_field}": {"$add": [counter_expression, 1]},
+            "last_active_at": datetime.now(timezone.utc),
+        }
+        if action_field == "connection_invites":
+            set_fields["weekly_invites_sent"] = {"$add": [{"$ifNull": ["$weekly_invites_sent", 0]}, 1]}
         result = await db.outreach_accounts.update_one(
             {
                 "id": account["id"],
                 "$expr": {"$lt": [counter_expression, max_allowed]},
             },
-            [{"$set": {
-                "counters.date": today_str,
-                f"counters.{action_field}": {"$add": [counter_expression, 1]},
-                "last_active_at": datetime.now(timezone.utc),
-            }}],
+            [{"$set": set_fields}],
         )
         if result.matched_count == 0:
             logger.warning("Account %s reached daily limit for %s (%s)", account["id"], action_field, max_allowed)

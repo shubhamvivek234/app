@@ -41,7 +41,8 @@ def _merge_observed_messages(existing: list[dict], incoming: list[dict], raw: li
     for message, source in zip(incoming, raw):
         # Pydantic has normalized message epochs/ISO times already. A thread
         # timestamp alone cannot distinguish two identical individual messages.
-        stamp = timestamp(message.get("timestamp")) if source.get("timestamp") is not None else None
+        has_source_ts = source.get("timestamp") is not None or source.get("created_at") is not None
+        stamp = timestamp(message.get("timestamp")) if has_source_ts else None
         identity = (*content(message), stamp)
         # Without a source timestamp, identical content is one observation;
         # its later ingestion time cannot establish another provider message.
@@ -197,8 +198,8 @@ class InboxSynchronizer:
             try:
                 incoming_at = _utc(_TIMESTAMP_ADAPTER.validate_python(conv["last_message_at"]))
                 incoming_at = incoming_at.replace(microsecond=incoming_at.microsecond // 1000 * 1000)
-            except ValidationError:
-                pass
+            except ValidationError as exc:
+                logger.debug("Inbox conversation timestamp validation skipped (%s)", type(exc).__name__)
         last_snippet = conv.get("last_message_snippet") or ""
         if not last_snippet and raw_msgs:
             last_snippet = raw_msgs[-1].get("body") or raw_msgs[-1].get("text", "")
@@ -210,14 +211,25 @@ class InboxSynchronizer:
             s_type = MessageSenderType.LEAD if m.get("sender_type") == "lead" else MessageSenderType.USER
             if s_type == MessageSenderType.LEAD:
                 has_lead_reply = True
-            parsed_msgs.append(
-                OutreachInboxMessage(
-                    sender_type=s_type,
-                    sender_name=m.get("sender_name", lead_name if s_type == MessageSenderType.LEAD else "You"),
-                    body=m.get("body") or m.get("text", ""),
-                    timestamp=m["timestamp"] if m.get("timestamp") is not None else incoming_at or datetime.now(timezone.utc),
-                ).model_dump()
-            )
+            raw_msg_ts = m.get("timestamp") if m.get("timestamp") is not None else m.get("created_at")
+            msg_kwargs: dict[str, Any] = {
+                "sender_type": s_type,
+                "sender_name": m.get("sender_name", lead_name if s_type == MessageSenderType.LEAD else "You"),
+                "sender_urn": m.get("sender_urn") or "",
+                "body": m.get("body") or m.get("text", ""),
+                "timestamp": raw_msg_ts if raw_msg_ts is not None else incoming_at or datetime.now(timezone.utc),
+            }
+            if isinstance(m.get("id"), str) and m["id"].strip():
+                msg_kwargs["id"] = m["id"].strip()
+            if m.get("audio_url"):
+                msg_kwargs["audio_url"] = m["audio_url"]
+            if m.get("is_voice_note"):
+                msg_kwargs["is_voice_note"] = True
+            if m.get("attachment_url"):
+                msg_kwargs["attachment_url"] = m["attachment_url"]
+            if m.get("attachment_name"):
+                msg_kwargs["attachment_name"] = m["attachment_name"]
+            parsed_msgs.append(OutreachInboxMessage(**msg_kwargs).model_dump())
 
         # Check if this thread already exists
         filter_query = {

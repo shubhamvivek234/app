@@ -5,6 +5,8 @@ confirms an original recorded application deletion, not current template state,
 immutable content history, a provider outcome or execution authority.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from datetime import datetime, timezone
 import hashlib

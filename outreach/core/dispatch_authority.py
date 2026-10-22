@@ -5,6 +5,8 @@ transaction. Concurrent changes to those rows therefore serialize or retry.
 The workspace guard also orders participating suppression writers when a
 recipient lookup is empty. Direct database writes do not follow that protocol.
 """
+import logging
+logger = logging.getLogger(__name__)
 import asyncio
 import hashlib
 from copy import copy, deepcopy

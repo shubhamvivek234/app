@@ -171,8 +171,9 @@ async def queue_connection(req, current_user: dict, db) -> dict:
                 await db.outreach_connection_locks.update_one({"_id": sender_id,
                     "workspace_id": workspace_id, "job_id": job_id}, {"$set": {
                         "storage_outcome_unknown": True, "needs_operator_repair": True}})
-            except Exception:
-                pass  # Original durable lock/slot/lease references remain held.
+            except Exception as lock_exc:
+                # Original durable lock/slot/lease references remain held.
+                logger.error("Connection lock repair flag update failed for job=%s (%s)", job_id, type(lock_exc).__name__)
             raise HTTPException(503, "Session storage requires operator review; reference " + job_id) from None
         if locked:
             await db.outreach_connection_locks.delete_one({"_id": sender_id, "job_id": job_id})

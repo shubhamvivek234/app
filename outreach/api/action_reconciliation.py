@@ -8,6 +8,7 @@ resume. Unknown actions are never automatically resent.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -19,6 +20,7 @@ from outreach.api.dependencies import get_outreach_user, require_outreach_permis
 from outreach.models import LeadExecutionState
 
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/action-reviews", tags=["Outreach Action Review"])
 _PENDING = {"$in": ["uncertain", "resolving"]}
 _RESOLVED = {"$in": ["accepted", "completed", "not_sent_stopped"]}

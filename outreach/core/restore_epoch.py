@@ -5,6 +5,8 @@ positive execution even when configuration is removed; receipt/erasure controls
 remain separate. A fleet drain and external epoch rotation are operator duties.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from dataclasses import dataclass
 from datetime import datetime, timezone

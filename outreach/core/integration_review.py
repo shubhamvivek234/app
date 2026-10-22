@@ -1,5 +1,7 @@
 """Private original-delivery review; no HTTP, key opening, replay or activation."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 import re
 from typing import Any
 from outreach.core import integration_control as ctl, integration_custody as custody

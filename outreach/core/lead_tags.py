@@ -1,5 +1,7 @@
 """Canonical CRM tags. Metadata edits never grant campaign execution authority."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import re
 import unicodedata
@@ -16,6 +18,16 @@ TAG_ID_RE = re.compile(r"^tag_[0-9a-f]{24}$")
 MAX_TAGS_PER_LEAD = 50
 MAX_WORKSPACE_TAGS = 500
 MAX_MIGRATION_LABELS = 100
+
+DEFAULT_SALES_TAGS: tuple[dict[str, str], ...] = (
+    {"name": "Interested", "color": "#10b981"},
+    {"name": "Very interested", "color": "#059669"},
+    {"name": "High priority", "color": "#ef4444"},
+    {"name": "Wrong timing", "color": "#f59e0b"},
+    {"name": "Not interested", "color": "#6b7280"},
+    {"name": "Ghosted", "color": "#8b5cf6"},
+    {"name": "Meeting booked", "color": "#3b82f6"},
+)
 
 
 def clean_tag_name(value: str) -> tuple[str, str]:
@@ -141,6 +153,39 @@ async def create_tag(db: Any, workspace: str, actor: str, name: str, color: str)
     return await _commit(db, workspace, save)
 
 
+async def seed_default_tags(db: Any, workspace: str, actor: str) -> list[dict]:
+    """Explicitly seeds preset sales tags if they do not already exist in the workspace."""
+    async def save(current):
+        scope = workspace_scope(workspace)
+        existing = await current.outreach_lead_tags.find(scope).limit(MAX_WORKSPACE_TAGS + 1).to_list(length=MAX_WORKSPACE_TAGS + 1)
+        existing_norm = {row.get("name_normalized") for row in existing}
+        now = datetime.now(timezone.utc)
+        for preset in DEFAULT_SALES_TAGS:
+            display, normalized = clean_tag_name(preset["name"])
+            if normalized in existing_norm:
+                continue
+            if len(existing_norm) >= MAX_WORKSPACE_TAGS:
+                break
+            identifier = "tag_" + uuid.uuid4().hex[:24]
+            doc = {
+                "id": identifier,
+                "workspace_id": workspace,
+                "name": display,
+                "name_normalized": normalized,
+                "color": preset["color"].lower(),
+                "revision": 1,
+                "created_by": actor,
+                "created_at": now,
+                "updated_at": now,
+            }
+            await current.outreach_lead_tags.insert_one(doc)
+            existing_norm.add(normalized)
+        active = await active_tag_map(current, workspace)
+        return list(active.values())
+
+    return await _commit(db, workspace, save)
+
+
 async def edit_tag(db: Any, workspace: str, identifier: str, revision: int,
                    name: str | None = None, color: str | None = None, *, archive: bool = False) -> dict:
     validate_tag_id(identifier)
@@ -218,8 +263,14 @@ async def hydrate_thread_tags(db: Any, workspace: str, threads: list[dict]) -> N
         legacy = thread.get("tags") or []
         thread["legacy_tags"] = [name for name in legacy if isinstance(name, str)] if isinstance(legacy, list) else []
         lead = by_id.get(thread.get("lead_id")) if isinstance(thread.get("lead_id"), str) else None
-        thread.update(tag_ids=lead["tag_ids"] if lead else [], tag_revision=lead["tag_revision"] if lead else 0,
-                      tags=lead["tags"] if lead else [], tags_editable=bool(lead))
+        thread.update(
+            tag_ids=lead["tag_ids"] if lead else [],
+            tag_revision=lead["tag_revision"] if lead else 0,
+            tags=lead["tags"] if lead else [],
+            tags_editable=bool(lead),
+            lead_execution_state=lead.get("execution_state") if lead else None,
+            lead_pause_reason=lead.get("pause_reason") if lead else None,
+        )
 
 
 async def migrate_legacy_tags(db: Any, workspace: str, actor: str, after_id: str = "") -> dict:

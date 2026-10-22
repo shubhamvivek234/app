@@ -1,5 +1,7 @@
 """Private ElevenLabs key sealer: hidden/bounded input, no config installation."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import argparse
 import asyncio

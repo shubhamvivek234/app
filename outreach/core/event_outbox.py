@@ -190,8 +190,8 @@ async def scan_and_fanout_outbox(
                     delivery = await service.queue(workspace_id, "slack", "slack", event["id"],
                         event["payload"], expected_source=slack_doc)
                     deliveries_created += int(delivery["newly_queued"])
-                except ValueError:
-                    pass
+                except ValueError as exc:
+                    logger.debug("Slack outbox delivery skipped for event=%s workspace=%s (%s)", event.get("id"), workspace_id, type(exc).__name__)
 
         # Mark event as dispatched
         await db.outreach_event_outbox.update_one(

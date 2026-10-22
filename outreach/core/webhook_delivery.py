@@ -1,4 +1,6 @@
 """Durable integration delivery entrypoint and conservative legacy quarantine."""
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 from typing import Any
 import httpx

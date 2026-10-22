@@ -1,6 +1,7 @@
 """Review finished content without making provider calls or granting execution."""
 from typing import Literal
 import hashlib
+import logging
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -14,6 +15,7 @@ from outreach.core.voice_artifacts import VoiceArtifacts
 from outreach.core.voice_preparation import VoicePreparation
 from outreach.core import suppression
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/content-approvals", tags=["Outreach Content Review"])
 
 
@@ -69,8 +71,8 @@ async def list_content_reviews(view: Literal["pending", "history"] = "pending", 
         current = False
         try:
             current = await current_binding(db, record) == value
-        except (ValueError, KeyError):
-            pass
+        except (ValueError, KeyError) as exc:
+            logger.debug("Content approval binding comparison skipped for record=%s (%s)", record.get("_id"), type(exc).__name__)
         items.append({"id": record["_id"], "revision": record["revision"], "status": record["status"],
                       "source": value["source"], "action": value["action"], "recipient": value["recipient"],
                       "sender_id": value["sender_id"], "campaign_id": value["context"].get("campaign_id"),

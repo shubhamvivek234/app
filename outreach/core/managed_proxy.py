@@ -3,6 +3,8 @@
 No API purchase, renewal, or cancellation is implied here. A provider order
 and its expiration must be verified by an operator before import/extension.
 """
+import logging
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 import hashlib
 import ipaddress

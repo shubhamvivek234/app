@@ -5,6 +5,7 @@ present is not proof of delivery; unknown/accept-all verification is not used.
 """
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -14,6 +15,7 @@ import httpx
 from outreach.core.provider_custody import prepare_finder_key
 
 
+logger = logging.getLogger(__name__)
 HUNTER_FOUND_URL = "https://api.hunter.io/v2/email-finder/found"
 _EMAIL_RE = re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,}$")
 _VANITY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{1,99}$")
@@ -154,13 +156,14 @@ async def find_lead_email(db, *, workspace_id: str, lead_id: str,
             raise
         await operations.finish(workspace_id, key, {"status": "uncertain"})
         return {"status": "uncertain"}
-    except Exception:
+    except Exception as exc:
         parent = current_request_parent()
         possible = bool(parent and parent.mutation_attempted)
+        logger.warning("Email finder lookup failed for workspace=%s possible=%s (%s)", workspace_id, possible, type(exc).__name__)
         try:
             await operations.finish(workspace_id, key, {"status": "uncertain" if possible else "not_submitted"})
-        except Exception:
-            pass
+        except Exception as fin_exc:
+            logger.debug("Email finder operation finish skipped (%s)", type(fin_exc).__name__)
         if not possible:
             raise RequestDenied("finder_unavailable") from None
         return {"status": "uncertain", "reason": "Provider lookup outcome is unknown"}

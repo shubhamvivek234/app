@@ -4,6 +4,8 @@ Call only within the shared workspace transaction. The account/fence is the
 reservation, including stopped and uninstalled records; no identity is released
 here. Old/raw writers and equivalence between different URNs are not covered.
 """
+import logging
+logger = logging.getLogger(__name__)
 import re
 
 MAX_WORKSPACE_SENDERS = 100

@@ -1,5 +1,7 @@
 """Workspace-level allowlisting and release gates for Outreach Integrations."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import os
 

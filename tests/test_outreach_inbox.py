@@ -22,6 +22,8 @@ from outreach.api.inbox import (
     seed_demo_threads,
     send_thread_reply,
     ReplyRequest,
+    edit_thread_message,
+    EditMessageRequest,
 )
 
 
@@ -121,6 +123,9 @@ class MockCollection:
             if match:
                 if "$set" in update:
                     item.update(update["$set"])
+                if "$inc" in update:
+                    for inc_k, inc_v in update["$inc"].items():
+                        item[inc_k] = (item.get(inc_k) or 0) + inc_v
                 return AsyncMock(matched_count=1)
         return AsyncMock(matched_count=0)
 
@@ -128,6 +133,7 @@ class MockCollection:
 class MockDB:
     def __init__(self):
         self.outreach_inbox_threads = MockCollection()
+        self.outreach_accounts = MockCollection()
         self.outreach_accounts = MockCollection()
 
 
@@ -293,3 +299,59 @@ async def test_send_thread_reply_in_demo_mode():
     with pytest.raises(HTTPException) as exc:
         await send_thread_reply(thread_id="th_reply_demo", req=req, current_user=user, db=db)
     assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_edit_thread_message_end_to_end():
+    """Verify edit_thread_message validates session/proxy custody, calls VoyagerClient, and bumps thread_revision."""
+    from datetime import datetime, timezone
+
+    db = MockDB()
+    user = {"user_id": "usr_edit_1", "default_workspace_id": "ws_edit"}
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    await db.outreach_accounts.insert_one({
+        "id": "acc_edit_1",
+        "workspace_id": "ws_edit",
+        "status": "active",
+        "session_cookie_enc": "enc_cookie",
+        "jsession_id": "ajax:999",
+    })
+    await db.outreach_inbox_threads.insert_one({
+        "id": "th_edit_1",
+        "workspace_id": "ws_edit",
+        "account_id": "acc_edit_1",
+        "conversation_urn": "urn:li:msg_conversation:777",
+        "thread_revision": 2,
+        "last_message_snippet": "Original typo",
+        "messages": [
+            {
+                "id": "msg_1",
+                "sender_type": "user",
+                "sender_name": "You",
+                "body": "Original typo",
+                "timestamp": now_iso,
+            }
+        ],
+    })
+
+    with (
+        patch("outreach.core.paid_access.sender_is_ready", new=AsyncMock(return_value=True)),
+        patch("outreach.core.session_custody.account_session", new=AsyncMock(return_value={"li_at": "real_li_at", "jsession_id": "ajax:999"})),
+        patch("outreach.engine.voyager_client.VoyagerClient.edit_conversation_message", new=AsyncMock(return_value={"status": "edited", "message_id": "msg_1"})),
+    ):
+        res = await edit_thread_message(
+            thread_id="th_edit_1",
+            message_id="msg_1",
+            req=EditMessageRequest(body="Corrected message"),
+            current_user=user,
+            db=db,
+        )
+
+    assert res["status"] == "edited"
+    assert res["body"] == "Corrected message"
+    saved = await db.outreach_inbox_threads.find_one({"id": "th_edit_1"})
+    assert saved["messages"][0]["body"] == "Corrected message"
+    assert saved["last_message_snippet"] == "Corrected message"
+    assert saved["thread_revision"] == 3
+

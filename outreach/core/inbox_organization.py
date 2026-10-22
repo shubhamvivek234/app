@@ -1,5 +1,7 @@
 """Workspace-shared conversation organization, independent of reply authority."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 from datetime import datetime, timezone
 import re

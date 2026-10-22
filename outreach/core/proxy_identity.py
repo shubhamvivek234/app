@@ -4,6 +4,8 @@ These system guards, like invoice exclusion digests, survive tenant erasure.
 They attest local assignment, not vendor ownership or historical raw writers.
 """
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import ipaddress
 from typing import Any

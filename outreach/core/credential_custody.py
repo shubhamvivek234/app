@@ -1,5 +1,7 @@
 """Versioned AES-GCM custody; independent caller context is required to open."""
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import base64
 import hashlib
