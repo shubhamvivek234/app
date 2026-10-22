@@ -350,7 +350,7 @@
       if (!file) {
         attachedFileName = null;
         if (attachmentInput) attachmentInput.value = '';
-        if (attachmentLabel) attachmentLabel.textContent = 'Attach an optional screenshot, invoice, or log';
+        if (attachmentLabel) attachmentLabel.textContent = 'Attach a file';
         if (attachmentClear) attachmentClear.hidden = true;
         return;
       }
@@ -440,7 +440,7 @@
           : 'https://api.unravler.com';
 
       if (submitBtn) submitBtn.disabled = true;
-      if (submitText) submitText.textContent = 'Dispatching to contact@unravler.com...';
+      if (submitText) submitText.textContent = 'Sending...';
 
       try {
         const response = await fetch(`${apiBase}/api/contact`, {
@@ -450,26 +450,25 @@
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) {
-          throw new Error(data.detail || 'Could not dispatch your message right now. Please email contact@unravler.com directly.');
+          throw new Error(data.detail || 'Could not send your message right now. Please try again.');
         }
 
         if (ticketIdEl) ticketIdEl.textContent = data.ticket_id || 'UNR-RECEIVED';
         if (successSummary) {
           successSummary.textContent =
-            data.message ||
-            'Your message has been delivered to contact@unravler.com. Our team will respond within 24 hours.';
+            'Thank you for reaching out. Our team has received your message and will get back to you within 24 hours.';
         }
         contactForm.hidden = true;
         if (successPanel) successPanel.hidden = false;
       } catch (err) {
         if (alertBanner) {
           alertBanner.textContent =
-            err.message || 'Unable to reach our contact server. Please email contact@unravler.com directly.';
+            err.message || 'Unable to reach our server right now. Please try again in a moment.';
           alertBanner.hidden = false;
         }
       } finally {
         if (submitBtn) submitBtn.disabled = false;
-        if (submitText) submitText.textContent = 'Send message to Unravler';
+        if (submitText) submitText.textContent = 'Send message';
       }
     });
 
@@ -477,7 +476,6 @@
       resetBtn.addEventListener('click', () => {
         contactForm.reset();
         updateAttachmentDisplay(null);
-        selectTopic('Pilot & Dedicated IPs');
         if (charCounter) charCounter.textContent = '0 / 2000';
         [nameInput, emailInput, messageInput, termsCheckbox].forEach((el) => {
           if (el) el.removeAttribute('aria-invalid');

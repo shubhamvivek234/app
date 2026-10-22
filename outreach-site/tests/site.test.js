@@ -198,6 +198,9 @@ test('data deletion link is removed from all footers, legal policies are updated
 
   const contactHtml = read('contact.html');
   assert.match(contactHtml, /id="unravler-contact-form"/);
-  assert.match(contactHtml, /contact@unravler\.com/i);
+  assert.match(contactHtml, /assets\/contact-illustration\.png/);
+  assert.doesNotMatch(contactHtml, /contact@unravler\.com/i);
+  assert.doesNotMatch(contactHtml, /REGISTERED HEADQUARTERS/i);
+  assert.doesNotMatch(contactHtml, /CHOOSE A SPECIALIST DESK/i);
   assert.match(read('site.js'), /\/api\/contact/);
 });

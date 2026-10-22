@@ -289,7 +289,7 @@ describe('OutreachSettings page', () => {
     expect(signOutBtn).not.toBeNull();
     expect(signOutBtn.textContent).toContain('Sign out');
     expect(container.querySelector('[data-testid="outreach-settings-contact-card"]')).not.toBeNull();
-    expect(container.textContent).toContain('contact@unravler.com');
+    expect(container.textContent).toContain('Send us a message');
     await act(async () => signOutBtn.click());
     expect(onSignOut).toHaveBeenCalledTimes(1);
   });

@@ -69,11 +69,10 @@ export default function OutreachSettings({ initialTab = 'accounts', onSignOut })
 
   // ── Help & Contact State ───────────────────────────────────────────────────
   const [expandedFaq, setExpandedFaq] = useState(null);
-  const [contactTopic, setContactTopic] = useState('Pilot & Dedicated IPs');
   const [contactName, setContactName] = useState('');
   const [contactEmail, setContactEmail] = useState('');
-  const [contactCompany, setContactCompany] = useState('');
   const [contactMessage, setContactMessage] = useState('');
+  const [contactAttachmentName, setContactAttachmentName] = useState('');
   const [sendingContact, setSendingContact] = useState(false);
   const [contactResult, setContactResult] = useState(null);
 
@@ -91,9 +90,8 @@ export default function OutreachSettings({ initialTab = 'accounts', onSignOut })
         body: JSON.stringify({
           name: contactName.trim(),
           email: contactEmail.trim(),
-          company: contactCompany.trim(),
-          topic: contactTopic,
           message: contactMessage.trim(),
+          attachment_name: contactAttachmentName || null,
           acknowledged_terms: true,
         }),
       });
@@ -102,9 +100,9 @@ export default function OutreachSettings({ initialTab = 'accounts', onSignOut })
         throw new Error(data.detail || 'Could not send message right now.');
       }
       setContactResult(data);
-      toast.success('Message delivered to contact@unravler.com!');
+      toast.success('Thank you! Your message has been sent.');
     } catch (err) {
-      toast.error(err.message || 'Could not send message. Please email contact@unravler.com.');
+      toast.error(err.message || 'Could not send message right now. Please try again.');
     } finally {
       setSendingContact(false);
     }
@@ -915,164 +913,135 @@ export default function OutreachSettings({ initialTab = 'accounts', onSignOut })
                   </div>
                 </div>
 
-                {/* Interactive Contact Us Form Card (Dispatches to contact@unravler.com) */}
+                {/* Simple & Elegant Contact Form Card */}
                 <div
                   data-testid="outreach-settings-contact-card"
-                  className="relative overflow-hidden bg-gradient-to-br from-white via-indigo-50/30 to-blue-50/40 rounded-2xl border border-indigo-100 shadow-xs p-6 space-y-5 transition-all"
+                  className="bg-white rounded-2xl border border-gray-200/80 shadow-xs p-6 sm:p-8"
                 >
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-indigo-100/80 pb-4">
-                    <div>
-                      <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200/70 text-[10px] font-bold text-emerald-700 mb-2">
-                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                        Direct Dispatch to contact@unravler.com
-                      </div>
-                      <h3 className="text-sm font-bold text-gray-900">Contact the Unravler Team</h3>
-                      <p className="text-[11px] text-gray-500 mt-0.5">
-                        Send a message directly to our specialists at <span className="font-semibold text-indigo-600">contact@unravler.com</span> for pilot seats, sequence help, billing, or privacy inquiries.
-                      </p>
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+                    <div className="lg:col-span-5 flex justify-center">
+                      <img
+                        src="/assets/contact-illustration.png"
+                        alt="Person thinking with question marks"
+                        width="980"
+                        height="980"
+                        className="w-full max-w-[260px] h-auto object-contain"
+                      />
                     </div>
-                    <a
-                      href="mailto:contact@unravler.com?subject=Unravler%20Outreach%20Support%20Request"
-                      className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white border border-indigo-200 text-indigo-700 rounded-xl text-xs font-semibold hover:bg-indigo-50 transition-colors shrink-0"
-                    >
-                      <Mail className="w-3.5 h-3.5" /> contact@unravler.com
-                    </a>
-                  </div>
-
-                  {contactResult ? (
-                    <div className="p-6 rounded-xl bg-emerald-50/70 border border-emerald-200 text-center space-y-3">
-                      <div className="w-10 h-10 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto">
-                        <Check className="w-5 h-5" />
-                      </div>
-                      <h4 className="text-sm font-bold text-gray-900">Message Delivered to contact@unravler.com</h4>
-                      <p className="text-xs text-gray-600 max-w-md mx-auto">
-                        {contactResult.message || 'Our team has received your inquiry and will reply within 24 hours.'}
-                      </p>
-                      {contactResult.ticket_id && (
-                        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white border border-emerald-200 text-[11px] font-mono font-bold text-emerald-800">
-                          Reference: {contactResult.ticket_id}
-                        </div>
-                      )}
+                    <div className="lg:col-span-7 space-y-4">
                       <div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setContactResult(null);
-                            setContactMessage('');
-                          }}
-                          className="mt-2 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition-colors"
-                        >
-                          Send another message
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <form onSubmit={handleSubmitContactForm} className="space-y-4">
-                      <div>
-                        <label className="block text-[11px] font-bold text-gray-700 mb-1.5">
-                          Select Topic
-                        </label>
-                        <div className="flex flex-wrap gap-1.5">
-                          {[
-                            'Pilot & Dedicated IPs',
-                            'Product & Sequences',
-                            'Billing & Invoices',
-                            'Security & Privacy',
-                            'General Inquiry',
-                          ].map((topic) => (
-                            <button
-                              key={topic}
-                              type="button"
-                              onClick={() => setContactTopic(topic)}
-                              className={`px-3 py-1.5 rounded-full text-[11px] font-semibold transition-all ${
-                                contactTopic === topic
-                                  ? 'bg-indigo-600 text-white shadow-xs'
-                                  : 'bg-white border border-gray-200 text-gray-600 hover:border-indigo-300 hover:text-indigo-600'
-                              }`}
-                            >
-                              {topic}
-                            </button>
-                          ))}
-                        </div>
+                        <h3 className="text-base font-bold text-gray-900">Send us a message</h3>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          Fill in your details below and our team will reply to you shortly.
+                        </p>
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        <div>
-                          <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                            Your Name *
-                          </label>
-                          <input
-                            type="text"
-                            required
-                            value={contactName}
-                            onChange={(e) => setContactName(e.target.value)}
-                            placeholder="Alex Morgan"
-                            className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-900 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                            Work Email *
-                          </label>
-                          <input
-                            type="email"
-                            required
-                            value={contactEmail}
-                            onChange={(e) => setContactEmail(e.target.value)}
-                            placeholder="alex@company.com"
-                            className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-900 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                            Company / Workspace
-                          </label>
-                          <input
-                            type="text"
-                            value={contactCompany}
-                            onChange={(e) => setContactCompany(e.target.value)}
-                            placeholder="Acme Growth"
-                            className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-900 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-semibold text-gray-700 mb-1">
-                          Message *
-                        </label>
-                        <textarea
-                          rows={4}
-                          required
-                          value={contactMessage}
-                          onChange={(e) => setContactMessage(e.target.value)}
-                          placeholder="How can our team help you today?"
-                          className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-900 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15 resize-y"
-                        />
-                      </div>
-
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <span className="text-[11px] text-gray-500">
-                          Never include your LinkedIn password or raw session cookies.
-                        </span>
-                        <button
-                          type="submit"
-                          disabled={sendingContact}
-                          className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-semibold hover:bg-indigo-700 transition-all disabled:opacity-50"
-                        >
-                          {sendingContact ? (
-                            <>
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Sending...
-                            </>
-                          ) : (
-                            <>
-                              <Mail className="w-3.5 h-3.5" /> Send Message to contact@unravler.com
-                            </>
+                      {contactResult ? (
+                        <div className="p-6 rounded-xl bg-emerald-50/70 border border-emerald-200 text-center space-y-3">
+                          <div className="w-10 h-10 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto">
+                            <Check className="w-5 h-5" />
+                          </div>
+                          <h4 className="text-sm font-bold text-gray-900">Message sent</h4>
+                          <p className="text-xs text-gray-600 max-w-md mx-auto">
+                            Thank you for reaching out. Our team has received your message and will reply within 24 hours.
+                          </p>
+                          {contactResult.ticket_id && (
+                            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white border border-emerald-200 text-[11px] font-mono font-bold text-emerald-800">
+                              Reference: {contactResult.ticket_id}
+                            </div>
                           )}
-                        </button>
-                      </div>
-                    </form>
-                  )}
+                          <div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setContactResult(null);
+                                setContactMessage('');
+                                setContactAttachmentName('');
+                              }}
+                              className="mt-2 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition-colors"
+                            >
+                              Send another message
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <form onSubmit={handleSubmitContactForm} className="space-y-3.5">
+                          <div>
+                            <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                              Full name *
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              value={contactName}
+                              onChange={(e) => setContactName(e.target.value)}
+                              placeholder="Enter your full name"
+                              className="w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs text-gray-900 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                              Email *
+                            </label>
+                            <input
+                              type="email"
+                              required
+                              value={contactEmail}
+                              onChange={(e) => setContactEmail(e.target.value)}
+                              placeholder="Enter your email"
+                              className="w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs text-gray-900 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-semibold text-gray-700 mb-1">
+                              Your message *
+                            </label>
+                            <textarea
+                              rows={4}
+                              required
+                              value={contactMessage}
+                              onChange={(e) => setContactMessage(e.target.value)}
+                              placeholder="Write your message..."
+                              className="w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs text-gray-900 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15 resize-y"
+                            />
+                          </div>
+                          <div>
+                            <label className="flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl border border-dashed border-gray-300 bg-gray-50/60 cursor-pointer hover:border-indigo-400 transition-colors">
+                              <span className="text-xs font-medium text-gray-600 truncate">
+                                {contactAttachmentName ? `Attached: ${contactAttachmentName}` : 'Attach a file (optional)'}
+                              </span>
+                              <input
+                                type="file"
+                                className="sr-only"
+                                accept=".png,.jpg,.jpeg,.webp,.pdf,.txt,.csv"
+                                onChange={(e) => {
+                                  const file = e.target.files && e.target.files[0];
+                                  setContactAttachmentName(file ? file.name : '');
+                                }}
+                              />
+                            </label>
+                          </div>
+                          <div className="pt-1">
+                            <button
+                              type="submit"
+                              disabled={sendingContact}
+                              className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-semibold hover:bg-indigo-700 transition-all disabled:opacity-50"
+                            >
+                              {sendingContact ? (
+                                <>
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Sending...
+                                </>
+                              ) : (
+                                <>
+                                  <Mail className="w-3.5 h-3.5" /> Send message
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </form>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
             )}

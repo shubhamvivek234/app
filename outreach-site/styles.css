@@ -2242,6 +2242,55 @@ body[data-feature="teams"] .hero-panel {
   align-items: start;
 }
 
+.contact-workspace-simple {
+  max-width: 1080px;
+  margin-inline: auto;
+  grid-template-columns: 0.92fr 1.08fr;
+  gap: 56px;
+  align-items: center;
+}
+
+.contact-visual-col {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.contact-illustration-card {
+  position: relative;
+  width: 100%;
+  max-width: 440px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+}
+
+.contact-illustration-halo {
+  position: absolute;
+  inset: 10%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0, 98, 255, 0.09) 0%, rgba(99, 102, 241, 0.05) 50%, transparent 72%);
+  filter: blur(24px);
+  pointer-events: none;
+}
+
+.contact-illustration-img {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 400px;
+  height: auto;
+  display: block;
+  object-fit: contain;
+  animation: contactIllustrationFloat 6s ease-in-out infinite alternate;
+}
+
+@keyframes contactIllustrationFloat {
+  0% { transform: translate3d(0, 0, 0); }
+  100% { transform: translate3d(0, -10px, 0); }
+}
+
 .contact-desks-header {
   margin-bottom: 20px;
 }
